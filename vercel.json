@@ -1,16 +1,17 @@
 {
+  "name": "haji-younas-app",
   "version": 2,
   "builds": [
-    {
-      "src": "backend/vercel.py",
-      "use": "@vercel/python"
-    },
     {
       "src": "package.json",
       "use": "@vercel/static-build",
       "config": {
         "distDir": "build"
       }
+    },
+    {
+      "src": "backend/vercel.py",
+      "use": "@vercel/python"
     }
   ],
   "routes": [
@@ -19,11 +20,8 @@
       "dest": "backend/vercel.py"
     },
     {
-      "handle": "filesystem"
-    },
-    {
       "src": "/(.*)",
-      "dest": "/index.html"
+      "dest": "/"
     }
   ]
 }
