@@ -5,12 +5,25 @@
     {
       "src": "package.json",
       "use": "@vercel/react"
+    },
+    {
+      "src": "backend/vercel.py",
+      "use": "@vercel/python"
     }
   ],
   "routes": [
     {
+      "src": "/api/(.*)",
+      "dest": "/backend/vercel.py"
+    },
+    {
       "src": "/(.*)",
       "dest": "/"
     }
-  ]
+  ],
+  "env": {
+    "REACT_APP_API_URL": "/api",
+    "FLASK_APP": "backend/app.py",
+    "FLASK_ENV": "production"
+  }
 }

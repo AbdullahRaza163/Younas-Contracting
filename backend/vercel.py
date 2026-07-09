@@ -1,4 +1,14 @@
-from app import app
-
-# Vercel expects a WSGI application
-application = app
+{
+  "builds": [
+    {
+      "src": "vercel.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "vercel.py"
+    }
+  ]
+}
