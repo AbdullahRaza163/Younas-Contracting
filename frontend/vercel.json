@@ -1,7 +1,14 @@
 {
-  "name": "haji-younas-app",
+  "name": "younas-contracting",
   "version": 2,
   "builds": [
+    {
+      "src": "frontend/package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "frontend/build"
+      }
+    },
     {
       "src": "backend/vercel.py",
       "use": "@vercel/python"
