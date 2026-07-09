@@ -10,7 +10,7 @@
   "routes": [
     {
       "src": "/api/(.*)",
-      "dest": "/backend/vercel.py"
+      "dest": "backend/vercel.py"
     },
     {
       "src": "/(.*)",
