@@ -8,16 +8,12 @@ import {
   Printer,
   X,
   Package,
-  Calculator,
+
   Save,
-  Warehouse,
+  
   ClipboardList,
-  Ruler,
-  Wrench,
-  Zap,
-  Shield,
-  Truck,
-  HelpCircle,
+  
+ 
   Bot,
   Settings as SettingsIcon,
   TrendingDownIcon,
@@ -25,7 +21,7 @@ import {
   DollarSign,
   UserCheck,
   BarChart3,
-  Target,
+  
   ArrowUpRight,
   ArrowDownRight,
   RefreshCw,
@@ -39,7 +35,7 @@ import {
   TrendingUp as TrendingUpIcon
 } from 'lucide-react';
 import {
-  LineChart,
+ 
   Line,
   PieChart,
   Pie,
@@ -568,10 +564,10 @@ const DailyReportComponent = ({ data, selectedDate }) => {
     window.print();
   };
 
-  const handleExportPDF = () => {
-    // For PDF, we'll use the print functionality with PDF printer
-    window.print();
-  };
+  // const handleExportPDF = () => {
+  //   // For PDF, we'll use the print functionality with PDF printer
+  //   window.print();
+  // };
 
   if (!showReport) {
     return (
@@ -1598,7 +1594,7 @@ const BOMComponent = ({ data, updateData }) => {
                     labourCost: (predictionResult.laborHours * 8).toString(),
                     overheadPercentage: '10',
                     totalMaterialCost: predictionResult.estimatedCost,
-                    labourCost: predictionResult.laborHours * 8,
+                   
                     overhead: predictionResult.estimatedCost * 0.1,
                     totalCost: predictionResult.estimatedCost * 1.1,
                     createdAt: new Date().toISOString()
@@ -2442,7 +2438,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
             return sum;
           }, 0);
 
-          const totalWage = Utils.calculateDailyWage(totalHours, worker.dailyRate);
+          
 
           return (
             <div key={worker.id} className="worker-card-modern">
