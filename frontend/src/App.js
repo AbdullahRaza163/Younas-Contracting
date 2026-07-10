@@ -56,7 +56,7 @@ import './App.css';
 // CONSTANTS & CONFIGURATION
 // ============================================
 const CONFIG = {
-  API_BASE: process.env.REACT_APP_API_URL || '/api',
+  API_BASE: 'http://127.0.0.1:5000/api',
   CURRENCY: 'BD',
   COMPANY_NAME: 'Haji Younas Contracting',
   VERSION: '2.0.0'
