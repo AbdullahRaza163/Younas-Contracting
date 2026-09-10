@@ -1,0 +1,119 @@
+/* src/components/LanguageSwitcher.css */
+.language-switcher-container {
+  position: relative;
+  display: inline-block;
+}
+
+.language-switcher-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: inherit;
+}
+
+.language-switcher-btn:hover {
+  background: var(--bg-hover);
+  border-color: var(--primary-green);
+  color: var(--text-primary);
+}
+
+.language-switcher-btn .chevron {
+  transition: transform 0.2s ease;
+}
+
+.language-switcher-btn .chevron.open {
+  transform: rotate(180deg);
+}
+
+.language-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  min-width: 200px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 8px;
+  z-index: 100;
+  animation: slideDown 0.2s ease;
+}
+
+[dir="rtl"] .language-dropdown {
+  right: auto;
+  left: 0;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.language-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all var(--transition);
+  font-family: inherit;
+}
+
+.language-option:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.language-option.active {
+  background: var(--primary-green-glow);
+  color: var(--primary-green);
+}
+
+.language-option .lang-flag {
+  font-size: 18px;
+}
+
+.language-option .lang-name {
+  flex: 1;
+  text-align: left;
+}
+
+[dir="rtl"] .language-option .lang-name {
+  text-align: right;
+}
+
+.language-option .check-icon {
+  color: var(--primary-green);
+  flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+  .language-switcher-btn .lang-label {
+    display: none;
+  }
+  
+  .language-switcher-btn {
+    padding: 8px 10px;
+  }
+}
