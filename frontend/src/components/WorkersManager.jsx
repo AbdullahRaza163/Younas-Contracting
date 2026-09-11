@@ -1,4 +1,5 @@
-import React, { useState, useMemo, useCallback } from 'react';
+// src/components/WorkersManagerComponent.jsx
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   HardHat,
   Edit,
@@ -7,7 +8,6 @@ import {
   X,
   Save,
   Search,
-  Filter,
   Users,
   UserCheck,
   UserX,
@@ -26,17 +26,27 @@ import {
   RefreshCw,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsLeft,
+  ChevronsRight,
   AlertCircle,
   CheckCircle,
   LayoutDashboard,
   User,
   UserPlus,
   Crown,
-  Star,
   Activity,
-  Gauge,
   Timer,
-  Info
+  Info,
+  Hash,
+  Layers,
+  Sparkles,
+  Zap,
+  FileText,
+  Target,
+  Star,
+  CircleDot
 } from 'lucide-react';
 import Utils from '../utils/Utils';
 import './WorkersManager.css';
@@ -48,9 +58,16 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   const [selectedWorker, setSelectedWorker] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
   const [expandedWorkers, setExpandedWorkers] = useState({});
   const [hoveredCard, setHoveredCard] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+  const [mounted, setMounted] = useState(false);
+  const [toast, setToast] = useState(null);
+
+  // ===== PAGINATION STATE =====
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(9);
 
   const [formData, setFormData] = useState({
     name: '',
@@ -66,52 +83,119 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     notes: ''
   });
 
-  // Filter workers
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2400);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type, id: Date.now() });
+  };
+
+  // ============================================
+  // DATA
+  // ============================================
+  const workers = useMemo(() => data.workers || [], [data.workers]);
+
   const filteredWorkers = useMemo(() => {
-    let filtered = data.workers || [];
-    
-    if (searchTerm) {
+    let filtered = workers;
+
+    if (searchTerm.trim()) {
       const search = searchTerm.toLowerCase();
       filtered = filtered.filter(w =>
-        w.name.toLowerCase().includes(search) ||
+        w.name?.toLowerCase().includes(search) ||
         (w.role && w.role.toLowerCase().includes(search)) ||
-        (w.phone && w.phone.includes(search))
+        (w.phone && w.phone.includes(search)) ||
+        (w.email && w.email.toLowerCase().includes(search))
       );
     }
-    
+
     if (roleFilter !== 'all') {
       filtered = filtered.filter(w => w.role === roleFilter);
     }
-    
-    return filtered;
-  }, [data.workers, searchTerm, roleFilter]);
 
-  // Get unique roles for filter
+    if (statusFilter !== 'all') {
+      if (statusFilter === 'active') {
+        filtered = filtered.filter(w => w.status !== 'inactive');
+      } else {
+        filtered = filtered.filter(w => w.status === 'inactive');
+      }
+    }
+
+    return filtered;
+  }, [workers, searchTerm, roleFilter, statusFilter]);
+
+  // ============================================
+  // PAGINATION LOGIC
+  // ============================================
+  const totalPages = Math.max(1, Math.ceil(filteredWorkers.length / itemsPerPage));
+
+  const paginatedWorkers = useMemo(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    return filteredWorkers.slice(startIndex, endIndex);
+  }, [filteredWorkers, currentPage, itemsPerPage]);
+
+  // Reset to page 1 whenever the filter set changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, roleFilter, statusFilter, itemsPerPage]);
+
+  // Clamp current page if filtered list shrinks
+  useEffect(() => {
+    if (currentPage > totalPages) setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  const goToPage = (page) => {
+    const validPage = Math.max(1, Math.min(page, totalPages));
+    setCurrentPage(validPage);
+  };
+
+  const getPageNumbers = () => {
+    const pages = [];
+    const maxVisible = 5;
+    let start = Math.max(1, currentPage - 2);
+    let end = Math.min(totalPages, start + maxVisible - 1);
+    if (end - start < maxVisible - 1) {
+      start = Math.max(1, end - maxVisible + 1);
+    }
+    for (let i = start; i <= end; i++) pages.push(i);
+    return pages;
+  };
+
   const roles = useMemo(() => {
     const uniqueRoles = ['all', ...new Set((data.workers || []).map(w => w.role).filter(Boolean))];
     return uniqueRoles;
   }, [data.workers]);
 
-  // Stats
+  // ============================================
+  // STATS
+  // ============================================
   const stats = useMemo(() => {
-    const workers = data.workers || [];
     const total = workers.length;
     const active = workers.filter(w => w.status !== 'inactive').length;
+    const inactive = total - active;
     const totalDailyCost = workers.reduce((sum, w) => sum + (w.dailyRate || 0), 0);
     const avgRate = total > 0 ? totalDailyCost / total : 0;
-    
-    return { total, active, totalDailyCost, avgRate };
-  }, [data.workers]);
+    const totalRoles = roles.length - 1;
 
-  // Card details for tooltips
+    return { total, active, inactive, totalDailyCost, avgRate, totalRoles };
+  }, [workers, roles]);
+
   const cardDetails = {
     total: {
       title: 'Total Workers',
       details: [
         { label: 'Total Workers', value: stats.total },
         { label: 'Active Workers', value: stats.active },
-        { label: 'Inactive', value: stats.total - stats.active },
-        { label: 'Roles Available', value: roles.length - 1 }
+        { label: 'Inactive', value: stats.inactive },
+        { label: 'Roles Available', value: stats.totalRoles }
       ]
     },
     active: {
@@ -119,8 +203,13 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
       details: [
         { label: 'Active Workers', value: stats.active },
         { label: 'Total Workers', value: stats.total },
-        { label: 'Inactive', value: stats.total - stats.active },
-        { label: 'Active Rate', value: stats.total > 0 ? `${((stats.active / stats.total) * 100).toFixed(1)}%` : '0%' }
+        { label: 'Inactive', value: stats.inactive },
+        {
+          label: 'Active Rate',
+          value: stats.total > 0
+            ? `${((stats.active / stats.total) * 100).toFixed(1)}%`
+            : '0%'
+        }
       ]
     },
     cost: {
@@ -129,38 +218,63 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
         { label: 'Total Daily Cost', value: Utils.formatCurrency(stats.totalDailyCost) },
         { label: 'Average Rate', value: Utils.formatCurrency(stats.avgRate) },
         { label: 'Total Workers', value: stats.total },
-        { label: 'Monthly Cost', value: Utils.formatCurrency(stats.totalDailyCost * 26) }
+        { label: 'Monthly Estimate', value: Utils.formatCurrency(stats.totalDailyCost * 26) }
+      ]
+    },
+    inactive: {
+      title: 'Inactive Workers',
+      details: [
+        { label: 'Inactive', value: stats.inactive },
+        { label: 'Active', value: stats.active },
+        { label: 'Total Workers', value: stats.total },
+        {
+          label: 'Inactive Rate',
+          value: stats.total > 0
+            ? `${((stats.inactive / stats.total) * 100).toFixed(1)}%`
+            : '0%'
+        }
       ]
     }
   };
 
-  // Handle hover for tooltips
   const handleCardHover = (cardId, event) => {
     setHoveredCard(cardId);
-    setTooltipPosition({
-      x: event.clientX + 15,
-      y: event.clientY - 10
-    });
+    setTooltipPosition({ x: event.clientX + 15, y: event.clientY - 10 });
+  };
+  const handleCardLeave = () => setHoveredCard(null);
+
+  // ============================================
+  // WORKER STATS
+  // ============================================
+  const getWorkerStats = (workerId) => {
+    const workerAttendance = data.attendance?.filter(a => a.workerId === workerId) || [];
+    const totalHours = workerAttendance.reduce((sum, a) => {
+      if (a.checkedIn && a.checkedOut) {
+        return sum + Utils.calculateHoursWorked(a.checkedIn, a.checkedOut);
+      }
+      if (typeof a.totalHours === 'number' && a.totalHours > 0) {
+        return sum + a.totalHours;
+      }
+      return sum;
+    }, 0);
+
+    const daysPresent = workerAttendance.filter(a => a.present).length;
+    const hourlyRate = (data.workers?.find(w => w.id === workerId)?.dailyRate / 8) || 0;
+    const totalWages = workerAttendance.reduce((sum, a) => {
+      if (typeof a.wageEarned === 'number' && a.wageEarned > 0) return sum + a.wageEarned;
+      const h = a.checkedIn && a.checkedOut
+        ? Utils.calculateHoursWorked(a.checkedIn, a.checkedOut)
+        : (a.totalHours || 0);
+      return sum + h * hourlyRate;
+    }, 0);
+
+    return { totalHours, daysPresent, totalWages };
   };
 
-  const handleCardLeave = () => {
-    setHoveredCard(null);
-  };
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!formData.name.trim()) {
-      alert('Worker name is required');
-      return;
-    }
-
-    if (editingId) {
-      updateWorker(editingId, formData);
-      setEditingId(null);
-    } else {
-      addWorker(formData);
-    }
-
+  // ============================================
+  // HANDLERS
+  // ============================================
+  const resetForm = () => {
     setFormData({
       name: '',
       role: '',
@@ -174,6 +288,25 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
       experience: '',
       notes: ''
     });
+    setEditingId(null);
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!formData.name.trim()) {
+      showToast('Worker name is required', 'error');
+      return;
+    }
+
+    if (editingId) {
+      updateWorker(editingId, formData);
+      showToast('Worker updated');
+    } else {
+      addWorker(formData);
+      showToast('Worker added');
+    }
+
+    resetForm();
     setShowForm(false);
   };
 
@@ -196,137 +329,154 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   };
 
   const toggleExpand = (id) => {
-    setExpandedWorkers(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
+    setExpandedWorkers(prev => ({ ...prev, [id]: !prev[id] }));
   };
 
-  const handleDelete = (id) => {
-    if (window.confirm('Are you sure you want to delete this worker?')) {
-      deleteWorker(id);
-    }
+  const handleDelete = (worker) => {
+    if (!window.confirm(`Delete worker "${worker.name}"? This cannot be undone.`)) return;
+    deleteWorker(worker.id);
+    showToast('Worker deleted');
   };
 
-  // Calculate worker stats
-  const getWorkerStats = (workerId) => {
-    const workerAttendance = data.attendance?.filter(a => a.workerId === workerId) || [];
-    const totalHours = workerAttendance.reduce((sum, a) => {
-      if (a.checkedIn && a.checkedOut) {
-        return sum + Utils.calculateHoursWorked(a.checkedIn, a.checkedOut);
-      }
-      return sum;
-    }, 0);
-    const daysPresent = workerAttendance.filter(a => a.present).length;
-    const totalWages = totalHours * (data.workers?.find(w => w.id === workerId)?.dailyRate / 8 || 0);
-    
-    return { totalHours, daysPresent, totalWages };
+  const clearFilters = () => {
+    setSearchTerm('');
+    setRoleFilter('all');
+    setStatusFilter('all');
   };
 
-  // Render worker card
-  const renderWorkerCard = (worker) => {
+  const hasActiveFilters =
+    searchTerm.trim() !== '' ||
+    roleFilter !== 'all' ||
+    statusFilter !== 'all';
+
+  // ============================================
+  // ROLE COLORS
+  // ============================================
+  const roleColors = {
+    'Mason': { color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.12)', gradient: 'linear-gradient(135deg, #3b82f6, #1d4ed8)' },
+    'Helper': { color: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.12)', gradient: 'linear-gradient(135deg, #8b5cf6, #7c3aed)' },
+    'Supervisor': { color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)', gradient: 'linear-gradient(135deg, #f59e0b, #d97706)' },
+    'Manager': { color: '#22c55e', bg: 'rgba(34, 197, 94, 0.12)', gradient: 'linear-gradient(135deg, #22c55e, #16a34a)' },
+    'Driver': { color: '#ec4899', bg: 'rgba(236, 72, 153, 0.12)', gradient: 'linear-gradient(135deg, #ec4899, #db2777)' },
+    'Operator': { color: '#f97316', bg: 'rgba(249, 115, 22, 0.12)', gradient: 'linear-gradient(135deg, #f97316, #ea580c)' }
+  };
+  const getRoleStyle = (role) =>
+    roleColors[role] || { color: '#6b7280', bg: 'rgba(107, 114, 128, 0.12)', gradient: 'linear-gradient(135deg, #6b7280, #4b5563)' };
+
+  // ============================================
+  // RENDER WORKER CARD
+  // ============================================
+  const renderWorkerCard = (worker, index) => {
     const isExpanded = expandedWorkers[worker.id];
-    const stats = getWorkerStats(worker.id);
-    const roleColors = {
-      'Mason': '#3b82f6',
-      'Helper': '#8b5cf6',
-      'Supervisor': '#f59e0b',
-      'Manager': '#22c55e',
-      'Driver': '#ec4899',
-      'Operator': '#f97316'
-    };
-    const roleColor = roleColors[worker.role] || '#6b7280';
+    const workerStats = getWorkerStats(worker.id);
+    const roleStyle = getRoleStyle(worker.role);
+    const isActive = worker.status !== 'inactive';
 
     return (
-      <div 
-        key={worker.id} 
+      <div
+        key={worker.id}
         className="wk-card"
-        onMouseEnter={() => setHoveredCard(worker.id)}
-        onMouseLeave={() => setHoveredCard(null)}
+        style={{ animationDelay: `${Math.min(index * 60, 480)}ms` }}
       >
+        <div className="wk-card-accent" style={{ background: roleStyle.gradient }} />
+
         <div className="wk-card-header">
           <div className="wk-info">
-            <div className="wk-avatar">
+            <div className="wk-avatar" style={{ background: roleStyle.gradient }}>
               <span className="wk-avatar-text">{worker.name.charAt(0).toUpperCase()}</span>
-              <span className={`wk-status-dot ${worker.status === 'inactive' ? 'inactive' : 'active'}`}></span>
+              <span className={`wk-status-dot ${isActive ? 'active' : 'inactive'}`} />
             </div>
-            <div>
+            <div className="wk-info-text">
               <div className="wk-name">{worker.name}</div>
-              <div className="wk-role" style={{ color: roleColor }}>
-                <Briefcase size={12} />
+              <div className="wk-role" style={{ color: roleStyle.color, background: roleStyle.bg }}>
+                <Briefcase size={11} />
                 {worker.role || 'No role'}
               </div>
             </div>
           </div>
-          <div className="wk-rate">
-            <DollarSign size={14} />
-            <span>{Utils.formatCurrency(worker.dailyRate)}/day</span>
+          <div className="wk-rate-chip">
+            <DollarSign size={12} />
+            <span>{Utils.formatCurrencyShort(worker.dailyRate || 0)}</span>
+            <span className="wk-rate-unit">/day</span>
           </div>
         </div>
 
         <div className="wk-card-body">
-          <div className="wk-stats-grid">
-            <div className="wk-stat-item">
-              <span className="wk-stat-label">Hours</span>
-              <span className="wk-stat-value">{stats.totalHours.toFixed(1)}h</span>
+          <div className="wk-mini-stats">
+            <div className="wk-mini-stat">
+              <div className="wk-mini-icon wk-mini-icon-blue"><Clock size={12} /></div>
+              <div className="wk-mini-content">
+                <span className="wk-mini-label">Hours</span>
+                <span className="wk-mini-value">{workerStats.totalHours.toFixed(1)}h</span>
+              </div>
             </div>
-            <div className="wk-stat-item">
-              <span className="wk-stat-label">Days Present</span>
-              <span className="wk-stat-value">{stats.daysPresent}</span>
+            <div className="wk-mini-stat">
+              <div className="wk-mini-icon wk-mini-icon-green"><Calendar size={12} /></div>
+              <div className="wk-mini-content">
+                <span className="wk-mini-label">Days</span>
+                <span className="wk-mini-value">{workerStats.daysPresent}</span>
+              </div>
             </div>
-            <div className="wk-stat-item">
-              <span className="wk-stat-label">Wages</span>
-              <span className="wk-stat-value">{Utils.formatCurrencyShort(stats.totalWages)}</span>
+            <div className="wk-mini-stat">
+              <div className="wk-mini-icon wk-mini-icon-amber"><DollarSign size={12} /></div>
+              <div className="wk-mini-content">
+                <span className="wk-mini-label">Wages</span>
+                <span className="wk-mini-value">{Utils.formatCurrencyShort(workerStats.totalWages)}</span>
+              </div>
             </div>
           </div>
 
-          {worker.phone && (
-            <div className="wk-contact">
-              <Phone size={14} />
-              <span>{worker.phone}</span>
-            </div>
-          )}
-
-          {worker.skills && (
-            <div className="wk-skills">
-              <Award size={14} />
-              <span>{worker.skills}</span>
+          {(worker.phone || worker.skills) && (
+            <div className="wk-card-info">
+              {worker.phone && (
+                <div className="wk-info-line">
+                  <Phone size={12} />
+                  <span>{worker.phone}</span>
+                </div>
+              )}
+              {worker.skills && (
+                <div className="wk-info-line wk-info-line-skills">
+                  <Award size={12} />
+                  <span>{worker.skills}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
 
         <div className="wk-card-footer">
+          <span className={`wk-status-pill ${isActive ? 'active' : 'inactive'}`}>
+            <span className="wk-status-pill-dot" />
+            {isActive ? 'Active' : 'Inactive'}
+          </span>
           <div className="wk-actions">
-            <button 
-              className="wk-btn-icon" 
-              onClick={() => {
-                setSelectedWorker(worker);
-                setShowDetailModal(true);
-              }}
-              title="View Details"
+            <button
+              className="wk-btn-icon"
+              onClick={() => { setSelectedWorker(worker); setShowDetailModal(true); }}
+              title="View details"
             >
-              <Eye size={16} />
+              <Eye size={14} />
             </button>
-            <button 
-              className="wk-btn-icon" 
+            <button
+              className="wk-btn-icon wk-btn-icon-edit"
               onClick={() => handleEdit(worker)}
               title="Edit"
             >
-              <Edit size={16} />
+              <Edit size={14} />
             </button>
-            <button 
-              className="wk-btn-icon wk-btn-danger" 
-              onClick={() => handleDelete(worker.id)}
+            <button
+              className="wk-btn-icon wk-btn-icon-danger"
+              onClick={() => handleDelete(worker)}
               title="Delete"
             >
-              <Trash2 size={16} />
+              <Trash2 size={14} />
             </button>
-            <button 
-              className="wk-btn-icon wk-btn-expand" 
+            <button
+              className="wk-btn-icon wk-btn-icon-expand"
               onClick={() => toggleExpand(worker.id)}
-              title="Expand"
+              title={isExpanded ? 'Collapse' : 'Expand'}
             >
-              {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
             </button>
           </div>
         </div>
@@ -336,38 +486,65 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
             <div className="wk-expanded-grid">
               {worker.email && (
                 <div className="wk-expanded-item">
-                  <Mail size={14} />
-                  <span><strong>Email:</strong> {worker.email}</span>
+                  <Mail size={13} />
+                  <div>
+                    <span className="wk-expanded-label">Email</span>
+                    <span className="wk-expanded-value">{worker.email}</span>
+                  </div>
                 </div>
               )}
               {worker.address && (
                 <div className="wk-expanded-item">
-                  <MapPin size={14} />
-                  <span><strong>Address:</strong> {worker.address}</span>
+                  <MapPin size={13} />
+                  <div>
+                    <span className="wk-expanded-label">Address</span>
+                    <span className="wk-expanded-value">{worker.address}</span>
+                  </div>
                 </div>
               )}
               {worker.emergencyContact && (
                 <div className="wk-expanded-item">
-                  <Shield size={14} />
-                  <span><strong>Emergency:</strong> {worker.emergencyContact}</span>
+                  <Shield size={13} />
+                  <div>
+                    <span className="wk-expanded-label">Emergency Contact</span>
+                    <span className="wk-expanded-value">{worker.emergencyContact}</span>
+                  </div>
                 </div>
               )}
               {worker.emergencyPhone && (
                 <div className="wk-expanded-item">
-                  <Phone size={14} />
-                  <span><strong>Emergency Phone:</strong> {worker.emergencyPhone}</span>
+                  <Phone size={13} />
+                  <div>
+                    <span className="wk-expanded-label">Emergency Phone</span>
+                    <span className="wk-expanded-value">{worker.emergencyPhone}</span>
+                  </div>
                 </div>
               )}
               {worker.experience && (
                 <div className="wk-expanded-item">
-                  <Calendar size={14} />
-                  <span><strong>Experience:</strong> {worker.experience} years</span>
+                  <Timer size={13} />
+                  <div>
+                    <span className="wk-expanded-label">Experience</span>
+                    <span className="wk-expanded-value">{worker.experience} years</span>
+                  </div>
+                </div>
+              )}
+              {worker.id && (
+                <div className="wk-expanded-item">
+                  <Hash size={13} />
+                  <div>
+                    <span className="wk-expanded-label">Worker ID</span>
+                    <span className="wk-expanded-value wk-expanded-mono">{worker.id}</span>
+                  </div>
                 </div>
               )}
               {worker.notes && (
-                <div className="wk-expanded-item full">
-                  <Info size={14} />
-                  <span><strong>Notes:</strong> {worker.notes}</span>
+                <div className="wk-expanded-item wk-expanded-full">
+                  <Info size={13} />
+                  <div>
+                    <span className="wk-expanded-label">Notes</span>
+                    <span className="wk-expanded-value">{worker.notes}</span>
+                  </div>
                 </div>
               )}
             </div>
@@ -377,141 +554,202 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     );
   };
 
-  // Render detail modal
+  // ============================================
+  // RENDER DETAIL MODAL
+  // ============================================
   const renderDetailModal = () => {
     if (!selectedWorker) return null;
     const w = selectedWorker;
-    const stats = getWorkerStats(w.id);
+    const workerStats = getWorkerStats(w.id);
+    const roleStyle = getRoleStyle(w.role);
+    const isActive = w.status !== 'inactive';
 
     return (
       <div className="wk-modal-overlay" onClick={() => setShowDetailModal(false)}>
         <div className="wk-modal-content wk-detail-modal" onClick={e => e.stopPropagation()}>
-          <div className="wk-modal-header" style={{ background: 'linear-gradient(135deg, #1a2332, #2a3a4a)' }}>
+          <div className="wk-modal-header wk-modal-header-dark">
             <div className="wk-modal-header-left">
-              <div className="wk-modal-avatar">
+              <div className="wk-modal-avatar" style={{ background: roleStyle.gradient }}>
                 <span>{w.name.charAt(0).toUpperCase()}</span>
               </div>
-              <div>
-                <h3 style={{ color: '#ffffff' }}>{w.name}</h3>
-                <div className="wk-modal-subtitle" style={{ color: 'rgba(255,255,255,0.7)' }}>
-                  {w.role || 'No role'} • {Utils.formatCurrency(w.dailyRate)}/day
-                </div>
+              <div className="wk-modal-header-text">
+                <h3>{w.name}</h3>
+                <p className="wk-modal-subtitle">
+                  {w.role || 'No role'} · {Utils.formatCurrency(w.dailyRate || 0)}/day
+                </p>
               </div>
             </div>
             <div className="wk-modal-actions">
-              <button className="wk-modal-btn-edit" onClick={() => { setShowDetailModal(false); handleEdit(w); }}>
-                <Edit size={16} /> Edit
+              <button
+                className="wk-modal-btn-edit"
+                onClick={() => { setShowDetailModal(false); handleEdit(w); }}
+              >
+                <Edit size={15} /> Edit
               </button>
               <button className="wk-modal-close" onClick={() => setShowDetailModal(false)}>
-                <X size={24} color="#ffffff" />
+                <X size={18} />
               </button>
             </div>
           </div>
 
           <div className="wk-modal-body">
-            <div className="wk-detail-stats">
-              <div className="wk-detail-stat">
-                <Clock size={18} />
-                <div>
-                  <span className="wk-detail-stat-label">Total Hours</span>
-                  <span className="wk-detail-stat-value">{stats.totalHours.toFixed(1)}h</span>
-                </div>
+            <div className={`wk-detail-status-banner ${isActive ? 'is-active' : 'is-inactive'}`}>
+              <div className="wk-detail-status-icon">
+                {isActive ? <CheckCircle size={18} /> : <AlertCircle size={18} />}
               </div>
-              <div className="wk-detail-stat">
-                <Calendar size={18} />
-                <div>
-                  <span className="wk-detail-stat-label">Days Present</span>
-                  <span className="wk-detail-stat-value">{stats.daysPresent}</span>
-                </div>
-              </div>
-              <div className="wk-detail-stat">
-                <DollarSign size={18} />
-                <div>
-                  <span className="wk-detail-stat-label">Total Wages</span>
-                  <span className="wk-detail-stat-value">{Utils.formatCurrency(stats.totalWages)}</span>
-                </div>
-              </div>
-              <div className="wk-detail-stat">
-                <Activity size={18} />
-                <div>
-                  <span className="wk-detail-stat-label">Status</span>
-                  <span className={`wk-detail-stat-value ${w.status === 'inactive' ? 'inactive' : 'active'}`}>
-                    {w.status === 'inactive' ? 'Inactive' : 'Active'}
-                  </span>
+              <div>
+                <div className="wk-detail-status-label">Current Status</div>
+                <div className="wk-detail-status-value">
+                  {isActive ? 'Active' : 'Inactive'}
                 </div>
               </div>
             </div>
 
-            <div className="wk-detail-info">
-              <h4>Contact Information</h4>
+            <div className="wk-detail-stats">
+              <div className="wk-detail-stat">
+                <div className="wk-detail-stat-icon wk-detail-stat-icon-blue">
+                  <Clock size={16} />
+                </div>
+                <div>
+                  <span className="wk-detail-stat-label">Total Hours</span>
+                  <span className="wk-detail-stat-value">{workerStats.totalHours.toFixed(1)}h</span>
+                </div>
+              </div>
+              <div className="wk-detail-stat">
+                <div className="wk-detail-stat-icon wk-detail-stat-icon-green">
+                  <Calendar size={16} />
+                </div>
+                <div>
+                  <span className="wk-detail-stat-label">Days Present</span>
+                  <span className="wk-detail-stat-value">{workerStats.daysPresent}</span>
+                </div>
+              </div>
+              <div className="wk-detail-stat">
+                <div className="wk-detail-stat-icon wk-detail-stat-icon-amber">
+                  <DollarSign size={16} />
+                </div>
+                <div>
+                  <span className="wk-detail-stat-label">Total Wages</span>
+                  <span className="wk-detail-stat-value">{Utils.formatCurrency(workerStats.totalWages)}</span>
+                </div>
+              </div>
+              <div className="wk-detail-stat">
+                <div className="wk-detail-stat-icon wk-detail-stat-icon-purple">
+                  <DollarSign size={16} />
+                </div>
+                <div>
+                  <span className="wk-detail-stat-label">Daily Rate</span>
+                  <span className="wk-detail-stat-value">{Utils.formatCurrency(w.dailyRate || 0)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="wk-detail-section">
+              <h4 className="wk-detail-section-title">
+                <User size={14} /> Contact Information
+              </h4>
               <div className="wk-detail-grid">
                 {w.phone && (
                   <div className="wk-detail-item">
-                    <Phone size={14} />
-                    <span><strong>Phone:</strong> {w.phone}</span>
+                    <Phone size={13} />
+                    <div>
+                      <span className="wk-detail-item-label">Phone</span>
+                      <span className="wk-detail-item-value">{w.phone}</span>
+                    </div>
                   </div>
                 )}
                 {w.email && (
                   <div className="wk-detail-item">
-                    <Mail size={14} />
-                    <span><strong>Email:</strong> {w.email}</span>
+                    <Mail size={13} />
+                    <div>
+                      <span className="wk-detail-item-label">Email</span>
+                      <span className="wk-detail-item-value">{w.email}</span>
+                    </div>
                   </div>
                 )}
                 {w.address && (
                   <div className="wk-detail-item">
-                    <MapPin size={14} />
-                    <span><strong>Address:</strong> {w.address}</span>
+                    <MapPin size={13} />
+                    <div>
+                      <span className="wk-detail-item-label">Address</span>
+                      <span className="wk-detail-item-value">{w.address}</span>
+                    </div>
                   </div>
                 )}
                 {w.emergencyContact && (
                   <div className="wk-detail-item">
-                    <User size={14} />
-                    <span><strong>Emergency Contact:</strong> {w.emergencyContact}</span>
+                    <Shield size={13} />
+                    <div>
+                      <span className="wk-detail-item-label">Emergency Contact</span>
+                      <span className="wk-detail-item-value">{w.emergencyContact}</span>
+                    </div>
                   </div>
                 )}
                 {w.emergencyPhone && (
                   <div className="wk-detail-item">
-                    <Phone size={14} />
-                    <span><strong>Emergency Phone:</strong> {w.emergencyPhone}</span>
+                    <Phone size={13} />
+                    <div>
+                      <span className="wk-detail-item-label">Emergency Phone</span>
+                      <span className="wk-detail-item-value">{w.emergencyPhone}</span>
+                    </div>
                   </div>
+                )}
+                {!w.phone && !w.email && !w.address && !w.emergencyContact && !w.emergencyPhone && (
+                  <div className="wk-detail-empty">No contact information on file</div>
                 )}
               </div>
             </div>
 
-            <div className="wk-detail-info">
-              <h4>Work Information</h4>
+            <div className="wk-detail-section">
+              <h4 className="wk-detail-section-title">
+                <Briefcase size={14} /> Work Information
+              </h4>
               <div className="wk-detail-grid">
                 {w.role && (
                   <div className="wk-detail-item">
-                    <Briefcase size={14} />
-                    <span><strong>Role:</strong> {w.role}</span>
+                    <Briefcase size={13} />
+                    <div>
+                      <span className="wk-detail-item-label">Role</span>
+                      <span className="wk-detail-item-value">{w.role}</span>
+                    </div>
                   </div>
                 )}
                 {w.skills && (
                   <div className="wk-detail-item">
-                    <Award size={14} />
-                    <span><strong>Skills:</strong> {w.skills}</span>
+                    <Award size={13} />
+                    <div>
+                      <span className="wk-detail-item-label">Skills</span>
+                      <span className="wk-detail-item-value">{w.skills}</span>
+                    </div>
                   </div>
                 )}
                 {w.experience && (
                   <div className="wk-detail-item">
-                    <Timer size={14} />
-                    <span><strong>Experience:</strong> {w.experience} years</span>
+                    <Timer size={13} />
+                    <div>
+                      <span className="wk-detail-item-label">Experience</span>
+                      <span className="wk-detail-item-value">{w.experience} years</span>
+                    </div>
                   </div>
                 )}
-                {w.dailyRate && (
+                {w.id && (
                   <div className="wk-detail-item">
-                    <DollarSign size={14} />
-                    <span><strong>Daily Rate:</strong> {Utils.formatCurrency(w.dailyRate)}</span>
+                    <Hash size={13} />
+                    <div>
+                      <span className="wk-detail-item-label">Worker ID</span>
+                      <span className="wk-detail-item-value wk-detail-item-mono">{w.id}</span>
+                    </div>
                   </div>
                 )}
               </div>
             </div>
 
             {w.notes && (
-              <div className="wk-detail-notes">
-                <h4><FileText size={14} /> Notes</h4>
-                <p>{w.notes}</p>
+              <div className="wk-detail-section">
+                <h4 className="wk-detail-section-title">
+                  <FileText size={14} /> Notes
+                </h4>
+                <p className="wk-detail-notes-text">{w.notes}</p>
               </div>
             )}
           </div>
@@ -520,318 +758,513 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     );
   };
 
-  // Render form modal
-  const renderFormModal = () => {
-    return (
-      <div className="wk-modal-overlay" onClick={() => { setShowForm(false); setEditingId(null); }}>
-        <div className="wk-modal-content wk-form-modal" onClick={e => e.stopPropagation()}>
-          <div className="wk-modal-header" style={{ background: 'linear-gradient(135deg, #009846, #007a38)' }}>
-            <div className="wk-modal-header-left">
-              <UserPlus size={24} color="#ffffff" />
-              <h3 style={{ color: '#ffffff' }}>{editingId ? 'Edit Worker' : 'New Worker'}</h3>
+  // ============================================
+  // RENDER FORM MODAL
+  // ============================================
+  const renderFormModal = () => (
+    <div
+      className="wk-modal-overlay"
+      onClick={() => { setShowForm(false); resetForm(); }}
+    >
+      <div className="wk-modal-content wk-form-modal" onClick={e => e.stopPropagation()}>
+        <div className="wk-modal-header wk-modal-header-green">
+          <div className="wk-modal-header-left">
+            <div className="wk-modal-header-icon">
+              {editingId ? <Edit size={20} /> : <UserPlus size={20} />}
             </div>
-            <button className="wk-modal-close" onClick={() => { setShowForm(false); setEditingId(null); }}>
-              <X size={24} color="#ffffff" />
-            </button>
+            <div className="wk-modal-header-text">
+              <h3>{editingId ? 'Edit Worker' : 'New Worker'}</h3>
+              <p className="wk-modal-subtitle">
+                {editingId ? 'Update worker details' : 'Add a new worker to your workforce'}
+              </p>
+            </div>
           </div>
-          <div className="wk-modal-body">
-            <form onSubmit={handleSubmit}>
-              <div className="wk-form-row">
-                <div className="wk-form-group">
-                  <label>Worker Name <span className="wk-required">*</span></label>
-                  <input
-                    type="text"
-                    value={formData.name}
-                    onChange={e => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="Enter worker name"
-                    required
-                    className="wk-form-input"
-                  />
-                </div>
-                <div className="wk-form-group">
-                  <label>Role</label>
-                  <input
-                    type="text"
-                    value={formData.role}
-                    onChange={e => setFormData({ ...formData, role: e.target.value })}
-                    placeholder="e.g., Mason, Helper"
-                    className="wk-form-input"
-                  />
-                </div>
-              </div>
-
-              <div className="wk-form-row">
-                <div className="wk-form-group">
-                  <label>Daily Rate (BD)</label>
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={formData.dailyRate}
-                    onChange={e => setFormData({ ...formData, dailyRate: e.target.value })}
-                    placeholder="0.000"
-                    className="wk-form-input"
-                  />
-                </div>
-                <div className="wk-form-group">
-                  <label>Phone</label>
-                  <input
-                    type="tel"
-                    value={formData.phone}
-                    onChange={e => setFormData({ ...formData, phone: e.target.value })}
-                    placeholder="Contact number"
-                    className="wk-form-input"
-                  />
-                </div>
-              </div>
-
-              <div className="wk-form-row">
-                <div className="wk-form-group">
-                  <label>Email</label>
-                  <input
-                    type="email"
-                    value={formData.email}
-                    onChange={e => setFormData({ ...formData, email: e.target.value })}
-                    placeholder="Email address"
-                    className="wk-form-input"
-                  />
-                </div>
-                <div className="wk-form-group">
-                  <label>Address</label>
-                  <input
-                    type="text"
-                    value={formData.address}
-                    onChange={e => setFormData({ ...formData, address: e.target.value })}
-                    placeholder="Address"
-                    className="wk-form-input"
-                  />
-                </div>
-              </div>
-
-              <div className="wk-form-row">
-                <div className="wk-form-group">
-                  <label>Emergency Contact</label>
-                  <input
-                    type="text"
-                    value={formData.emergencyContact}
-                    onChange={e => setFormData({ ...formData, emergencyContact: e.target.value })}
-                    placeholder="Emergency contact name"
-                    className="wk-form-input"
-                  />
-                </div>
-                <div className="wk-form-group">
-                  <label>Emergency Phone</label>
-                  <input
-                    type="tel"
-                    value={formData.emergencyPhone}
-                    onChange={e => setFormData({ ...formData, emergencyPhone: e.target.value })}
-                    placeholder="Emergency contact number"
-                    className="wk-form-input"
-                  />
-                </div>
-              </div>
-
-              <div className="wk-form-row">
-                <div className="wk-form-group">
-                  <label>Skills</label>
-                  <input
-                    type="text"
-                    value={formData.skills}
-                    onChange={e => setFormData({ ...formData, skills: e.target.value })}
-                    placeholder="e.g., Masonry, Carpentry"
-                    className="wk-form-input"
-                  />
-                </div>
-                <div className="wk-form-group">
-                  <label>Experience (years)</label>
-                  <input
-                    type="number"
-                    value={formData.experience}
-                    onChange={e => setFormData({ ...formData, experience: e.target.value })}
-                    placeholder="Years of experience"
-                    className="wk-form-input"
-                  />
-                </div>
-              </div>
-
+          <button className="wk-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
+            <X size={18} />
+          </button>
+        </div>
+        <div className="wk-modal-body">
+          <form onSubmit={handleSubmit}>
+            <div className="wk-form-row">
               <div className="wk-form-group">
-                <label>Notes</label>
-                <textarea
-                  value={formData.notes}
-                  onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                  placeholder="Additional notes"
-                  rows="2"
-                  className="wk-form-textarea"
+                <label><User size={12} /> Worker Name <span className="wk-required">*</span></label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={e => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="Enter worker name"
+                  required
+                  className="wk-form-input"
+                  autoFocus
                 />
               </div>
-
-              <div className="wk-form-actions">
-                <button type="submit" className="wk-btn-primary">
-                  <Save size={16} /> {editingId ? 'Update Worker' : 'Add Worker'}
-                </button>
-                <button type="button" className="wk-btn-secondary" onClick={() => { setShowForm(false); setEditingId(null); }}>
-                  Cancel
-                </button>
+              <div className="wk-form-group">
+                <label><Briefcase size={12} /> Role</label>
+                <input
+                  type="text"
+                  value={formData.role}
+                  onChange={e => setFormData({ ...formData, role: e.target.value })}
+                  placeholder="e.g., Mason, Helper, Supervisor"
+                  className="wk-form-input"
+                />
               </div>
-            </form>
+            </div>
+
+            <div className="wk-form-row">
+              <div className="wk-form-group">
+                <label><DollarSign size={12} /> Daily Rate (BD)</label>
+                <input
+                  type="number"
+                  step="0.001"
+                  value={formData.dailyRate}
+                  onChange={e => setFormData({ ...formData, dailyRate: e.target.value })}
+                  placeholder="0.000"
+                  className="wk-form-input"
+                />
+              </div>
+              <div className="wk-form-group">
+                <label><Phone size={12} /> Phone</label>
+                <input
+                  type="tel"
+                  value={formData.phone}
+                  onChange={e => setFormData({ ...formData, phone: e.target.value })}
+                  placeholder="+973 ..."
+                  className="wk-form-input"
+                />
+              </div>
+            </div>
+
+            <div className="wk-form-row">
+              <div className="wk-form-group">
+                <label><Mail size={12} /> Email</label>
+                <input
+                  type="email"
+                  value={formData.email}
+                  onChange={e => setFormData({ ...formData, email: e.target.value })}
+                  placeholder="email@example.com"
+                  className="wk-form-input"
+                />
+              </div>
+              <div className="wk-form-group">
+                <label><MapPin size={12} /> Address</label>
+                <input
+                  type="text"
+                  value={formData.address}
+                  onChange={e => setFormData({ ...formData, address: e.target.value })}
+                  placeholder="Address"
+                  className="wk-form-input"
+                />
+              </div>
+            </div>
+
+            <div className="wk-form-row">
+              <div className="wk-form-group">
+                <label><Shield size={12} /> Emergency Contact</label>
+                <input
+                  type="text"
+                  value={formData.emergencyContact}
+                  onChange={e => setFormData({ ...formData, emergencyContact: e.target.value })}
+                  placeholder="Contact person name"
+                  className="wk-form-input"
+                />
+              </div>
+              <div className="wk-form-group">
+                <label><Phone size={12} /> Emergency Phone</label>
+                <input
+                  type="tel"
+                  value={formData.emergencyPhone}
+                  onChange={e => setFormData({ ...formData, emergencyPhone: e.target.value })}
+                  placeholder="Emergency number"
+                  className="wk-form-input"
+                />
+              </div>
+            </div>
+
+            <div className="wk-form-row">
+              <div className="wk-form-group">
+                <label><Award size={12} /> Skills</label>
+                <input
+                  type="text"
+                  value={formData.skills}
+                  onChange={e => setFormData({ ...formData, skills: e.target.value })}
+                  placeholder="e.g., Masonry, Carpentry"
+                  className="wk-form-input"
+                />
+              </div>
+              <div className="wk-form-group">
+                <label><Timer size={12} /> Experience (years)</label>
+                <input
+                  type="number"
+                  value={formData.experience}
+                  onChange={e => setFormData({ ...formData, experience: e.target.value })}
+                  placeholder="Years"
+                  className="wk-form-input"
+                />
+              </div>
+            </div>
+
+            <div className="wk-form-group">
+              <label><FileText size={12} /> Notes</label>
+              <textarea
+                value={formData.notes}
+                onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                placeholder="Additional notes"
+                rows="2"
+                className="wk-form-textarea"
+              />
+            </div>
+
+            <div className="wk-form-actions">
+              <button type="submit" className="wk-btn-primary">
+                <Save size={15} /> {editingId ? 'Update Worker' : 'Add Worker'}
+              </button>
+              <button
+                type="button"
+                className="wk-btn-secondary"
+                onClick={() => { setShowForm(false); resetForm(); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  );
+
+  // ============================================
+  // STAT CARDS
+  // ============================================
+  const statItems = [
+    {
+      id: 'total',
+      icon: Users,
+      label: 'Total Workers',
+      value: stats.total,
+      meta: `${stats.totalRoles} distinct roles`,
+      color: '#3b82f6',
+      bg: 'rgba(59, 130, 246, 0.12)',
+      accent: 'linear-gradient(90deg, #3b82f6, #60a5fa)'
+    },
+    {
+      id: 'active',
+      icon: UserCheck,
+      label: 'Active Workers',
+      value: stats.active,
+      meta: stats.total > 0
+        ? `${((stats.active / stats.total) * 100).toFixed(0)}% of workforce`
+        : 'no workers',
+      color: '#22c55e',
+      bg: 'rgba(34, 197, 94, 0.12)',
+      accent: 'linear-gradient(90deg, #009846, #00b856)'
+    },
+    {
+      id: 'cost',
+      icon: DollarSign,
+      label: 'Daily Labor Cost',
+      value: Utils.formatCurrencyShort(stats.totalDailyCost),
+      meta: `avg ${Utils.formatCurrencyShort(stats.avgRate)}/worker`,
+      color: '#f59e0b',
+      bg: 'rgba(245, 158, 11, 0.12)',
+      accent: 'linear-gradient(90deg, #f59e0b, #fbbf24)'
+    },
+    {
+      id: 'inactive',
+      icon: UserX,
+      label: 'Inactive',
+      value: stats.inactive,
+      meta: stats.total > 0
+        ? `${((stats.inactive / stats.total) * 100).toFixed(0)}% of workforce`
+        : 'no workers',
+      color: '#dc2626',
+      bg: 'rgba(220, 38, 38, 0.12)',
+      accent: 'linear-gradient(90deg, #dc2626, #ef4444)'
+    }
+  ];
+
+  const renderStats = () => (
+    <div className="wk-stats-grid">
+      {statItems.map((item) => {
+        const Icon = item.icon;
+        return (
+          <div
+            key={item.id}
+            className="wk-stat-card"
+            onMouseEnter={(e) => handleCardHover(item.id, e)}
+            onMouseLeave={handleCardLeave}
+            onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
+          >
+            <div className="wk-stat-accent" style={{ background: item.accent }} />
+            <div className="wk-stat-icon-wrapper" style={{ background: item.bg, color: item.color }}>
+              <Icon size={20} />
+            </div>
+            <div className="wk-stat-content">
+              <span className="wk-stat-label">{item.label}</span>
+              <span className="wk-stat-value">{item.value}</span>
+              <span className="wk-stat-meta">{item.meta}</span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  // ============================================
+  // RENDER TOOLTIP
+  // ============================================
+  const renderTooltip = () => {
+    if (!hoveredCard || !cardDetails[hoveredCard]) return null;
+    return (
+      <div
+        className="wk-card-tooltip"
+        style={{
+          position: 'fixed',
+          left: tooltipPosition.x,
+          top: tooltipPosition.y,
+          zIndex: 9999
+        }}
+      >
+        <div className="wk-tooltip-header">
+          <strong>{cardDetails[hoveredCard].title}</strong>
+        </div>
+        <div className="wk-tooltip-body">
+          {cardDetails[hoveredCard].details.map((detail, idx) => (
+            <div key={idx} className="wk-tooltip-row">
+              <span className="wk-tooltip-label">{detail.label}</span>
+              <span className="wk-tooltip-value">{detail.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  // ============================================
+  // RENDER PAGINATION
+  // ============================================
+  const renderPagination = () => {
+    if (filteredWorkers.length === 0) return null;
+
+    const startItem = (currentPage - 1) * itemsPerPage + 1;
+    const endItem = Math.min(currentPage * itemsPerPage, filteredWorkers.length);
+
+    return (
+      <div className="wk-pagination">
+        <div className="wk-pagination-info">
+          Showing <strong>{startItem}</strong> – <strong>{endItem}</strong> of <strong>{filteredWorkers.length}</strong> workers
+        </div>
+
+        <div className="wk-pagination-controls">
+          <div className="wk-pagination-items">
+            <span>Show:</span>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => setItemsPerPage(Number(e.target.value))}
+              className="wk-pagination-select"
+            >
+              <option value={6}>6</option>
+              <option value={9}>9</option>
+              <option value={12}>12</option>
+              <option value={18}>18</option>
+              <option value={24}>24</option>
+              <option value={48}>48</option>
+            </select>
+          </div>
+
+          <div className="wk-pagination-buttons">
+            <button
+              className="wk-page-btn"
+              onClick={() => goToPage(1)}
+              disabled={currentPage === 1}
+              title="First page"
+            >
+              <ChevronsLeft size={15} />
+            </button>
+            <button
+              className="wk-page-btn"
+              onClick={() => goToPage(currentPage - 1)}
+              disabled={currentPage === 1}
+              title="Previous page"
+            >
+              <ChevronLeft size={15} />
+            </button>
+
+            {getPageNumbers().map(page => (
+              <button
+                key={page}
+                className={`wk-page-btn ${page === currentPage ? 'active' : ''}`}
+                onClick={() => goToPage(page)}
+              >
+                {page}
+              </button>
+            ))}
+
+            <button
+              className="wk-page-btn"
+              onClick={() => goToPage(currentPage + 1)}
+              disabled={currentPage === totalPages}
+              title="Next page"
+            >
+              <ChevronRight size={15} />
+            </button>
+            <button
+              className="wk-page-btn"
+              onClick={() => goToPage(totalPages)}
+              disabled={currentPage === totalPages}
+              title="Last page"
+            >
+              <ChevronsRight size={15} />
+            </button>
           </div>
         </div>
       </div>
     );
   };
 
+  // ============================================
+  // MAIN RENDER
+  // ============================================
   return (
-    <div className="wk-management">
-      {/* Header */}
+    <div className={`wk-management ${mounted ? 'is-mounted' : ''}`}>
+      {toast && (
+        <div className={`wk-toast wk-toast-${toast.type}`} key={toast.id}>
+          {toast.type === 'success' ? <CheckCircle size={15} /> : <AlertCircle size={15} />}
+          <span>{toast.message}</span>
+        </div>
+      )}
+
+      <div className="wk-ambient">
+        <div className="wk-ambient-orb wk-ambient-1" />
+        <div className="wk-ambient-orb wk-ambient-2" />
+        <div className="wk-ambient-orb wk-ambient-3" />
+      </div>
+
       <div className="wk-header">
         <div className="wk-header-left">
           <div className="wk-header-icon-wrapper">
-            <Users size={28} />
-            <span className="wk-header-badge">Workers</span>
+            <Users size={22} />
           </div>
           <div>
-            <h2>Worker Management</h2>
-            <p className="wk-header-subtitle">Manage your workforce and track performance</p>
+            <h2>Workers</h2>
+            <p className="wk-header-subtitle">
+              {stats.total} worker{stats.total !== 1 ? 's' : ''} · {stats.active} active · {stats.totalRoles} role{stats.totalRoles !== 1 ? 's' : ''}
+            </p>
           </div>
         </div>
         <div className="wk-header-right">
-          <button className="wk-btn-refresh" onClick={() => window.location.reload()}>
-            <RefreshCw size={16} />
-            Refresh
+          <div className="wk-search-box">
+            <Search size={15} className="wk-search-icon" />
+            <input
+              type="text"
+              placeholder="Search name, role, phone, email..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+            />
+            {searchTerm && (
+              <button className="wk-clear-search" onClick={() => setSearchTerm('')}>
+                <X size={13} />
+              </button>
+            )}
+          </div>
+          <button className="wk-btn-ghost" onClick={() => window.location.reload()}>
+            <RefreshCw size={14} /> Refresh
           </button>
-          <button className="wk-btn-primary" onClick={() => { setEditingId(null); setShowForm(true); }}>
-            <Plus size={18} />
-            New Worker
+          <button
+            className="wk-btn-primary"
+            onClick={() => { resetForm(); setShowForm(true); }}
+          >
+            <Plus size={15} /> New Worker
           </button>
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="wk-stats-grid">
-        <div 
-          className="wk-stat-card"
-          onMouseEnter={(e) => handleCardHover('total', e)}
-          onMouseLeave={handleCardLeave}
-          onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-        >
-          <div className="wk-stat-icon-wrapper" style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#3b82f6' }}>
-            <Users size={22} />
-          </div>
-          <div className="wk-stat-content">
-            <span className="wk-stat-label">Total Workers</span>
-            <span className="wk-stat-value">{stats.total}</span>
-          </div>
-          <div className="wk-stat-trend">
-            <TrendingUp size={16} />
-          </div>
+      {renderStats()}
+      {renderTooltip()}
+
+      <div className="wk-filters-row">
+        <div className="wk-status-filter">
+          {[
+            { id: 'all', label: 'All Workers', icon: Layers, count: stats.total },
+            { id: 'active', label: 'Active', icon: CheckCircle, count: stats.active },
+            { id: 'inactive', label: 'Inactive', icon: AlertCircle, count: stats.inactive }
+          ].map(f => {
+            const Icon = f.icon;
+            return (
+              <button
+                key={f.id}
+                className={`wk-status-pill ${statusFilter === f.id ? 'active' : ''}`}
+                onClick={() => setStatusFilter(f.id)}
+              >
+                <Icon size={12} />
+                <span>{f.label}</span>
+                <span className="wk-pill-count">{f.count}</span>
+              </button>
+            );
+          })}
         </div>
 
-        <div 
-          className="wk-stat-card"
-          onMouseEnter={(e) => handleCardHover('active', e)}
-          onMouseLeave={handleCardLeave}
-          onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-        >
-          <div className="wk-stat-icon-wrapper" style={{ background: 'rgba(34, 197, 94, 0.12)', color: '#22c55e' }}>
-            <UserCheck size={22} />
+        {roles.length > 1 && (
+          <div className="wk-role-filter">
+            <Briefcase size={13} className="wk-role-filter-icon" />
+            <select
+              value={roleFilter}
+              onChange={(e) => setRoleFilter(e.target.value)}
+              className="wk-role-select"
+            >
+              <option value="all">All Roles</option>
+              {roles.filter(r => r !== 'all').map(role => (
+                <option key={role} value={role}>{role}</option>
+              ))}
+            </select>
           </div>
-          <div className="wk-stat-content">
-            <span className="wk-stat-label">Active Workers</span>
-            <span className="wk-stat-value">{stats.active}</span>
-          </div>
-          <div className="wk-stat-progress">
-            <div className="wk-stat-progress-bar" style={{ width: stats.total > 0 ? `${(stats.active / stats.total) * 100}%` : '0%' }}></div>
-          </div>
-        </div>
+        )}
 
-        <div 
-          className="wk-stat-card"
-          onMouseEnter={(e) => handleCardHover('cost', e)}
-          onMouseLeave={handleCardLeave}
-          onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-        >
-          <div className="wk-stat-icon-wrapper" style={{ background: 'rgba(245, 158, 11, 0.12)', color: '#f59e0b' }}>
-            <DollarSign size={22} />
-          </div>
-          <div className="wk-stat-content">
-            <span className="wk-stat-label">Daily Labor Cost</span>
-            <span className="wk-stat-value">{Utils.formatCurrencyShort(stats.totalDailyCost)}</span>
-          </div>
-          <div className="wk-stat-trend">
-            <TrendingUp size={16} />
-          </div>
-        </div>
+        {hasActiveFilters && (
+          <button className="wk-clear-filters" onClick={clearFilters}>
+            <X size={13} /> Clear
+          </button>
+        )}
+
+        <span className="wk-result-count">
+          Showing {filteredWorkers.length} of {stats.total}
+        </span>
       </div>
 
-      {/* Tooltip */}
-      {hoveredCard && cardDetails[hoveredCard] && (
-        <div 
-          className="wk-card-tooltip"
-          style={{
-            position: 'fixed',
-            left: tooltipPosition.x,
-            top: tooltipPosition.y,
-            zIndex: 9999
-          }}
-        >
-          <div className="wk-tooltip-header">
-            <strong>{cardDetails[hoveredCard].title}</strong>
-          </div>
-          <div className="wk-tooltip-body">
-            {cardDetails[hoveredCard].details.map((detail, idx) => (
-              <div key={idx} className="wk-tooltip-row">
-                <span className="wk-tooltip-label">{detail.label}</span>
-                <span className="wk-tooltip-value">{detail.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="wk-filters-section">
-        <div className="wk-search-box">
-          <Search size={18} className="wk-search-icon" />
-          <input
-            type="text"
-            placeholder="Search workers..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-          {searchTerm && (
-            <button className="wk-clear-search" onClick={() => setSearchTerm('')}>
-              <X size={16} />
-            </button>
-          )}
-        </div>
-        <div className="wk-filter-group">
-          <select value={roleFilter} onChange={(e) => setRoleFilter(e.target.value)}>
-            <option value="all">All Roles</option>
-            {roles.filter(r => r !== 'all').map(role => (
-              <option key={role} value={role}>{role}</option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Workers List */}
       {filteredWorkers.length === 0 ? (
         <div className="wk-empty-state">
           <div className="wk-empty-icon-wrapper">
-            <HardHat size={64} />
+            {hasActiveFilters ? <Search size={44} /> : <HardHat size={44} />}
           </div>
-          <h3>No Workers Found</h3>
-          <p>Add your first worker to get started with workforce management.</p>
-          <button className="wk-btn-primary" onClick={() => { setEditingId(null); setShowForm(true); }}>
-            <Plus size={18} /> Add Worker
-          </button>
+          <h3>{hasActiveFilters ? 'No matching workers' : 'No workers yet'}</h3>
+          <p>
+            {hasActiveFilters
+              ? 'Try adjusting your search or filters.'
+              : 'Add your first worker to get started.'}
+          </p>
+          {hasActiveFilters ? (
+            <button className="wk-btn-secondary" onClick={clearFilters}>
+              <X size={14} /> Clear filters
+            </button>
+          ) : (
+            <button
+              className="wk-btn-primary"
+              onClick={() => { resetForm(); setShowForm(true); }}
+            >
+              <Plus size={15} /> Add Worker
+            </button>
+          )}
         </div>
       ) : (
-        <div className="wk-grid">
-          {filteredWorkers.map(renderWorkerCard)}
-        </div>
+        <>
+          <div className="wk-grid">
+            {paginatedWorkers.map((w, i) => renderWorkerCard(w, i))}
+          </div>
+
+          {/* Pagination */}
+          {renderPagination()}
+        </>
       )}
 
-      {/* Modals */}
       {showForm && renderFormModal()}
       {showDetailModal && renderDetailModal()}
     </div>
