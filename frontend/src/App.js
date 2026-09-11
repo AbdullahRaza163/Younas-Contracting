@@ -1,12 +1,12 @@
 // src/App.jsx
-import React, { useState } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { HardHat, AlertCircle, RefreshCw } from 'lucide-react';
 
-// Import global styles
+// Global styles
 import './components/globals.css';
 
-// Import ThemeProvider
+// Providers
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
@@ -16,13 +16,13 @@ import useData from './hooks/useData';
 import Navigation from './components/Navigation';
 import TopBar from './components/TopBar';
 
-// Auth Components
+// Auth
 import Login from './components/Login';
 import Register from './components/Register';
 import ForgotPassword from './components/ForgotPassword';
 import ProtectedRoute from './components/ProtectedRoute';
 
-// Main Components
+// Main components
 import ProjectDashboard from './components/ProjectDashboard';
 import DashboardComponent from './components/Dashboard';
 import EntriesManagerComponent from './components/EntriesManager';
@@ -52,13 +52,52 @@ import PerformanceAnalytics from './components/PerformanceAnalytics';
 import InventoryManagement from './components/InventoryManagement';
 import LoanManagement from './components/LoanManagement';
 import AdvanceManagement from './components/AdvanceManagement';
+// import DailyEntryComponent from './components/DailyEntry'; // ✅ FIX: was missing
 
-// Main App Content (Protected)
+// ============================================
+// TAB → ROUTE + TITLE MAP
+// ============================================
+const TAB_META = {
+  dashboard:            { path: 'dashboard',            title: 'Dashboard' },
+  projects:             { path: 'projects',             title: 'Projects' },
+  entries:              { path: 'entries',              title: 'Entries' },
+  sites:                { path: 'sites',                title: 'Sites' },
+  items:                { path: 'items',                title: 'Items' },
+  'overhead-categories':{ path: 'overhead-categories',  title: 'Overhead Categories' },
+  'monthly-overhead':   { path: 'monthly-overhead',     title: 'Monthly Overhead' },
+  'monthly-summary':    { path: 'monthly-summary',      title: 'Monthly Summary' },
+  dailyentry:           { path: 'daily-entry',          title: 'Daily Entry' },
+  advances:             { path: 'advances',             title: 'Advances' },
+  loans:                { path: 'loans',                title: 'Loans' },
+  inventory:            { path: 'inventory',            title: 'Inventory' },
+  cumulative:           { path: 'cumulative',           title: 'Cumulative Tracker' },
+  workers:              { path: 'workers',              title: 'Workers' },
+  attendance:           { path: 'attendance',           title: 'Attendance' },
+  teams:                { path: 'teams',                title: 'Teams' },
+  leave:                { path: 'leave',                title: 'Leave Management' },
+  performance:          { path: 'performance',          title: 'Performance Analytics' },
+  quality:              { path: 'quality',              title: 'Quality Control' },
+  'budget-forecast':    { path: 'budget-forecast',      title: 'Budget Forecasting' },
+  clients:              { path: 'clients',              title: 'Clients' },
+  equipment:            { path: 'equipment',            title: 'Equipment' },
+  expenses:             { path: 'expenses',             title: 'Expenses' },
+  invoices:             { path: 'invoices',             title: 'Invoices' },
+  dailyreport:          { path: 'daily-report',         title: 'Daily Report' },
+  reports:              { path: 'reports',              title: 'Reports' },
+  bom:                  { path: 'bom',                  title: 'Bill of Materials' },
+  ai:                   { path: 'ai-assistant',         title: 'AI Assistant' },
+  settings:             { path: 'settings',             title: 'Settings' },
+};
+
+// ============================================
+// MAIN APP CONTENT (PROTECTED)
+// ============================================
 function AppContent() {
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const location = useLocation();
+  const navigate = useNavigate();
   const [isNavCollapsed, setIsNavCollapsed] = useState(false);
   const { user, logout } = useAuth();
-  const { t, language, isRTL } = useLanguage();
+  const { t, isRTL } = useLanguage();
 
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
@@ -67,10 +106,34 @@ function AppContent() {
 
   const { data, loading, error, loadData, ...actions } = useData();
 
-  const toggleNav = () => {
-    setIsNavCollapsed(!isNavCollapsed);
+  // ============================================
+  // DERIVE activeTab FROM URL
+  // ============================================
+  const urlSegment = location.pathname.split('/').filter(Boolean)[0] || 'dashboard';
+  const matchedEntry = Object.entries(TAB_META).find(([, meta]) => meta.path === urlSegment);
+  const activeTab = matchedEntry ? matchedEntry[0] : 'dashboard';
+
+  // ============================================
+  // SYNC DOCUMENT TITLE
+  // ============================================
+  useEffect(() => {
+    const pageTitle = TAB_META[activeTab]?.title || 'Dashboard';
+    document.title = `${pageTitle} · ${CONFIG.COMPANY_NAME || 'Haji Younas Contracting'}`;
+  }, [activeTab]);
+
+  // ============================================
+  // NAVIGATION HANDLER — pushes real URL
+  // ============================================
+  const handleTabChange = (tab) => {
+    const target = TAB_META[tab]?.path || 'dashboard';
+    navigate(`/${target}`);
   };
 
+  const toggleNav = () => setIsNavCollapsed(prev => !prev);
+
+  // ============================================
+  // LOADING / ERROR SCREENS
+  // ============================================
   if (loading) {
     return (
       <div className="app" dir={isRTL ? 'rtl' : 'ltr'}>
@@ -103,7 +166,7 @@ function AppContent() {
 
   return (
     <div className={`app ${isNavCollapsed ? 'nav-collapsed' : ''}`} dir={isRTL ? 'rtl' : 'ltr'}>
-      <TopBar 
+      <TopBar
         companyName={companyName}
         isNavCollapsed={isNavCollapsed}
         toggleNav={toggleNav}
@@ -111,9 +174,9 @@ function AppContent() {
         onLogout={logout}
       />
 
-      <Navigation 
-        activeTab={activeTab} 
-        setActiveTab={setActiveTab}
+      <Navigation
+        activeTab={activeTab}
+        setActiveTab={handleTabChange}
         companyName={companyName}
         isCollapsed={isNavCollapsed}
         toggleNav={toggleNav}
@@ -122,7 +185,11 @@ function AppContent() {
 
       <main className={`app-main-modern ${isNavCollapsed ? 'nav-collapsed' : ''}`}>
         {activeTab === 'dashboard' && <DashboardComponent data={data} />}
-        {activeTab === 'projects' && <ProjectDashboard data={data} refreshData={actions.refreshData} />}
+
+        {activeTab === 'projects' && (
+          <ProjectDashboard data={data} refreshData={actions.refreshData} />
+        )}
+
         {activeTab === 'entries' && (
           <EntriesManagerComponent
             data={data}
@@ -131,6 +198,7 @@ function AppContent() {
             deleteEntry={actions.deleteEntry}
           />
         )}
+
         {activeTab === 'sites' && (
           <SitesManagerComponent
             data={data}
@@ -140,6 +208,7 @@ function AppContent() {
             refreshData={actions.refreshData}
           />
         )}
+
         {activeTab === 'items' && (
           <ItemManagerComponent
             data={data}
@@ -149,6 +218,7 @@ function AppContent() {
             refreshData={actions.refreshData}
           />
         )}
+
         {activeTab === 'overhead-categories' && (
           <OverheadCategoriesManager
             data={data}
@@ -156,6 +226,7 @@ function AppContent() {
             loading={loading}
           />
         )}
+
         {activeTab === 'monthly-overhead' && (
           <MonthlyOverheadManager
             data={data}
@@ -167,6 +238,7 @@ function AppContent() {
             setSelectedMonth={setSelectedMonth}
           />
         )}
+
         {activeTab === 'monthly-summary' && (
           <MonthlySummaryComponent
             data={data}
@@ -177,6 +249,7 @@ function AppContent() {
             calculateMonthlySummary={actions.calculateMonthlySummary}
           />
         )}
+
         {activeTab === 'dailyentry' && (
           <DailyEntryComponent
             data={data}
@@ -185,18 +258,21 @@ function AppContent() {
             refreshData={actions.refreshData}
           />
         )}
+
         {activeTab === 'advances' && (
           <AdvanceManagement data={data} refreshData={actions.refreshData} />
         )}
+
         {activeTab === 'loans' && (
           <LoanManagement data={data} refreshData={actions.refreshData} />
         )}
+
         {activeTab === 'inventory' && (
           <InventoryManagement data={data} refreshData={actions.refreshData} />
         )}
-        {activeTab === 'cumulative' && (
-          <CumulativeTrackerComponent data={data} />
-        )}
+
+        {activeTab === 'cumulative' && <CumulativeTrackerComponent data={data} />}
+
         {activeTab === 'workers' && (
           <WorkersManagerComponent
             data={data}
@@ -205,6 +281,7 @@ function AppContent() {
             deleteWorker={actions.deleteWorker}
           />
         )}
+
         {activeTab === 'attendance' && (
           <AttendanceManagerComponent
             data={data}
@@ -213,6 +290,7 @@ function AppContent() {
             refreshData={actions.refreshData}
           />
         )}
+
         {activeTab === 'teams' && (
           <TeamsManagerComponent
             data={data}
@@ -223,24 +301,30 @@ function AppContent() {
             removeTeamMember={actions.removeTeamMember}
           />
         )}
+
         {activeTab === 'leave' && (
           <LeaveManagement data={data} refreshData={actions.refreshData} />
         )}
+
         {activeTab === 'performance' && (
           <PerformanceAnalytics data={data} refreshData={actions.refreshData} />
         )}
+
         {activeTab === 'quality' && (
           <QualityControl data={data} refreshData={actions.refreshData} />
         )}
+
         {activeTab === 'budget-forecast' && (
           <BudgetForecasting data={data} refreshData={actions.refreshData} />
         )}
+
         {activeTab === 'clients' && (
           <ClientManagement data={data} refreshData={actions.refreshData} />
         )}
+
         {activeTab === 'equipment' && (
-          <EquipmentManagement 
-            data={data} 
+          <EquipmentManagement
+            data={data}
             refreshData={actions.refreshData}
             addEquipment={actions.addEquipment}
             updateEquipment={actions.updateEquipment}
@@ -252,6 +336,7 @@ function AppContent() {
             calculateDepreciation={actions.calculateDepreciation}
           />
         )}
+
         {activeTab === 'expenses' && (
           <ExpensesManagerComponent
             data={data}
@@ -261,6 +346,7 @@ function AppContent() {
             refreshData={actions.refreshData}
           />
         )}
+
         {activeTab === 'invoices' && (
           <InvoicesManagerComponent
             data={data}
@@ -269,16 +355,19 @@ function AppContent() {
             deleteInvoice={actions.deleteInvoice}
           />
         )}
+
         {activeTab === 'dailyreport' && (
           <DailyReportComponent data={data} selectedDate={Utils.today()} />
         )}
-        {activeTab === 'reports' && (
-          <ReportsComponent data={data} />
-        )}
+
+        {activeTab === 'reports' && <ReportsComponent data={data} />}
+
         {activeTab === 'bom' && (
           <BOMComponent data={data} updateData={actions.updateData} />
         )}
+
         {activeTab === 'ai' && <AIAssistantComponent data={data} />}
+
         {activeTab === 'settings' && (
           <SettingsComponent data={data} updateData={actions.updateData} />
         )}
@@ -287,7 +376,9 @@ function AppContent() {
   );
 }
 
-// Main App with Routing and Providers
+// ============================================
+// MAIN APP WITH ROUTING
+// ============================================
 function App() {
   return (
     <ThemeProvider>
@@ -295,23 +386,23 @@ function App() {
         <LanguageProvider>
           <Router>
             <Routes>
-              {/* Public Routes */}
+              {/* Public routes */}
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
-              
-              {/* Protected Routes */}
-              <Route 
-                path="/*" 
+
+              {/* Root → dashboard */}
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+              {/* Protected app — every tab has its own URL */}
+              <Route
+                path="/*"
                 element={
                   <ProtectedRoute>
                     <AppContent />
                   </ProtectedRoute>
-                } 
+                }
               />
-              
-              {/* Redirect root to dashboard */}
-              <Route path="/" element={<Navigate to="/dashboard" replace />} />
             </Routes>
           </Router>
         </LanguageProvider>

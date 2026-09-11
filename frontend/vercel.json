@@ -1,5 +1,4 @@
 {
-  "name": "younas-contracting",
   "version": 2,
   "builds": [
     {
@@ -11,9 +10,7 @@
     }
   ],
   "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/"
-    }
+    { "handle": "filesystem" },
+    { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
