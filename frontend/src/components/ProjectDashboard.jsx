@@ -158,13 +158,14 @@ import {
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import Utils from '../utils/Utils';
-import { CONFIG } from '../config/constants';
+
 import './ProjectDashboard.css';
 import letterheadHeader from '../assets/letterhead-header.png';
 import letterheadFooter from '../assets/letterhead-footer.png';
 import background from '../assets/background.png';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+import { CONFIG } from '../config/constants';
+const API_BASE_URL = CONFIG.API_BASE || 'http://localhost:5000/api';
 
 const ProjectDashboard = ({ data, refreshData }) => {
   const [projects, setProjects] = useState([]);

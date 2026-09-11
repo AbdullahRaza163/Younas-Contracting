@@ -34,7 +34,8 @@ import {
   Radar
 } from 'recharts';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000/api';
+import { CONFIG } from '../config/constants';
+const API_BASE_URL = CONFIG.API_BASE || 'http://localhost:5000/api';
 
 const MonthlySummaryComponent = ({ 
   data, 
