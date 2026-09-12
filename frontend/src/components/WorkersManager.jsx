@@ -46,12 +46,18 @@ import {
   FileText,
   Target,
   Star,
-  CircleDot
+  CircleDot,
+  Sun,
+  Moon
 } from 'lucide-react';
 import Utils from '../utils/Utils';
+import { useTheme } from '../context/ThemeContext';
 import './WorkersManager.css';
 
 const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }) => {
+  // ============================================
+  // STATE
+  // ============================================
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
@@ -65,7 +71,10 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   const [mounted, setMounted] = useState(false);
   const [toast, setToast] = useState(null);
 
-  // ===== PAGINATION STATE =====
+  // Theme — shared with TopBar via ThemeContext
+  const { theme, toggleTheme, isDark } = useTheme();
+
+  // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(9);
 
@@ -132,7 +141,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   }, [workers, searchTerm, roleFilter, statusFilter]);
 
   // ============================================
-  // PAGINATION LOGIC
+  // PAGINATION
   // ============================================
   const totalPages = Math.max(1, Math.ceil(filteredWorkers.length / itemsPerPage));
 
@@ -142,12 +151,10 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     return filteredWorkers.slice(startIndex, endIndex);
   }, [filteredWorkers, currentPage, itemsPerPage]);
 
-  // Reset to page 1 whenever the filter set changes
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, roleFilter, statusFilter, itemsPerPage]);
 
-  // Clamp current page if filtered list shrinks
   useEffect(() => {
     if (currentPage > totalPages) setCurrentPage(totalPages);
   }, [currentPage, totalPages]);
@@ -451,6 +458,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
           </span>
           <div className="wk-actions">
             <button
+              type="button"
               className="wk-btn-icon"
               onClick={() => { setSelectedWorker(worker); setShowDetailModal(true); }}
               title="View details"
@@ -458,6 +466,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               <Eye size={14} />
             </button>
             <button
+              type="button"
               className="wk-btn-icon wk-btn-icon-edit"
               onClick={() => handleEdit(worker)}
               title="Edit"
@@ -465,6 +474,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               <Edit size={14} />
             </button>
             <button
+              type="button"
               className="wk-btn-icon wk-btn-icon-danger"
               onClick={() => handleDelete(worker)}
               title="Delete"
@@ -472,6 +482,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               <Trash2 size={14} />
             </button>
             <button
+              type="button"
               className="wk-btn-icon wk-btn-icon-expand"
               onClick={() => toggleExpand(worker.id)}
               title={isExpanded ? 'Collapse' : 'Expand'}
@@ -581,12 +592,13 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
             </div>
             <div className="wk-modal-actions">
               <button
+                type="button"
                 className="wk-modal-btn-edit"
                 onClick={() => { setShowDetailModal(false); handleEdit(w); }}
               >
                 <Edit size={15} /> Edit
               </button>
-              <button className="wk-modal-close" onClick={() => setShowDetailModal(false)}>
+              <button type="button" className="wk-modal-close" onClick={() => setShowDetailModal(false)}>
                 <X size={18} />
               </button>
             </div>
@@ -779,7 +791,11 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               </p>
             </div>
           </div>
-          <button className="wk-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
+          <button
+            type="button"
+            className="wk-modal-close"
+            onClick={() => { setShowForm(false); resetForm(); }}
+          >
             <X size={18} />
           </button>
         </div>
@@ -1139,6 +1155,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
         <div className="wk-ambient-orb wk-ambient-3" />
       </div>
 
+      {/* Header */}
       <div className="wk-header">
         <div className="wk-header-left">
           <div className="wk-header-icon-wrapper">
@@ -1161,15 +1178,29 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               onChange={(e) => setSearchTerm(e.target.value)}
             />
             {searchTerm && (
-              <button className="wk-clear-search" onClick={() => setSearchTerm('')}>
+              <button type="button" className="wk-clear-search" onClick={() => setSearchTerm('')}>
                 <X size={13} />
               </button>
             )}
           </div>
-          <button className="wk-btn-ghost" onClick={() => window.location.reload()}>
+
+          {/* Theme toggle — reads/writes the shared ThemeContext used by TopBar */}
+          <button
+            type="button"
+            className="wk-btn-ghost wk-theme-toggle"
+            onClick={toggleTheme}
+            title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            aria-label={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          >
+            {isDark ? <Sun size={14} /> : <Moon size={14} />}
+            <span>{isDark ? 'Light' : 'Dark'}</span>
+          </button>
+
+          <button type="button" className="wk-btn-ghost" onClick={() => window.location.reload()}>
             <RefreshCw size={14} /> Refresh
           </button>
           <button
+            type="button"
             className="wk-btn-primary"
             onClick={() => { resetForm(); setShowForm(true); }}
           >
@@ -1178,9 +1209,11 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
         </div>
       </div>
 
+      {/* Stats */}
       {renderStats()}
       {renderTooltip()}
 
+      {/* Filters */}
       <div className="wk-filters-row">
         <div className="wk-status-filter">
           {[
@@ -1192,6 +1225,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
             return (
               <button
                 key={f.id}
+                type="button"
                 className={`wk-status-pill ${statusFilter === f.id ? 'active' : ''}`}
                 onClick={() => setStatusFilter(f.id)}
               >
@@ -1220,7 +1254,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
         )}
 
         {hasActiveFilters && (
-          <button className="wk-clear-filters" onClick={clearFilters}>
+          <button type="button" className="wk-clear-filters" onClick={clearFilters}>
             <X size={13} /> Clear
           </button>
         )}
@@ -1230,6 +1264,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
         </span>
       </div>
 
+      {/* Content */}
       {filteredWorkers.length === 0 ? (
         <div className="wk-empty-state">
           <div className="wk-empty-icon-wrapper">
@@ -1242,11 +1277,12 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               : 'Add your first worker to get started.'}
           </p>
           {hasActiveFilters ? (
-            <button className="wk-btn-secondary" onClick={clearFilters}>
+            <button type="button" className="wk-btn-secondary" onClick={clearFilters}>
               <X size={14} /> Clear filters
             </button>
           ) : (
             <button
+              type="button"
               className="wk-btn-primary"
               onClick={() => { resetForm(); setShowForm(true); }}
             >
@@ -1259,12 +1295,11 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
           <div className="wk-grid">
             {paginatedWorkers.map((w, i) => renderWorkerCard(w, i))}
           </div>
-
-          {/* Pagination */}
           {renderPagination()}
         </>
       )}
 
+      {/* Modals */}
       {showForm && renderFormModal()}
       {showDetailModal && renderDetailModal()}
     </div>

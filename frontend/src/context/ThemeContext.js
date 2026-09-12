@@ -15,12 +15,19 @@ export const useTheme = () => {
 export const ThemeProvider = ({ children }) => {
   // Check localStorage for saved theme preference
   const getInitialTheme = () => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme) {
-      return savedTheme;
-    }
+    if (typeof window === 'undefined') return 'light';
+    try {
+      const savedTheme = window.localStorage.getItem('theme');
+      if (savedTheme === 'light' || savedTheme === 'dark') {
+        return savedTheme;
+      }
+    } catch (_) { /* ignore */ }
+
     // Check system preference
-    if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+    if (
+      window.matchMedia &&
+      window.matchMedia('(prefers-color-scheme: dark)').matches
+    ) {
       return 'dark';
     }
     return 'light';
@@ -29,24 +36,32 @@ export const ThemeProvider = ({ children }) => {
   const [theme, setTheme] = useState(getInitialTheme);
 
   useEffect(() => {
+    if (typeof document === 'undefined') return;
+
     // Save theme preference to localStorage
-    localStorage.setItem('theme', theme);
-    
-    // Apply theme to document
-    if (theme === 'dark') {
-      document.documentElement.setAttribute('data-theme', 'dark');
-    } else {
-      document.documentElement.removeAttribute('data-theme');
-    }
+    try {
+      window.localStorage.setItem('theme', theme);
+    } catch (_) { /* ignore */ }
+
+    // ALWAYS set the attribute — both "light" and "dark"
+    // This makes html[data-theme="light"] and html[data-theme="dark"]
+    // selectors in every CSS file (globals, Navigation, WorkersManager)
+    // match reliably.
+    document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
   const toggleTheme = () => {
-    setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
+    setTheme(prevTheme => (prevTheme === 'light' ? 'dark' : 'light'));
+  };
+
+  const setThemeExplicit = (next) => {
+    setTheme(next === 'dark' ? 'dark' : 'light');
   };
 
   const value = {
     theme,
     toggleTheme,
+    setTheme: setThemeExplicit,
     isDark: theme === 'dark'
   };
 

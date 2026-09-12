@@ -1,7 +1,8 @@
 // src/components/DailyReportComponent.jsx
-import React, { useState, useMemo, useCallback } from 'react';
-import { 
-  Download, Printer, X, FileText, HardHat, 
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import { createPortal } from 'react-dom';
+import {
+  Download, Printer, X, FileText, HardHat,
   Calendar, TrendingUp, TrendingDown, DollarSign,
   Users, Clock, BarChart3, LayoutDashboard,
   Building2, Award, AlertCircle, CheckCircle,
@@ -9,8 +10,18 @@ import {
   RefreshCw, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, Eye, EyeOff,
   Zap, Sparkles, Crown, Target, Gauge,
-  Receipt, Send, Edit, Trash2, Plus
+  Receipt, Send, Edit, Trash2, Plus,
+  Percent as PercentIcon, PieChart as PieChartIcon,
+  LineChart as LineChartIcon, Trophy, Wallet,
+  Landmark, Scale, BadgeCheck, Minus, Calculator,
+  CircleDollarSign, Package, Timer, Filter,
+  ChevronDown, Activity, Layers
 } from 'lucide-react';
+import {
+  ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend,
+  ComposedChart, Area, AreaChart, Line
+} from 'recharts';
 import Utils from '../utils/Utils';
 import { CONFIG } from '../config/constants';
 import './DailyReport.css';
@@ -18,60 +29,132 @@ import letterheadHeader from '../assets/letterhead-header.png';
 import letterheadFooter from '../assets/letterhead-footer.png';
 import background from '../assets/background.png';
 
+// ============================================
+// PORTAL
+// ============================================
+const ModalPortal = ({ children }) => {
+  if (typeof document === 'undefined') return null;
+  return createPortal(children, document.body);
+};
+
+// ============================================
+// RING PERCENTAGE GAUGE
+// ============================================
+const RingGauge = ({ value = 0, max = 100, size = 130, stroke = 10, color = '#009846', label, sublabel }) => {
+  const radius = (size - stroke) / 2;
+  const circ = 2 * Math.PI * radius;
+  const pct = Math.max(0, Math.min(1, value / max));
+  const dash = circ * pct;
+  const gap = circ - dash;
+  return (
+    <div className="dr-ring-gauge" style={{ width: size, height: size }}>
+      <svg width={size} height={size}>
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
+          stroke="rgba(148,163,184,0.18)" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={radius} fill="none"
+          stroke={color} strokeWidth={stroke} strokeLinecap="round"
+          strokeDasharray={`${dash} ${gap}`}
+          transform={`rotate(-90 ${size / 2} ${size / 2})`}
+          style={{ transition: 'stroke-dasharray 0.9s cubic-bezier(0.16,1,0.3,1)' }} />
+      </svg>
+      <div className="dr-ring-center">
+        <span className="dr-ring-value" style={{ color }}>{Math.round(pct * 100)}%</span>
+        {label && <span className="dr-ring-label">{label}</span>}
+        {sublabel && <span className="dr-ring-sublabel">{sublabel}</span>}
+      </div>
+    </div>
+  );
+};
+
+// ============================================
+// CHART TOOLTIP
+// ============================================
+const ChartTooltip = ({ active, payload, label, formatter }) => {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div className="dr-chart-tooltip">
+      {label && <div className="dr-chart-tooltip-label">{label}</div>}
+      {payload.map((p, i) => (
+        <div key={i} className="dr-chart-tooltip-row">
+          <span className="dr-chart-tooltip-dot" style={{ background: p.color || p.fill || p.payload?.color }} />
+          <span className="dr-chart-tooltip-name">{p.name}</span>
+          <span className="dr-chart-tooltip-val">
+            {formatter ? formatter(p.value, p.name) : p.value}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const DR_COLORS = ['#009846', '#3b82f6', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899', '#14b8a6'];
+
+// ============================================
+// MAIN COMPONENT
+// ============================================
 const DailyReportComponent = ({ data, selectedDate }) => {
-  // ============================================
-  // STATE
-  // ============================================
   const [reportDate, setReportDate] = useState(selectedDate || Utils.today());
   const [dateRange, setDateRange] = useState({
-    type: 'single',
+    type: 'today',
     startDate: Utils.today(),
     endDate: Utils.today()
   });
+  // Custom range inputs (only applied when Apply button clicked)
+  const [customStart, setCustomStart] = useState(Utils.today());
+  const [customEnd, setCustomEnd] = useState(Utils.today());
+  const [showCustomPanel, setShowCustomPanel] = useState(false);
   const [showReport, setShowReport] = useState(false);
-  const [viewMode, setViewMode] = useState('daily');
+  const [viewMode, setViewMode] = useState('overview');
   const [hoveredCard, setHoveredCard] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+  const [mounted, setMounted] = useState(false);
+
+  // Pagination
+  const [dailyPage, setDailyPage] = useState(1);
+  const [dailyPer, setDailyPer] = useState(10);
+  const [sitePage, setSitePage] = useState(1);
+  const [sitePer, setSitePer] = useState(10);
+  const [workerPage, setWorkerPage] = useState(1);
+  const [workerPer, setWorkerPer] = useState(10);
+
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   // ============================================
   // DATE RANGE CALCULATIONS
   // ============================================
-  const getDateRange = useCallback((type, customStart, customEnd) => {
+  const getDateRange = useCallback((type, customStartArg, customEndArg) => {
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
     const start = new Date();
     const end = new Date();
 
-    switch(type) {
+    switch (type) {
       case 'today':
         return { startDate: todayStr, endDate: todayStr };
+      case 'yesterday': {
+        const y = new Date();
+        y.setDate(y.getDate() - 1);
+        const yStr = y.toISOString().split('T')[0];
+        return { startDate: yStr, endDate: yStr };
+      }
       case 'thisMonth':
         start.setDate(1);
-        return { 
-          startDate: start.toISOString().split('T')[0], 
-          endDate: todayStr 
-        };
+        return { startDate: start.toISOString().split('T')[0], endDate: todayStr };
       case 'lastMonth':
         start.setMonth(start.getMonth() - 1);
         start.setDate(1);
         end.setDate(0);
-        return { 
-          startDate: start.toISOString().split('T')[0], 
-          endDate: end.toISOString().split('T')[0] 
-        };
+        return { startDate: start.toISOString().split('T')[0], endDate: end.toISOString().split('T')[0] };
       case 'last6Months':
         start.setMonth(start.getMonth() - 6);
-        return { 
-          startDate: start.toISOString().split('T')[0], 
-          endDate: todayStr 
-        };
+        return { startDate: start.toISOString().split('T')[0], endDate: todayStr };
       case 'thisYear':
         start.setMonth(0);
         start.setDate(1);
-        return { 
-          startDate: start.toISOString().split('T')[0], 
-          endDate: todayStr 
-        };
+        return { startDate: start.toISOString().split('T')[0], endDate: todayStr };
       case 'lastYear':
         start.setFullYear(start.getFullYear() - 1);
         start.setMonth(0);
@@ -79,20 +162,14 @@ const DailyReportComponent = ({ data, selectedDate }) => {
         end.setFullYear(end.getFullYear() - 1);
         end.setMonth(11);
         end.setDate(31);
-        return { 
-          startDate: start.toISOString().split('T')[0], 
-          endDate: end.toISOString().split('T')[0] 
-        };
+        return { startDate: start.toISOString().split('T')[0], endDate: end.toISOString().split('T')[0] };
       case 'custom':
-        return { 
-          startDate: customStart || todayStr, 
-          endDate: customEnd || todayStr 
+        return {
+          startDate: customStartArg || todayStr,
+          endDate: customEndArg || todayStr
         };
       default:
-        return { 
-          startDate: reportDate || todayStr, 
-          endDate: reportDate || todayStr 
-        };
+        return { startDate: reportDate || todayStr, endDate: reportDate || todayStr };
     }
   }, [reportDate]);
 
@@ -104,20 +181,15 @@ const DailyReportComponent = ({ data, selectedDate }) => {
     const start = range.startDate;
     const end = range.endDate;
 
-    const filteredEntries = data.entries.filter(e => {
-      return e.date >= start && e.date <= end;
-    });
-
-    const filteredAttendance = data.attendance.filter(a => {
-      return a.date >= start && a.date <= end;
-    });
+    const filteredEntries = data.entries.filter(e => e.date >= start && e.date <= end);
+    const filteredAttendance = data.attendance.filter(a => a.date >= start && a.date <= end);
 
     const uniqueDates = [...new Set(filteredEntries.map(e => e.date))].sort();
 
     const dailyAggregates = uniqueDates.map(date => {
       const dayEntries = filteredEntries.filter(e => e.date === date);
       const dayAttendance = filteredAttendance.filter(a => a.date === date);
-      
+
       const revenue = Utils.calculateTotal(dayEntries, 'kamai');
       const labour = Utils.calculateTotal(dayEntries, 'labour');
       const overhead = Utils.calculateTotal(dayEntries, 'overhead');
@@ -133,14 +205,8 @@ const DailyReportComponent = ({ data, selectedDate }) => {
       }, 0);
 
       return {
-        date,
-        revenue,
-        labour,
-        overhead,
-        oneTime,
-        profit,
-        workersPresent,
-        totalHours,
+        date, revenue, labour, overhead, oneTime, profit,
+        workersPresent, totalHours,
         entryCount: dayEntries.length,
         entries: dayEntries,
         attendance: dayAttendance
@@ -152,13 +218,20 @@ const DailyReportComponent = ({ data, selectedDate }) => {
       labour: Utils.calculateTotal(filteredEntries, 'labour'),
       overhead: Utils.calculateTotal(filteredEntries, 'overhead'),
       oneTime: Utils.calculateTotal(filteredEntries, 'oneTime'),
-      profit: Utils.calculateTotal(filteredEntries, 'kamai') - 
-              Utils.calculateTotal(filteredEntries, 'labour') - 
-              Utils.calculateTotal(filteredEntries, 'overhead') - 
-              Utils.calculateTotal(filteredEntries, 'oneTime'),
+      profit: Utils.calculateTotal(filteredEntries, 'kamai') -
+        Utils.calculateTotal(filteredEntries, 'labour') -
+        Utils.calculateTotal(filteredEntries, 'overhead') -
+        Utils.calculateTotal(filteredEntries, 'oneTime'),
       entryCount: filteredEntries.length,
       uniqueDates: uniqueDates.length,
-      totalDays: uniqueDates.length
+      totalDays: uniqueDates.length,
+      totalWorkers: filteredAttendance.filter(a => a.present).length,
+      totalHours: filteredAttendance.reduce((sum, a) => {
+        if (a.checkedIn && a.checkedOut) {
+          return sum + Utils.calculateHoursWorked(a.checkedIn, a.checkedOut);
+        }
+        return sum;
+      }, 0)
     };
 
     const workerSummary = data.workers.map(worker => {
@@ -172,13 +245,7 @@ const DailyReportComponent = ({ data, selectedDate }) => {
       const daysPresent = workerAttendance.filter(a => a.present).length;
       const totalWage = Utils.calculateDailyWage(totalHours, worker.dailyRate);
 
-      return {
-        ...worker,
-        totalHours,
-        daysPresent,
-        totalWage,
-        attendance: workerAttendance
-      };
+      return { ...worker, totalHours, daysPresent, totalWage, attendance: workerAttendance };
     });
 
     const siteSummary = data.sites.map(site => {
@@ -189,33 +256,70 @@ const DailyReportComponent = ({ data, selectedDate }) => {
       const oneTime = Utils.calculateTotal(siteEntries, 'oneTime');
       const profit = revenue - labour - overhead - oneTime;
 
-      return {
-        ...site,
-        revenue,
-        labour,
-        overhead,
-        oneTime,
-        profit,
-        entryCount: siteEntries.length,
-        entries: siteEntries
-      };
+      return { ...site, revenue, labour, overhead, oneTime, profit, entryCount: siteEntries.length, entries: siteEntries };
     });
 
     return {
-      startDate: start,
-      endDate: end,
-      dailyAggregates,
-      totals,
-      workerSummary,
-      siteSummary,
-      filteredEntries,
-      filteredAttendance,
+      startDate: start, endDate: end,
+      dailyAggregates, totals, workerSummary, siteSummary,
+      filteredEntries, filteredAttendance,
       dateRange: range
     };
   }, [data, dateRange, getDateRange, reportDate]);
 
   // ============================================
-  // CARD DETAILS FOR TOOLTIPS
+  // PAGINATION HELPERS
+  // ============================================
+  const paginate = (list, page, per) => {
+    const total = Math.max(1, Math.ceil(list.length / per));
+    const p = Math.max(1, Math.min(page, total));
+    const start = (p - 1) * per;
+    return { total, page: p, items: list.slice(start, start + per) };
+  };
+  const getPageNumbers = (current, total) => {
+    const pages = []; const max = 5;
+    let start = Math.max(1, current - 2);
+    let end = Math.min(total, start + max - 1);
+    if (end - start < max - 1) start = Math.max(1, end - max + 1);
+    for (let i = start; i <= end; i++) pages.push(i);
+    return pages;
+  };
+  const renderPagination = (current, total, per, setPer, setPage, count, label = 'items') => {
+    if (count === 0) return null;
+    const startItem = (current - 1) * per + 1;
+    const endItem = Math.min(current * per, count);
+    return (
+      <div className="dr-pagination">
+        <div className="dr-pagination-info">
+          Showing <strong>{startItem}</strong>–<strong>{endItem}</strong> of <strong>{count}</strong> {label}
+        </div>
+        <div className="dr-pagination-controls">
+          <div className="dr-pagination-items">
+            <span>Show:</span>
+            <select value={per} onChange={(e) => { setPer(Number(e.target.value)); setPage(1); }} className="dr-pagination-select">
+              {[5, 10, 15, 20, 25, 50].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+          <div className="dr-pagination-buttons">
+            <button className="dr-page-btn" onClick={() => setPage(1)} disabled={current === 1}><ChevronsLeft size={13} /></button>
+            <button className="dr-page-btn" onClick={() => setPage(current - 1)} disabled={current === 1}><ChevronLeft size={13} /></button>
+            {getPageNumbers(current, total).map(p => (
+              <button key={p} className={`dr-page-btn ${p === current ? 'active' : ''}`} onClick={() => setPage(p)}>{p}</button>
+            ))}
+            <button className="dr-page-btn" onClick={() => setPage(current + 1)} disabled={current === total}><ChevronRight size={13} /></button>
+            <button className="dr-page-btn" onClick={() => setPage(total)} disabled={current === total}><ChevronsRight size={13} /></button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  useEffect(() => { setDailyPage(1); }, [dailyPer, dateRange, viewMode]);
+  useEffect(() => { setSitePage(1); }, [sitePer, dateRange, viewMode]);
+  useEffect(() => { setWorkerPage(1); }, [workerPer, dateRange, viewMode]);
+
+  // ============================================
+  // CARD DETAILS
   // ============================================
   const cardDetails = {
     revenue: {
@@ -241,7 +345,7 @@ const DailyReportComponent = ({ data, selectedDate }) => {
       details: [
         { label: 'Total Labour', value: Utils.formatCurrency(filteredData.totals.labour) },
         { label: 'Total Workers', value: data.workers?.length || 0 },
-        { label: 'Total Hours', value: filteredData.workerSummary.reduce((sum, w) => sum + w.totalHours, 0).toFixed(1) },
+        { label: 'Total Hours', value: filteredData.totals.totalHours.toFixed(1) },
         { label: 'Avg per Day', value: filteredData.totals.totalDays > 0 ? Utils.formatCurrency(filteredData.totals.labour / filteredData.totals.totalDays) : '0.000' }
       ]
     },
@@ -256,51 +360,136 @@ const DailyReportComponent = ({ data, selectedDate }) => {
     }
   };
 
-  // ============================================
-  // HANDLE CARD HOVER
-  // ============================================
   const handleCardHover = (cardId, event) => {
     setHoveredCard(cardId);
-    setTooltipPosition({
-      x: event.clientX + 15,
-      y: event.clientY - 10
-    });
+    setTooltipPosition({ x: event.clientX + 15, y: event.clientY - 10 });
   };
+  const handleCardLeave = () => setHoveredCard(null);
 
-  const handleCardLeave = () => {
-    setHoveredCard(null);
-  };
-
-  // Date range presets
-  const datePresets = [
-    { id: 'today', label: 'Today' },
-    { id: 'thisMonth', label: 'This Month' },
-    { id: 'lastMonth', label: 'Last Month' },
-    { id: 'last6Months', label: 'Last 6 Months' },
-    { id: 'thisYear', label: 'This Year' },
-    { id: 'lastYear', label: 'Last Year' }
+  // ============================================
+  // DATE FILTER HANDLERS
+  // ============================================
+  const filterOptions = [
+    { id: 'today', label: 'Today', icon: Calendar },
+    { id: 'yesterday', label: 'Yesterday', icon: Clock },
+    { id: 'thisMonth', label: 'This Month', icon: Calendar },
+    { id: 'lastMonth', label: 'Last Month', icon: Calendar },
+    { id: 'custom', label: 'Custom', icon: Filter }
   ];
 
-  const handleDateRangeChange = (type) => {
+  const handleFilterSelect = (type) => {
+    if (type === 'custom') {
+      setShowCustomPanel(!showCustomPanel);
+      return;
+    }
+    setShowCustomPanel(false);
     const range = getDateRange(type);
-    setDateRange({
-      type,
-      startDate: range.startDate,
-      endDate: range.endDate
-    });
+    setDateRange({ type, startDate: range.startDate, endDate: range.endDate });
     setShowReport(true);
   };
 
-  const handleCustomDateRange = () => {
-    if (dateRange.startDate && dateRange.endDate) {
-      setDateRange({
-        type: 'custom',
-        startDate: dateRange.startDate,
-        endDate: dateRange.endDate
-      });
+  const applyCustomRange = () => {
+    if (customStart && customEnd) {
+      setDateRange({ type: 'custom', startDate: customStart, endDate: customEnd });
       setShowReport(true);
+      setShowCustomPanel(false);
     }
   };
+
+  // ============================================
+  // CHART DATA
+  // ============================================
+  const costBreakdownData = useMemo(() => {
+    const total = filteredData.totals.revenue || 1;
+    return [
+      { key: 'labour', label: 'Labour', value: filteredData.totals.labour, pct: (filteredData.totals.labour / total) * 100, color: '#ef4444' },
+      { key: 'overhead', label: 'Overhead', value: filteredData.totals.overhead, pct: (filteredData.totals.overhead / total) * 100, color: '#f59e0b' },
+      { key: 'oneTime', label: 'One-Time', value: filteredData.totals.oneTime, pct: (filteredData.totals.oneTime / total) * 100, color: '#8b5cf6' },
+      { key: 'profit', label: 'Profit', value: Math.max(0, filteredData.totals.profit), pct: (Math.max(0, filteredData.totals.profit) / total) * 100, color: '#009846' }
+    ];
+  }, [filteredData]);
+
+  const dailyChartData = useMemo(() => {
+    return filteredData.dailyAggregates.map(d => ({
+      label: d.date.slice(5),
+      date: d.date,
+      revenue: d.revenue,
+      profit: d.profit,
+      labour: d.labour
+    }));
+  }, [filteredData.dailyAggregates]);
+
+  const topSitesData = useMemo(() => {
+    return [...filteredData.siteSummary]
+      .filter(s => s.entryCount > 0)
+      .sort((a, b) => b.profit - a.profit)
+      .slice(0, 8)
+      .map(s => ({
+        name: s.name.length > 14 ? s.name.slice(0, 14) + '…' : s.name,
+        value: s.profit,
+        revenue: s.revenue
+      }));
+  }, [filteredData.siteSummary]);
+
+  const siteRevenueChartData = useMemo(() => {
+    return [...filteredData.siteSummary]
+      .filter(s => s.entryCount > 0)
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 10)
+      .map(s => ({
+        name: s.name.length > 12 ? s.name.slice(0, 12) + '…' : s.name,
+        revenue: s.revenue,
+        profit: Math.max(0, s.profit),
+        labour: s.labour
+      }));
+  }, [filteredData.siteSummary]);
+
+  const topWorkersData = useMemo(() => {
+    return [...filteredData.workerSummary]
+      .filter(w => w.totalWage > 0)
+      .sort((a, b) => b.totalWage - a.totalWage)
+      .slice(0, 8)
+      .map(w => ({
+        name: w.name.length > 14 ? w.name.slice(0, 14) + '…' : w.name,
+        value: w.totalWage,
+        hours: w.totalHours,
+        days: w.daysPresent
+      }));
+  }, [filteredData.workerSummary]);
+
+  // ============================================
+  // KPI ITEMS
+  // ============================================
+  const kpiItems = [
+    {
+      id: 'revenue', icon: DollarSign, label: 'Total Revenue',
+      value: Utils.formatCurrencyShort(filteredData.totals.revenue),
+      meta: `${filteredData.totals.totalDays} days · ${filteredData.totals.entryCount} entries`,
+      color: '#009846', accent: 'linear-gradient(90deg,#009846,#34d399)', trend: 'up'
+    },
+    {
+      id: 'profit', icon: TrendingUp, label: 'Net Profit',
+      value: Utils.formatCurrencyShort(filteredData.totals.profit),
+      meta: filteredData.totals.revenue > 0 ? `${((filteredData.totals.profit / filteredData.totals.revenue) * 100).toFixed(1)}% margin` : '0%',
+      color: filteredData.totals.profit >= 0 ? '#009846' : '#ef4444',
+      accent: filteredData.totals.profit >= 0
+        ? 'linear-gradient(90deg,#009846,#34d399)'
+        : 'linear-gradient(90deg,#dc2626,#ef4444)',
+      trend: filteredData.totals.profit >= 0 ? 'up' : 'down'
+    },
+    {
+      id: 'labour', icon: Users, label: 'Labour Costs',
+      value: Utils.formatCurrencyShort(filteredData.totals.labour),
+      meta: `${filteredData.totals.totalHours.toFixed(1)}h worked`,
+      color: '#ef4444', accent: 'linear-gradient(90deg,#ef4444,#f87171)', trend: 'neutral'
+    },
+    {
+      id: 'sites', icon: Building2, label: 'Active Sites',
+      value: data.sites?.length || 0,
+      meta: `${filteredData.siteSummary.filter(s => s.entryCount > 0).length} with entries`,
+      color: '#3b82f6', accent: 'linear-gradient(90deg,#3b82f6,#60a5fa)', trend: 'neutral'
+    }
+  ];
 
   // ============================================
   // EXPORT CSV
@@ -314,20 +503,12 @@ const DailyReportComponent = ({ data, selectedDate }) => {
       ['=== DAILY SUMMARY ==='],
       ['Date', 'Revenue', 'Labour', 'Overhead', 'One-Time', 'Profit', 'Workers', 'Hours']
     ];
-
     filteredData.dailyAggregates.forEach(day => {
       rows.push([
-        day.date,
-        day.revenue.toFixed(3),
-        day.labour.toFixed(3),
-        day.overhead.toFixed(3),
-        day.oneTime.toFixed(3),
-        day.profit.toFixed(3),
-        day.workersPresent,
-        day.totalHours.toFixed(1)
+        day.date, day.revenue.toFixed(3), day.labour.toFixed(3), day.overhead.toFixed(3),
+        day.oneTime.toFixed(3), day.profit.toFixed(3), day.workersPresent, day.totalHours.toFixed(1)
       ]);
     });
-
     rows.push([]);
     rows.push(['=== TOTALS ===']);
     rows.push(['Total Revenue', filteredData.totals.revenue.toFixed(3)]);
@@ -349,23 +530,17 @@ const DailyReportComponent = ({ data, selectedDate }) => {
   };
 
   // ============================================
-  // GENERATE PROFESSIONAL REPORT HTML (for PDF/Print)
+  // PRINT REPORT
   // ============================================
   const generateProfessionalReportHTML = () => {
     const companyName = CONFIG.COMPANY_NAME || 'Haji Younas Contracting';
-    const companyPhone = data.companyPhone || '+973 37099957';
-    const companyEmail = data.companyEmail || 'hajiyounas.contracting@gmail.com';
-    const companyAddress = data.companyAddress || 'Flat/Shop 21, Bldg A0365, Road 55, Block 210, Muharraq';
-    const companyCr = data.companyCr || '141997-1';
-
-    const { dailyAggregates, totals, workerSummary, siteSummary } = filteredData;
-
     const primary = '#1a3c6e';
-    const secondary = '#c9a84c';
     const light = '#e8edf3';
     const muted = '#6a6a8a';
     const border = '#d4d9e0';
     const text = '#1a1a2e';
+
+    const { dailyAggregates, totals, workerSummary, siteSummary } = filteredData;
 
     return `<!DOCTYPE html>
 <html>
@@ -373,277 +548,85 @@ const DailyReportComponent = ({ data, selectedDate }) => {
   <meta charset="UTF-8">
   <title>Daily Work Report</title>
   <style>
-    * { margin: 0 !important; padding: 0 !important; border: 0 !important; box-sizing: border-box !important; }
-    html, body {
-      width: 100% !important;
-      height: 100% !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      background: #ffffff !important;
-      font-family: 'Times New Roman', Arial, serif !important;
-      color: ${text} !important;
-    }
-    .report-container {
-      width: 100% !important;
-      max-width: 100% !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      background: #ffffff !important;
-      display: flex !important;
-      flex-direction: column !important;
-      min-height: 100vh !important;
-      position: relative !important;
-    }
-    .report-background {
-      position: fixed !important;
-      top: 0 !important;
-      left: 0 !important;
-      width: 100% !important;
-      height: 100% !important;
-      z-index: 0 !important;
-      pointer-events: none !important;
-      display: flex !important;
-      flex-direction: column !important;
-      justify-content: center !important;
-      align-items: center !important;
-      opacity: 0.08 !important;
-    }
-    .report-background img {
-      width: 70% !important;
-      max-width: 600px !important;
-      height: auto !important;
-      display: block !important;
-    }
-    .report-content-wrapper {
-      position: relative !important;
-      z-index: 1 !important;
-      display: flex !important;
-      flex-direction: column !important;
-      min-height: 100vh !important;
-      width: 100% !important;
-    }
-    .report-header-section { flex-shrink: 0 !important; width: 100% !important; background: #ffffff !important; }
-    .report-header-img { width: 100% !important; max-width: 100% !important; display: block !important; margin: 0 !important; padding: 0 !important; }
-    .report-header-img img { width: 100% !important; height: auto !important; display: block !important; margin: 0 !important; padding: 0 !important; }
-    .report-content-section { flex: 1 !important; width: 100% !important; padding: 12px 30px 16px 30px !important; background: transparent !important; }
-    .report-title-block {
-      text-align: center !important;
-      padding: 10px 0 !important;
-      border-bottom: 3px solid ${primary} !important;
-      margin-bottom: 16px !important;
-    }
-    .report-title-block h1 {
-      font-size: 24px !important;
-      font-weight: 800 !important;
-      color: ${primary} !important;
-      letter-spacing: 2px !important;
-      margin: 0 !important;
-    }
-    .report-title-block .sub-title {
-      font-size: 14px !important;
-      color: ${muted} !important;
-      margin-top: 4px !important;
-    }
-    .report-meta {
-      display: flex !important;
-      justify-content: space-between !important;
-      margin-bottom: 16px !important;
-      padding: 8px 0 !important;
-      border-bottom: 1px solid ${border} !important;
-      flex-wrap: wrap !important;
-      gap: 8px !important;
-    }
-    .report-meta .meta-item {
-      font-size: 13px !important;
-      color: ${muted} !important;
-    }
-    .report-meta .meta-item strong {
-      color: ${primary} !important;
-    }
-    .report-section {
-      margin-bottom: 24px !important;
-    }
-    .report-section h2 {
-      font-size: 16px !important;
-      font-weight: 700 !important;
-      color: ${primary} !important;
-      padding-bottom: 6px !important;
-      border-bottom: 2px solid ${border} !important;
-      margin-bottom: 12px !important;
-    }
-    .summary-grid {
-      display: grid !important;
-      grid-template-columns: repeat(4, 1fr) !important;
-      gap: 10px !important;
-      margin-bottom: 16px !important;
-    }
-    .summary-card {
-      background: ${light} !important;
-      padding: 12px 14px !important;
-      border-radius: 6px !important;
-      border: 1px solid ${border} !important;
-      text-align: center !important;
-    }
-    .summary-card .label {
-      font-size: 11px !important;
-      color: ${muted} !important;
-      text-transform: uppercase !important;
-      letter-spacing: 0.5px !important;
-    }
-    .summary-card .value {
-      font-size: 18px !important;
-      font-weight: 700 !important;
-      color: ${primary} !important;
-      margin-top: 2px !important;
-    }
-    .summary-card .value.positive { color: #22c55e !important; }
-    .summary-card .value.negative { color: #ef4444 !important; }
-    
-    .report-table {
-      width: 100% !important;
-      border-collapse: collapse !important;
-      font-size: 12px !important;
-    }
-    .report-table thead {
-      background: ${primary} !important;
-    }
-    .report-table th {
-      color: #ffffff !important;
-      padding: 6px 10px !important;
-      text-align: left !important;
-      font-size: 11px !important;
-      font-weight: 700 !important;
-      text-transform: uppercase !important;
-      letter-spacing: 0.5px !important;
-    }
-    .report-table th.text-right { text-align: right !important; }
-    .report-table th.text-center { text-align: center !important; }
-    .report-table td {
-      padding: 6px 10px !important;
-      border-bottom: 1px solid ${border} !important;
-      text-align: left !important;
-    }
-    .report-table td.text-right { text-align: right !important; }
-    .report-table td.text-center { text-align: center !important; }
-    .report-table td.amount { font-weight: 600 !important; }
-    .report-table td.amount.positive { color: #22c55e !important; }
-    .report-table td.amount.negative { color: #ef4444 !important; }
-    .report-table tbody tr:last-child td { border-bottom: none !important; }
-    .report-table tfoot {
-      background: ${light} !important;
-      font-weight: 700 !important;
-    }
-    .report-table tfoot td {
-      border-top: 2px solid ${primary} !important;
-      padding: 8px 10px !important;
-    }
-    .report-table .no-data {
-      text-align: center !important;
-      padding: 20px !important;
-      color: ${muted} !important;
-    }
-    .report-footer-section { flex-shrink: 0 !important; width: 100% !important; margin-top: auto !important; background: #ffffff !important; }
-    .report-footer-img { width: 100% !important; max-width: 100% !important; display: block !important; margin: 0 !important; padding: 0 !important; }
-    .report-footer-img img { width: 100% !important; height: auto !important; display: block !important; margin: 0 !important; padding: 0 !important; }
-    
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'Times New Roman', Arial, serif; background: #fff; color: ${text}; }
+    .report-container { max-width: 1100px; margin: 0 auto; position: relative; }
+    .report-background { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); opacity: 0.05; z-index: 0; pointer-events: none; }
+    .report-background img { width: 500px; }
+    .report-content { position: relative; z-index: 1; }
+    .header-img img, .footer-img img { width: 100%; display: block; }
+    .report-body { padding: 20px 40px 30px; }
+    .report-title { text-align: center; padding: 20px 0; border-bottom: 3px solid ${primary}; margin-bottom: 20px; }
+    .report-title h1 { font-size: 28px; color: ${primary}; letter-spacing: 2px; }
+    .report-title .sub { font-size: 14px; color: ${muted}; margin-top: 4px; }
+    .report-meta { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid ${border}; margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
+    .report-meta span { font-size: 13px; color: ${muted}; }
+    .report-meta strong { color: ${primary}; }
+    .section { margin-bottom: 28px; }
+    .section h2 { font-size: 18px; color: ${primary}; padding-bottom: 8px; border-bottom: 2px solid ${border}; margin-bottom: 14px; }
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
+    .stat-card { background: ${light}; padding: 14px 16px; border-radius: 6px; border: 1px solid ${border}; text-align: center; }
+    .stat-card .label { font-size: 11px; color: ${muted}; text-transform: uppercase; letter-spacing: 0.5px; }
+    .stat-card .value { font-size: 20px; font-weight: 700; color: ${primary}; margin-top: 4px; }
+    .stat-card .value.positive { color: #009846; }
+    .stat-card .value.negative { color: #ef4444; }
+    .report-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .report-table thead { background: ${primary}; }
+    .report-table th { color: #fff; padding: 8px 12px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .report-table th.text-right { text-align: right; }
+    .report-table th.text-center { text-align: center; }
+    .report-table td { padding: 6px 12px; border-bottom: 1px solid ${border}; }
+    .report-table td.text-right { text-align: right; }
+    .report-table td.text-center { text-align: center; }
+    .report-table td.amount { font-weight: 600; }
+    .report-table td.positive { color: #009846; }
+    .report-table td.negative { color: #ef4444; }
+    .report-table tfoot { background: ${light}; font-weight: 700; }
+    .report-table tfoot td { border-top: 2px solid ${primary}; padding: 8px 12px; }
+    .report-table .no-data { text-align: center; padding: 30px; color: ${muted}; }
     @media print {
-      @page { margin: 0 !important; padding: 0 !important; size: A4 !important; }
-      html, body {
-        margin: 0 !important; padding: 0 !important; width: 100% !important; height: 100% !important;
-        -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important;
-      }
-      .report-container { min-height: 100vh !important; width: 100% !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-      .report-background { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; opacity: 0.08 !important; position: fixed !important; }
-      .report-table thead { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; background: ${primary} !important; }
-      .report-table th { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; background: ${primary} !important; color: #ffffff !important; }
-      .summary-card { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; background: ${light} !important; }
-      .report-table tfoot { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; background: ${light} !important; }
-      .report-header-img img, .report-footer-img img { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-    }
-    @media screen {
-      .report-container { max-width: 100% !important; margin: 0 auto !important; box-shadow: 0 4px 30px rgba(0,0,0,0.12) !important; border: 1px solid ${border} !important; }
-    }
-    @media screen and (max-width: 768px) {
-      .report-content-section { padding: 8px 14px 12px 14px !important; }
-      .summary-grid { grid-template-columns: repeat(2, 1fr) !important; }
-      .report-meta { flex-direction: column !important; gap: 4px !important; }
-      .report-table { font-size: 11px !important; }
-      .report-table th, .report-table td { padding: 4px 6px !important; }
-    }
-    @media screen and (max-width: 480px) {
-      .report-content-section { padding: 6px 8px 10px 8px !important; }
-      .summary-grid { grid-template-columns: 1fr !important; }
-      .report-table { font-size: 9px !important; }
-      .report-table th, .report-table td { padding: 3px 4px !important; }
-      .report-title-block h1 { font-size: 18px !important; }
+      @page { margin: 0; size: A4; }
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
   </style>
 </head>
 <body>
   <div class="report-container">
-    <div class="report-background"><img src='${background}' alt="Background" /></div>
-    <div class="report-content-wrapper">
-      <div class="report-header-section">
-        <div class="report-header-img"><img src="${letterheadHeader}" alt="Letterhead" /></div>
-      </div>
-      <div class="report-content-section">
-        <div class="report-title-block">
+    <div class="report-background"><img src="${background}" /></div>
+    <div class="report-content">
+      <div class="header-img"><img src="${letterheadHeader}" /></div>
+      <div class="report-body">
+        <div class="report-title">
           <h1>DAILY WORK REPORT</h1>
-          <div class="sub-title">${companyName} • Construction & Contracting</div>
+          <div class="sub">${companyName} • Construction & Contracting</div>
         </div>
         <div class="report-meta">
-          <span class="meta-item"><strong>Period:</strong> ${filteredData.startDate} to ${filteredData.endDate}</span>
-          <span class="meta-item"><strong>Total Days:</strong> ${filteredData.totals.totalDays}</span>
-          <span class="meta-item"><strong>Total Entries:</strong> ${filteredData.totals.entryCount}</span>
-          <span class="meta-item"><strong>Generated:</strong> ${new Date().toLocaleString()}</span>
+          <span><strong>Period:</strong> ${filteredData.startDate} to ${filteredData.endDate}</span>
+          <span><strong>Total Days:</strong> ${totals.totalDays}</span>
+          <span><strong>Total Entries:</strong> ${totals.entryCount}</span>
+          <span><strong>Generated:</strong> ${new Date().toLocaleString()}</span>
         </div>
-
-        <!-- Executive Summary -->
-        <div class="report-section">
+        <div class="section">
           <h2>📊 Executive Summary</h2>
-          <div class="summary-grid">
-            <div class="summary-card">
-              <div class="label">Total Revenue</div>
-              <div class="value positive">${Utils.formatCurrencyShort(filteredData.totals.revenue)}</div>
-            </div>
-            <div class="summary-card">
-              <div class="label">Total Labour</div>
-              <div class="value">${Utils.formatCurrencyShort(filteredData.totals.labour)}</div>
-            </div>
-            <div class="summary-card">
-              <div class="label">Total Overhead</div>
-              <div class="value">${Utils.formatCurrencyShort(filteredData.totals.overhead)}</div>
-            </div>
-            <div class="summary-card">
-              <div class="label">Net Profit</div>
-              <div class="value ${filteredData.totals.profit >= 0 ? 'positive' : 'negative'}">${Utils.formatCurrencyShort(filteredData.totals.profit)}</div>
-            </div>
+          <div class="stats-grid">
+            <div class="stat-card"><div class="label">Total Revenue</div><div class="value positive">${Utils.formatCurrencyShort(totals.revenue)}</div></div>
+            <div class="stat-card"><div class="label">Total Labour</div><div class="value">${Utils.formatCurrencyShort(totals.labour)}</div></div>
+            <div class="stat-card"><div class="label">Total Overhead</div><div class="value">${Utils.formatCurrencyShort(totals.overhead)}</div></div>
+            <div class="stat-card"><div class="label">Net Profit</div><div class="value ${totals.profit >= 0 ? 'positive' : 'negative'}">${Utils.formatCurrencyShort(totals.profit)}</div></div>
           </div>
         </div>
-
-        <!-- Daily Breakdown -->
-        <div class="report-section">
+        <div class="section">
           <h2>📈 Daily Breakdown</h2>
           <table class="report-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Date</th>
-                <th class="text-right">Entries</th>
-                <th class="text-right">Revenue</th>
-                <th class="text-right">Labour</th>
-                <th class="text-right">Overhead</th>
-                <th class="text-right">One-Time</th>
-                <th class="text-right">Profit</th>
-                <th class="text-center">Workers</th>
-                <th class="text-right">Hours</th>
-              </tr>
-            </thead>
+            <thead><tr>
+              <th>#</th><th>Date</th><th class="text-right">Entries</th>
+              <th class="text-right">Revenue</th><th class="text-right">Labour</th>
+              <th class="text-right">Overhead</th><th class="text-right">One-Time</th>
+              <th class="text-right">Profit</th><th class="text-center">Workers</th><th class="text-right">Hours</th>
+            </tr></thead>
             <tbody>
-              ${dailyAggregates.length === 0 ? `
-                <tr><td colspan="10" class="no-data">No data for this period</td></tr>
-              ` : dailyAggregates.map((day, i) => `
-                <tr>
+              ${dailyAggregates.length === 0 ? `<tr><td colspan="10" class="no-data">No data for this period</td></tr>` :
+                dailyAggregates.map((day, i) => `<tr>
                   <td>${i + 1}</td>
                   <td>${Utils.formatDate(day.date)}</td>
                   <td class="text-right">${day.entryCount}</td>
@@ -654,45 +637,31 @@ const DailyReportComponent = ({ data, selectedDate }) => {
                   <td class="text-right amount ${day.profit >= 0 ? 'positive' : 'negative'}">${Utils.formatCurrencyShort(day.profit)}</td>
                   <td class="text-center">${day.workersPresent}</td>
                   <td class="text-right">${day.totalHours.toFixed(1)}h</td>
-                </tr>
-              `).join('')}
+                </tr>`).join('')}
             </tbody>
-            <tfoot>
-              <tr>
-                <td colspan="2"><strong>TOTALS</strong></td>
-                <td class="text-right"><strong>${filteredData.totals.entryCount}</strong></td>
-                <td class="text-right amount positive"><strong>${Utils.formatCurrencyShort(filteredData.totals.revenue)}</strong></td>
-                <td class="text-right amount"><strong>${Utils.formatCurrencyShort(filteredData.totals.labour)}</strong></td>
-                <td class="text-right amount"><strong>${Utils.formatCurrencyShort(filteredData.totals.overhead)}</strong></td>
-                <td class="text-right amount"><strong>${Utils.formatCurrencyShort(filteredData.totals.oneTime)}</strong></td>
-                <td class="text-right amount ${filteredData.totals.profit >= 0 ? 'positive' : 'negative'}"><strong>${Utils.formatCurrencyShort(filteredData.totals.profit)}</strong></td>
-                <td colspan="2"></td>
-              </tr>
-            </tfoot>
+            <tfoot><tr>
+              <td colspan="2"><strong>TOTALS</strong></td>
+              <td class="text-right"><strong>${totals.entryCount}</strong></td>
+              <td class="text-right"><strong>${Utils.formatCurrencyShort(totals.revenue)}</strong></td>
+              <td class="text-right"><strong>${Utils.formatCurrencyShort(totals.labour)}</strong></td>
+              <td class="text-right"><strong>${Utils.formatCurrencyShort(totals.overhead)}</strong></td>
+              <td class="text-right"><strong>${Utils.formatCurrencyShort(totals.oneTime)}</strong></td>
+              <td class="text-right"><strong>${Utils.formatCurrencyShort(totals.profit)}</strong></td>
+              <td colspan="2"></td>
+            </tr></tfoot>
           </table>
         </div>
-
-        <!-- Site Performance -->
-        <div class="report-section">
+        <div class="section">
           <h2>🏗️ Site Performance</h2>
           <table class="report-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Site</th>
-                <th class="text-right">Entries</th>
-                <th class="text-right">Revenue</th>
-                <th class="text-right">Labour</th>
-                <th class="text-right">Overhead</th>
-                <th class="text-right">One-Time</th>
-                <th class="text-right">Profit</th>
-              </tr>
-            </thead>
+            <thead><tr>
+              <th>#</th><th>Site</th><th class="text-right">Entries</th>
+              <th class="text-right">Revenue</th><th class="text-right">Labour</th>
+              <th class="text-right">Overhead</th><th class="text-right">One-Time</th><th class="text-right">Profit</th>
+            </tr></thead>
             <tbody>
-              ${siteSummary.length === 0 ? `
-                <tr><td colspan="8" class="no-data">No site data for this period</td></tr>
-              ` : siteSummary.map((site, i) => `
-                <tr>
+              ${siteSummary.length === 0 ? `<tr><td colspan="8" class="no-data">No site data for this period</td></tr>` :
+                siteSummary.map((site, i) => `<tr>
                   <td>${i + 1}</td>
                   <td>${site.name}</td>
                   <td class="text-right">${site.entryCount}</td>
@@ -701,32 +670,21 @@ const DailyReportComponent = ({ data, selectedDate }) => {
                   <td class="text-right amount">${Utils.formatCurrencyShort(site.overhead)}</td>
                   <td class="text-right amount">${Utils.formatCurrencyShort(site.oneTime)}</td>
                   <td class="text-right amount ${site.profit >= 0 ? 'positive' : 'negative'}">${Utils.formatCurrencyShort(site.profit)}</td>
-                </tr>
-              `).join('')}
+                </tr>`).join('')}
             </tbody>
           </table>
         </div>
-
-        <!-- Worker Summary -->
-        <div class="report-section">
+        <div class="section">
           <h2>👷 Worker Summary</h2>
           <table class="report-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Worker</th>
-                <th>Role</th>
-                <th class="text-right">Daily Rate</th>
-                <th class="text-right">Days Present</th>
-                <th class="text-right">Total Hours</th>
-                <th class="text-right">Total Wage</th>
-              </tr>
-            </thead>
+            <thead><tr>
+              <th>#</th><th>Worker</th><th>Role</th>
+              <th class="text-right">Daily Rate</th><th class="text-right">Days Present</th>
+              <th class="text-right">Total Hours</th><th class="text-right">Total Wage</th>
+            </tr></thead>
             <tbody>
-              ${workerSummary.length === 0 ? `
-                <tr><td colspan="7" class="no-data">No worker data for this period</td></tr>
-              ` : workerSummary.map((w, i) => `
-                <tr>
+              ${workerSummary.length === 0 ? `<tr><td colspan="7" class="no-data">No worker data for this period</td></tr>` :
+                workerSummary.map((w, i) => `<tr>
                   <td>${i + 1}</td>
                   <td>${w.name}</td>
                   <td>${w.role || '-'}</td>
@@ -734,354 +692,539 @@ const DailyReportComponent = ({ data, selectedDate }) => {
                   <td class="text-right">${w.daysPresent}</td>
                   <td class="text-right">${w.totalHours.toFixed(1)}h</td>
                   <td class="text-right amount">${Utils.formatCurrencyShort(w.totalWage)}</td>
-                </tr>
-              `).join('')}
+                </tr>`).join('')}
             </tbody>
           </table>
         </div>
       </div>
-      <div class="report-footer-section">
-        <div class="report-footer-img"><img src="${letterheadFooter}" alt="Footer" /></div>
-      </div>
+      <div class="footer-img"><img src="${letterheadFooter}" /></div>
     </div>
   </div>
   <script>window.onload = function() { window.print(); };<\/script>
 </body>
-</html>
-    `;
+</html>`;
   };
 
-  // ============================================
-  // PRINT PROFESSIONAL REPORT
-  // ============================================
   const handlePrintReport = () => {
-    const printWindow = window.open('', '_blank', 'width=1000,height=800');
-    if (!printWindow) {
-      alert('Please allow popups to print');
-      return;
-    }
-    const printHTML = generateProfessionalReportHTML();
-    printWindow.document.write(printHTML);
+    const printWindow = window.open('', '_blank', 'width=1100,height=800');
+    if (!printWindow) { alert('Please allow popups to print the report'); return; }
+    printWindow.document.write(generateProfessionalReportHTML());
     printWindow.document.close();
     printWindow.focus();
   };
 
   // ============================================
-  // STATS ITEMS
+  // OVERVIEW TAB
   // ============================================
-  const statItems = [
-    { 
-      id: 'revenue', 
-      icon: DollarSign, 
-      label: 'Total Revenue', 
-      value: Utils.formatCurrencyShort(filteredData.totals.revenue),
-      color: '#22c55e',
-      bg: 'rgba(34, 197, 94, 0.12)',
-      trend: filteredData.totals.revenue > 0 ? 'up' : 'neutral'
-    },
-    { 
-      id: 'profit', 
-      icon: TrendingUp, 
-      label: 'Net Profit', 
-      value: Utils.formatCurrencyShort(filteredData.totals.profit),
-      color: filteredData.totals.profit >= 0 ? '#22c55e' : '#ef4444',
-      bg: filteredData.totals.profit >= 0 ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-      trend: filteredData.totals.profit >= 0 ? 'up' : 'down'
-    },
-    { 
-      id: 'labour', 
-      icon: Users, 
-      label: 'Labour Costs', 
-      value: Utils.formatCurrencyShort(filteredData.totals.labour),
-      color: '#ef4444',
-      bg: 'rgba(239, 68, 68, 0.12)',
-      trend: 'neutral'
-    },
-    { 
-      id: 'sites', 
-      icon: Building2, 
-      label: 'Active Sites', 
-      value: data.sites?.length || 0,
-      color: '#3b82f6',
-      bg: 'rgba(59, 130, 246, 0.12)',
-      trend: 'neutral'
-    }
-  ];
-
-  // ============================================
-  // RENDER TOOLTIP
-  // ============================================
-  const renderTooltip = () => {
-    if (!hoveredCard || !cardDetails[hoveredCard]) return null;
-
-    return (
-      <div
-        className="report-card-tooltip"
-        style={{
-          position: 'fixed',
-          left: tooltipPosition.x,
-          top: tooltipPosition.y,
-          zIndex: 9999
-        }}
-      >
-        <div className="report-tooltip-header">
-          <strong>{cardDetails[hoveredCard].title}</strong>
-        </div>
-        <div className="report-tooltip-body">
-          {cardDetails[hoveredCard].details.map((detail, idx) => (
-            <div key={idx} className="report-tooltip-row">
-              <span className="report-tooltip-label">{detail.label}</span>
-              <span className="report-tooltip-value">{detail.value}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  // ============================================
-  // RENDER STATS
-  // ============================================
-  const renderStats = () => {
-    return (
-      <div className="stats-grid">
-        {statItems.map((item) => {
+  const renderOverviewTab = () => (
+    <div className="dr-view">
+      <div className="dr-kpi-grid">
+        {kpiItems.map(item => {
           const Icon = item.icon;
           return (
-            <div
-              key={item.id}
-              className="stat-card"
+            <div key={item.id} className="dr-kpi-card"
               onMouseEnter={(e) => handleCardHover(item.id, e)}
               onMouseLeave={handleCardLeave}
-              onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-            >
-              <div className="stat-icon" style={{ background: item.bg, color: item.color }}>
-                <Icon size={22} />
+              onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}>
+              <div className="dr-kpi-accent" style={{ background: item.accent }} />
+              <div className="dr-kpi-icon" style={{ background: `${item.color}1f`, color: item.color }}>
+                <Icon size={20} />
               </div>
-              <div className="stat-content">
-                <span className="stat-label">{item.label}</span>
-                <span className="stat-value">{item.value}</span>
+              <div className="dr-kpi-content">
+                <span className="dr-kpi-label">{item.label}</span>
+                <span className="dr-kpi-value">{item.value}</span>
+                <span className="dr-kpi-meta">{item.meta}</span>
               </div>
-              <div className="stat-trend">
-                {item.trend === 'up' && <TrendingUp size={16} color="#22c55e" />}
-                {item.trend === 'down' && <TrendingDown size={16} color="#ef4444" />}
-                {item.trend === 'neutral' && <BarChart3 size={16} color="#8a9bb5" />}
+              <div className={`dr-kpi-trend ${item.trend}`}>
+                {item.trend === 'up' && <TrendingUp size={15} />}
+                {item.trend === 'down' && <ArrowDownRight size={15} />}
+                {item.trend === 'neutral' && <BarChart3 size={15} />}
               </div>
             </div>
           );
         })}
       </div>
-    );
-  };
 
-  // ============================================
-  // RENDER SCREEN REPORT (Simple Preview)
-  // ============================================
-  const renderScreenReport = () => {
-    return (
-      <div className="report-content" id="report-content">
-        {/* Header */}
-        <div className="report-header">
-          <div className="report-logo">
-            <HardHat size={40} />
+      {hoveredCard && cardDetails[hoveredCard] && (
+        <div className="dr-hover-tooltip"
+          style={{ position: 'fixed', left: tooltipPosition.x, top: tooltipPosition.y, zIndex: 9999 }}>
+          <div className="dr-tooltip-header"><strong>{cardDetails[hoveredCard].title}</strong></div>
+          <div className="dr-tooltip-body">
+            {cardDetails[hoveredCard].details.map((d, i) => (
+              <div key={i} className="dr-tooltip-row">
+                <span className="dr-tooltip-label">{d.label}</span>
+                <span className="dr-tooltip-value">{d.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="dr-card">
+        <div className="dr-card-header-top">
+          <div className="dr-card-title">
+            <span className="dr-card-icon" style={{ background: 'rgba(0,152,70,0.12)', color: '#009846' }}>
+              <PercentIcon size={16} />
+            </span>
             <div>
-              <h1>{CONFIG.COMPANY_NAME}</h1>
-              <p>Construction & Contracting</p>
-            </div>
-          </div>
-          <div className="report-title">
-            <h2>DAILY WORK REPORT</h2>
-            <p>Period: {filteredData.startDate} to {filteredData.endDate}</p>
-            <p>Generated: {new Date().toLocaleString()}</p>
-          </div>
-        </div>
-
-        {/* Executive Summary */}
-        <div className="report-section">
-          <h3>📊 Executive Summary</h3>
-          <div className="summary-grid">
-            <div className="summary-item">
-              <span className="label">Period</span>
-              <span className="value">
-                {dateRange.type === 'single' 
-                  ? Utils.formatDate(reportDate)
-                  : `${Utils.formatDate(filteredData.startDate)} - ${Utils.formatDate(filteredData.endDate)}`
-                }
-              </span>
-            </div>
-            <div className="summary-item">
-              <span className="label">Total Days</span>
-              <span className="value">{filteredData.totals.totalDays}</span>
-            </div>
-            <div className="summary-item">
-              <span className="label">Total Entries</span>
-              <span className="value">{filteredData.totals.entryCount}</span>
-            </div>
-            <div className="summary-item">
-              <span className="label">Total Revenue</span>
-              <span className="value">{Utils.formatCurrency(filteredData.totals.revenue)}</span>
-            </div>
-            <div className="summary-item">
-              <span className="label">Total Labour</span>
-              <span className="value">{Utils.formatCurrency(filteredData.totals.labour)}</span>
-            </div>
-            <div className="summary-item">
-              <span className="label">Total Overhead</span>
-              <span className="value">{Utils.formatCurrency(filteredData.totals.overhead)}</span>
-            </div>
-            <div className="summary-item">
-              <span className="label">Total One-Time</span>
-              <span className="value">{Utils.formatCurrency(filteredData.totals.oneTime)}</span>
-            </div>
-            <div className="summary-item">
-              <span className="label">Net Profit</span>
-              <span className={`value ${filteredData.totals.profit >= 0 ? 'positive' : 'negative'}`}>
-                {Utils.formatCurrency(filteredData.totals.profit)}
-              </span>
+              <h4>Key Performance Rates</h4>
+              <span>Live percentages for this period</span>
             </div>
           </div>
         </div>
+        <div className="dr-rings-row">
+          <RingGauge value={filteredData.totals.revenue > 0 ? (filteredData.totals.profit / filteredData.totals.revenue) * 100 : 0}
+            max={100} size={140} stroke={11} color="#009846" label="PROFIT MARGIN" sublabel="of revenue" />
+          <RingGauge value={filteredData.totals.revenue > 0 ? (filteredData.totals.labour / filteredData.totals.revenue) * 100 : 0}
+            max={100} size={140} stroke={11} color="#ef4444" label="LABOUR" sublabel="of revenue" />
+          <RingGauge value={filteredData.totals.revenue > 0 ? (filteredData.totals.overhead / filteredData.totals.revenue) * 100 : 0}
+            max={100} size={140} stroke={11} color="#f59e0b" label="OVERHEAD" sublabel="of revenue" />
+          <RingGauge value={filteredData.totals.revenue > 0 ? (filteredData.totals.oneTime / filteredData.totals.revenue) * 100 : 0}
+            max={100} size={140} stroke={11} color="#8b5cf6" label="ONE-TIME" sublabel="of revenue" />
+          <RingGauge value={filteredData.dailyAggregates.length > 0
+            ? (filteredData.dailyAggregates.filter(d => d.profit > 0).length / filteredData.dailyAggregates.length) * 100
+            : 0}
+            max={100} size={140} stroke={11} color="#3b82f6" label="PROFITABLE" sublabel="days" />
+        </div>
+        <div className="dr-rings-legend">
+          <span><i style={{ background: '#009846' }} />Profit Margin</span>
+          <span><i style={{ background: '#ef4444' }} />Labour %</span>
+          <span><i style={{ background: '#f59e0b' }} />Overhead %</span>
+          <span><i style={{ background: '#8b5cf6' }} />One-Time %</span>
+          <span><i style={{ background: '#3b82f6' }} />Profitable Days</span>
+        </div>
+      </div>
 
-        {/* Daily Breakdown */}
-        <div className="report-section">
-          <h3>📈 Daily Breakdown</h3>
-          <div className="table-responsive">
-            <table className="report-table">
+      <div className="dr-grid-1-1">
+        <div className="dr-card">
+          <div className="dr-card-header-top">
+            <div className="dr-card-title">
+              <span className="dr-card-icon" style={{ background: 'rgba(239,68,68,0.12)', color: '#ef4444' }}>
+                <Scale size={16} />
+              </span>
+              <div>
+                <h4>Cost Breakdown</h4>
+                <span>Percentage of revenue</span>
+              </div>
+            </div>
+          </div>
+          <div className="dr-method-rings">
+            {costBreakdownData.map((m, i) => (
+              <div key={i} className="dr-method-item">
+                <RingGauge value={m.pct} max={100} size={100} stroke={8} color={m.color} label={m.label} />
+                <span className="dr-method-value">{Utils.formatCurrencyShort(m.value)}</span>
+                <span className="dr-method-pct">{m.pct.toFixed(1)}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="dr-card">
+          <div className="dr-card-header-top">
+            <div className="dr-card-title">
+              <span className="dr-card-icon" style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}>
+                <PieChartIcon size={16} />
+              </span>
+              <div>
+                <h4>Sites by Profit</h4>
+                <span>{filteredData.siteSummary.length} total sites</span>
+              </div>
+            </div>
+          </div>
+          {filteredData.siteSummary.length > 0 ? (
+            <div className="dr-donut-wrap">
+              <ResponsiveContainer width="100%" height={230}>
+                <PieChart>
+                  <Pie
+                    data={filteredData.siteSummary.filter(s => s.entryCount > 0).map(s => ({
+                      name: s.name, value: Math.abs(s.profit), profit: s.profit
+                    }))}
+                    dataKey="value" nameKey="name"
+                    cx="50%" cy="50%" innerRadius={55} outerRadius={90} paddingAngle={3} stroke="none">
+                    {filteredData.siteSummary.filter(s => s.entryCount > 0).map((s, i) => (
+                      <Cell key={i} fill={s.profit >= 0 ? DR_COLORS[i % DR_COLORS.length] : '#94a3b8'} />
+                    ))}
+                  </Pie>
+                  <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="dr-donut-legend">
+                {filteredData.siteSummary.filter(s => s.entryCount > 0).slice(0, 6).map((s, i) => (
+                  <div key={i} className="dr-donut-item">
+                    <span className="dr-donut-dot" style={{ background: s.profit >= 0 ? DR_COLORS[i % DR_COLORS.length] : '#94a3b8' }} />
+                    <span className="dr-donut-name">{s.name}</span>
+                    <span className="dr-donut-val" style={{ color: s.profit >= 0 ? '#047857' : '#b91c1c' }}>
+                      {Utils.formatCurrencyShort(s.profit)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : <div className="dr-empty-mini">No site data</div>}
+        </div>
+      </div>
+
+      {dailyChartData.length > 0 && (
+        <div className="dr-card">
+          <div className="dr-card-header-top">
+            <div className="dr-card-title">
+              <span className="dr-card-icon" style={{ background: 'rgba(0,152,70,0.12)', color: '#009846' }}>
+                <LineChartIcon size={16} />
+              </span>
+              <div>
+                <h4>Daily Performance Trend</h4>
+                <span>{dailyChartData.length} days</span>
+              </div>
+            </div>
+            <div className="dr-legend">
+              <span><i style={{ background: '#3b82f6' }} />Revenue</span>
+              <span><i style={{ background: '#009846' }} />Profit</span>
+              <span><i style={{ background: '#ef4444' }} />Labour</span>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={300}>
+            <ComposedChart data={dailyChartData}>
+              <defs>
+                <linearGradient id="drRevGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.35} />
+                  <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} vertical={false} />
+              <XAxis dataKey="label" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false}
+                angle={-30} textAnchor="end" height={50} />
+              <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+              <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />} />
+              <Area type="monotone" dataKey="revenue" stroke="#3b82f6" strokeWidth={2.5}
+                fill="url(#drRevGrad)" name="Revenue" />
+              <Line type="monotone" dataKey="profit" stroke="#009846" strokeWidth={2.5}
+                dot={{ fill: '#009846', r: 3 }} name="Profit" />
+              <Line type="monotone" dataKey="labour" stroke="#ef4444" strokeWidth={2.5}
+                dot={{ fill: '#ef4444', r: 3 }} name="Labour" />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      <div className="dr-grid-1-1">
+        <div className="dr-card">
+          <div className="dr-card-header-top">
+            <div className="dr-card-title">
+              <span className="dr-card-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
+                <Trophy size={16} />
+              </span>
+              <div>
+                <h4>Top Sites by Profit</h4>
+                <span>Highest performing sites</span>
+              </div>
+            </div>
+          </div>
+          {topSitesData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={topSitesData} layout="vertical" margin={{ left: 10, right: 20 }}>
+                <defs>
+                  <linearGradient id="drTopGrad" x1="0" y1="0" x2="1" y2="0">
+                    <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.7} />
+                    <stop offset="100%" stopColor="#f59e0b" stopOpacity={1} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} horizontal={false} />
+                <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                  tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+                <YAxis type="category" dataKey="name" stroke="#94a3b8" fontSize={11}
+                  tickLine={false} axisLine={false} width={120} />
+                <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />}
+                  cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
+                <Bar dataKey="value" name="Profit" fill="url(#drTopGrad)" radius={[0, 8, 8, 0]} barSize={22} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : <div className="dr-empty-mini">No site data</div>}
+        </div>
+
+        <div className="dr-card">
+          <div className="dr-card-header-top">
+            <div className="dr-card-title">
+              <span className="dr-card-icon" style={{ background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>
+                <BarChart3 size={16} />
+              </span>
+              <div>
+                <h4>Site Revenue & Profit</h4>
+                <span>Top 10 by revenue</span>
+              </div>
+            </div>
+            <div className="dr-legend">
+              <span><i style={{ background: '#3b82f6' }} />Revenue</span>
+              <span><i style={{ background: '#009846' }} />Profit</span>
+            </div>
+          </div>
+          {siteRevenueChartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={280}>
+              <BarChart data={siteRevenueChartData} margin={{ left: 0, right: 10 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} vertical={false} />
+                <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false}
+                  angle={-30} textAnchor="end" height={60} />
+                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                  tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+                <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />}
+                  cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
+                <Bar dataKey="revenue" name="Revenue" fill="#3b82f6" radius={[6, 6, 0, 0]} barSize={18} />
+                <Bar dataKey="profit" name="Profit" fill="#009846" radius={[6, 6, 0, 0]} barSize={18} />
+              </BarChart>
+            </ResponsiveContainer>
+          ) : <div className="dr-empty-mini">No site data</div>}
+        </div>
+      </div>
+
+      {topWorkersData.length > 0 && (
+        <div className="dr-card">
+          <div className="dr-card-header-top">
+            <div className="dr-card-title">
+              <span className="dr-card-icon" style={{ background: 'rgba(6,182,212,0.12)', color: '#06b6d4' }}>
+                <Users size={16} />
+              </span>
+              <div>
+                <h4>Top Workers by Wage</h4>
+                <span>Highest earning workers this period</span>
+              </div>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={topWorkersData} layout="vertical" margin={{ left: 10, right: 20 }}>
+              <defs>
+                <linearGradient id="drWorkerGrad" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#06b6d4" stopOpacity={0.7} />
+                  <stop offset="100%" stopColor="#06b6d4" stopOpacity={1} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} horizontal={false} />
+              <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+              <YAxis type="category" dataKey="name" stroke="#94a3b8" fontSize={11}
+                tickLine={false} axisLine={false} width={120} />
+              <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />}
+                cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
+              <Bar dataKey="value" name="Wage" fill="url(#drWorkerGrad)" radius={[0, 8, 8, 0]} barSize={22} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+
+  // ============================================
+  // DAILY TAB
+  // ============================================
+  const renderDailyTab = () => {
+    const pag = paginate(filteredData.dailyAggregates, dailyPage, dailyPer);
+    return (
+      <div className="dr-view">
+        <div className="dr-card">
+          <div className="dr-card-header-top">
+            <div className="dr-card-title">
+              <span className="dr-card-icon" style={{ background: 'rgba(0,152,70,0.12)', color: '#009846' }}>
+                <Calendar size={16} />
+              </span>
+              <div>
+                <h4>Daily Breakdown</h4>
+                <span>{filteredData.dailyAggregates.length} days in period</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="dr-table-wrap">
+            <table className="dr-table">
               <thead>
                 <tr>
                   <th>#</th>
                   <th>Date</th>
-                  <th>Entries</th>
-                  <th>Revenue</th>
-                  <th>Labour</th>
-                  <th>Overhead</th>
-                  <th>One-Time</th>
-                  <th>Profit</th>
-                  <th>Workers</th>
-                  <th>Hours</th>
+                  <th className="right">Entries</th>
+                  <th className="right">Revenue</th>
+                  <th className="right">Labour</th>
+                  <th className="right">Overhead</th>
+                  <th className="right">One-Time</th>
+                  <th className="right">Profit</th>
+                  <th className="center">Workers</th>
+                  <th className="right">Hours</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredData.dailyAggregates.map((day, i) => (
-                  <tr key={i}>
-                    <td>{i + 1}</td>
-                    <td>{Utils.formatDate(day.date)}</td>
-                    <td>{day.entryCount}</td>
-                    <td className="amount">{Utils.formatCurrency(day.revenue)}</td>
-                    <td className="amount">{Utils.formatCurrency(day.labour)}</td>
-                    <td className="amount">{Utils.formatCurrency(day.overhead)}</td>
-                    <td className="amount">{Utils.formatCurrency(day.oneTime)}</td>
-                    <td className={`amount ${day.profit >= 0 ? 'positive' : 'negative'}`}>
-                      {Utils.formatCurrency(day.profit)}
-                    </td>
-                    <td>{day.workersPresent}</td>
-                    <td>{day.totalHours.toFixed(1)}h</td>
-                  </tr>
-                ))}
+                {pag.items.map((day, i) => {
+                  const realIndex = (pag.page - 1) * dailyPer + i + 1;
+                  return (
+                    <tr key={i} style={{ animationDelay: `${Math.min(i * 30, 400)}ms` }}>
+                      <td>{realIndex}</td>
+                      <td><strong>{Utils.formatDate(day.date)}</strong></td>
+                      <td className="right">{day.entryCount}</td>
+                      <td className="right dr-td-green">{Utils.formatCurrencyShort(day.revenue)}</td>
+                      <td className="right dr-td-red">{Utils.formatCurrencyShort(day.labour)}</td>
+                      <td className="right dr-td-amber">{Utils.formatCurrencyShort(day.overhead)}</td>
+                      <td className="right dr-td-purple">{Utils.formatCurrencyShort(day.oneTime)}</td>
+                      <td className={`right ${day.profit >= 0 ? 'dr-td-green' : 'dr-td-red'}`}>
+                        <strong>{Utils.formatCurrencyShort(day.profit)}</strong>
+                      </td>
+                      <td className="center">{day.workersPresent}</td>
+                      <td className="right">{day.totalHours.toFixed(1)}h</td>
+                    </tr>
+                  );
+                })}
                 {filteredData.dailyAggregates.length === 0 && (
-                  <tr>
-                    <td colSpan="10" className="no-data">No data for this period</td>
-                  </tr>
+                  <tr><td colSpan="10" className="dr-no-data">No data for this period</td></tr>
                 )}
               </tbody>
-              <tfoot>
-                <tr>
-                  <td colSpan="2"><strong>TOTALS</strong></td>
-                  <td><strong>{filteredData.totals.entryCount}</strong></td>
-                  <td className="amount"><strong>{Utils.formatCurrency(filteredData.totals.revenue)}</strong></td>
-                  <td className="amount"><strong>{Utils.formatCurrency(filteredData.totals.labour)}</strong></td>
-                  <td className="amount"><strong>{Utils.formatCurrency(filteredData.totals.overhead)}</strong></td>
-                  <td className="amount"><strong>{Utils.formatCurrency(filteredData.totals.oneTime)}</strong></td>
-                  <td className={`amount ${filteredData.totals.profit >= 0 ? 'positive' : 'negative'}`}>
-                    <strong>{Utils.formatCurrency(filteredData.totals.profit)}</strong>
-                  </td>
-                  <td colSpan="2"></td>
-                </tr>
-              </tfoot>
+              {filteredData.dailyAggregates.length > 0 && (
+                <tfoot>
+                  <tr>
+                    <td colSpan="2"><strong>TOTALS</strong></td>
+                    <td className="right"><strong>{filteredData.totals.entryCount}</strong></td>
+                    <td className="right dr-td-green"><strong>{Utils.formatCurrencyShort(filteredData.totals.revenue)}</strong></td>
+                    <td className="right dr-td-red"><strong>{Utils.formatCurrencyShort(filteredData.totals.labour)}</strong></td>
+                    <td className="right dr-td-amber"><strong>{Utils.formatCurrencyShort(filteredData.totals.overhead)}</strong></td>
+                    <td className="right dr-td-purple"><strong>{Utils.formatCurrencyShort(filteredData.totals.oneTime)}</strong></td>
+                    <td className={`right ${filteredData.totals.profit >= 0 ? 'dr-td-green' : 'dr-td-red'}`}>
+                      <strong>{Utils.formatCurrencyShort(filteredData.totals.profit)}</strong>
+                    </td>
+                    <td colSpan="2"></td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
+          {renderPagination(pag.page, pag.total, dailyPer, setDailyPer, setDailyPage, filteredData.dailyAggregates.length, 'days')}
         </div>
+      </div>
+    );
+  };
 
-        {/* Site Performance */}
-        <div className="report-section">
-          <h3>🏗️ Site Performance</h3>
-          <table className="report-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Site</th>
-                <th>Entries</th>
-                <th>Revenue</th>
-                <th>Labour</th>
-                <th>Overhead</th>
-                <th>One-Time</th>
-                <th>Profit</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredData.siteSummary.map((site, i) => (
-                <tr key={i}>
-                  <td>{i + 1}</td>
-                  <td>{site.name}</td>
-                  <td>{site.entryCount}</td>
-                  <td className="amount">{Utils.formatCurrency(site.revenue)}</td>
-                  <td className="amount">{Utils.formatCurrency(site.labour)}</td>
-                  <td className="amount">{Utils.formatCurrency(site.overhead)}</td>
-                  <td className="amount">{Utils.formatCurrency(site.oneTime)}</td>
-                  <td className={`amount ${site.profit >= 0 ? 'positive' : 'negative'}`}>
-                    {Utils.formatCurrency(site.profit)}
-                  </td>
-                </tr>
-              ))}
-              {filteredData.siteSummary.length === 0 && (
+  // ============================================
+  // SITES TAB
+  // ============================================
+  const renderSitesTab = () => {
+    const pag = paginate(filteredData.siteSummary, sitePage, sitePer);
+    return (
+      <div className="dr-view">
+        <div className="dr-card">
+          <div className="dr-card-header-top">
+            <div className="dr-card-title">
+              <span className="dr-card-icon" style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}>
+                <Building2 size={16} />
+              </span>
+              <div>
+                <h4>Site Performance</h4>
+                <span>{filteredData.siteSummary.length} sites</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="dr-table-wrap">
+            <table className="dr-table">
+              <thead>
                 <tr>
-                  <td colSpan="8" className="no-data">No site data for this period</td>
+                  <th>#</th>
+                  <th>Site</th>
+                  <th className="right">Entries</th>
+                  <th className="right">Revenue</th>
+                  <th className="right">Labour</th>
+                  <th className="right">Overhead</th>
+                  <th className="right">One-Time</th>
+                  <th className="right">Profit</th>
+                  <th className="right">Margin</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {pag.items.map((site, i) => {
+                  const realIndex = (pag.page - 1) * sitePer + i + 1;
+                  const margin = site.revenue > 0 ? (site.profit / site.revenue) * 100 : 0;
+                  return (
+                    <tr key={i} style={{ animationDelay: `${Math.min(i * 30, 400)}ms` }}>
+                      <td>{realIndex}</td>
+                      <td><strong>{site.name}</strong></td>
+                      <td className="right">{site.entryCount}</td>
+                      <td className="right dr-td-green">{Utils.formatCurrencyShort(site.revenue)}</td>
+                      <td className="right dr-td-red">{Utils.formatCurrencyShort(site.labour)}</td>
+                      <td className="right dr-td-amber">{Utils.formatCurrencyShort(site.overhead)}</td>
+                      <td className="right dr-td-purple">{Utils.formatCurrencyShort(site.oneTime)}</td>
+                      <td className={`right ${site.profit >= 0 ? 'dr-td-green' : 'dr-td-red'}`}>
+                        <strong>{Utils.formatCurrencyShort(site.profit)}</strong>
+                      </td>
+                      <td className="right">{margin.toFixed(1)}%</td>
+                    </tr>
+                  );
+                })}
+                {filteredData.siteSummary.length === 0 && (
+                  <tr><td colSpan="9" className="dr-no-data">No site data for this period</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {renderPagination(pag.page, pag.total, sitePer, setSitePer, setSitePage, filteredData.siteSummary.length, 'sites')}
         </div>
+      </div>
+    );
+  };
 
-        {/* Worker Summary */}
-        <div className="report-section">
-          <h3>👷 Worker Summary</h3>
-          <table className="report-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Worker</th>
-                <th>Role</th>
-                <th>Daily Rate</th>
-                <th>Days Present</th>
-                <th>Total Hours</th>
-                <th>Total Wage</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredData.workerSummary.map((w, i) => (
-                <tr key={i}>
-                  <td>{i + 1}</td>
-                  <td>{w.name}</td>
-                  <td>{w.role || '-'}</td>
-                  <td>{Utils.formatCurrency(w.dailyRate)}</td>
-                  <td>{w.daysPresent}</td>
-                  <td>{w.totalHours.toFixed(1)}h</td>
-                  <td className="amount">{Utils.formatCurrency(w.totalWage)}</td>
-                </tr>
-              ))}
-              {filteredData.workerSummary.length === 0 && (
+  // ============================================
+  // WORKERS TAB
+  // ============================================
+  const renderWorkersTab = () => {
+    const pag = paginate(filteredData.workerSummary, workerPage, workerPer);
+    return (
+      <div className="dr-view">
+        <div className="dr-card">
+          <div className="dr-card-header-top">
+            <div className="dr-card-title">
+              <span className="dr-card-icon" style={{ background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>
+                <Users size={16} />
+              </span>
+              <div>
+                <h4>Worker Summary</h4>
+                <span>{filteredData.workerSummary.length} workers</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="dr-table-wrap">
+            <table className="dr-table">
+              <thead>
                 <tr>
-                  <td colSpan="7" className="no-data">No worker data for this period</td>
+                  <th>#</th>
+                  <th>Worker</th>
+                  <th>Role</th>
+                  <th className="right">Daily Rate</th>
+                  <th className="right">Days Present</th>
+                  <th className="right">Total Hours</th>
+                  <th className="right">Total Wage</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Report Footer */}
-        <div className="report-footer">
-          <p>Report generated by Haji Younas Contracting Management System</p>
-          <p>Version {CONFIG.VERSION} | {new Date().toLocaleString()}</p>
+              </thead>
+              <tbody>
+                {pag.items.map((w, i) => {
+                  const realIndex = (pag.page - 1) * workerPer + i + 1;
+                  return (
+                    <tr key={i} style={{ animationDelay: `${Math.min(i * 30, 400)}ms` }}>
+                      <td>{realIndex}</td>
+                      <td>
+                        <div className="dr-worker-cell">
+                          <div className="dr-worker-avatar" style={{ background: DR_COLORS[(realIndex - 1) % DR_COLORS.length] }}>
+                            {w.name.charAt(0).toUpperCase()}
+                          </div>
+                          <strong>{w.name}</strong>
+                        </div>
+                      </td>
+                      <td><span className="dr-role-badge">{w.role || 'General'}</span></td>
+                      <td className="right">{Utils.formatCurrency(w.dailyRate)}</td>
+                      <td className="right">{w.daysPresent}</td>
+                      <td className="right">{w.totalHours.toFixed(1)}h</td>
+                      <td className="right dr-td-green"><strong>{Utils.formatCurrency(w.totalWage)}</strong></td>
+                    </tr>
+                  );
+                })}
+                {filteredData.workerSummary.length === 0 && (
+                  <tr><td colSpan="7" className="dr-no-data">No worker data for this period</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          {renderPagination(pag.page, pag.total, workerPer, setWorkerPer, setWorkerPage, filteredData.workerSummary.length, 'workers')}
         </div>
       </div>
     );
@@ -1090,153 +1233,121 @@ const DailyReportComponent = ({ data, selectedDate }) => {
   // ============================================
   // MAIN RENDER
   // ============================================
-  if (!showReport) {
-    return (
-      <div className="daily-report-modern">
-        {/* Header */}
-        <div className="dashboard-header-modern">
-          <div className="header-left">
-            <div className="header-icon-wrapper">
-              <FileText size={28} />
-              <span className="header-badge">Reports</span>
-            </div>
-            <div>
-              <h2>Daily/Periodic Report</h2>
-              <p className="header-subtitle">Generate comprehensive reports for any date range</p>
-            </div>
+  return (
+    <div className={`dr-root ${mounted ? 'is-mounted' : ''}`}>
+      <div className="dr-ambient">
+        <div className="dr-orb dr-orb-1" />
+        <div className="dr-orb dr-orb-2" />
+        <div className="dr-orb dr-orb-3" />
+      </div>
+
+      {/* Header */}
+      <div className="dr-header">
+        <div className="dr-header-left">
+          <div className="dr-header-icon">
+            <FileText size={22} />
+            <span className="dr-header-badge"><Sparkles size={10} /> REPORTS</span>
           </div>
-          <div className="header-right">
-            <button className="btn-refresh-modern" onClick={() => window.location.reload()}>
-              <RefreshCw size={16} /> Refresh
-            </button>
+          <div>
+            <h2>Daily / Periodic Report</h2>
+            <p className="dr-header-subtitle">
+              {filteredData.totals.totalDays} days · {filteredData.totals.entryCount} entries · {Utils.formatCurrencyShort(filteredData.totals.revenue)} revenue · {Utils.formatCurrencyShort(filteredData.totals.profit)} profit
+            </p>
           </div>
         </div>
 
-        {/* Report Controls */}
-        <div className="report-controls">
-          {/* Date Range Presets */}
-          <div className="date-range-presets">
-            <label>📅 Quick Select:</label>
-            <div className="preset-buttons">
-              {datePresets.map(preset => (
-                <button
-                  key={preset.id}
-                  className={`preset-btn ${dateRange.type === preset.id ? 'active' : ''}`}
-                  onClick={() => handleDateRangeChange(preset.id)}
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-          </div>
+        <div className="dr-header-right">
+          <button className="dr-btn dr-btn-ghost" onClick={exportDailyReport}>
+            <Download size={14} /> Export CSV
+          </button>
+          <button className="dr-btn dr-btn-primary" onClick={handlePrintReport}>
+            <Printer size={14} /> Print / PDF
+          </button>
+        </div>
+      </div>
 
-          {/* Custom Date Range */}
-          <div className="custom-date-range">
-            <label>📆 Custom Range:</label>
-            <div className="custom-range-inputs">
-              <input
-                type="date"
-                value={dateRange.startDate}
-                onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
-              />
-              <span>to</span>
-              <input
-                type="date"
-                value={dateRange.endDate}
-                onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
-              />
-              <button 
-                className="btn-primary"
-                onClick={handleCustomDateRange}
+      {/* Date Filter Strip */}
+      <div className="dr-filter-strip">
+        <div className="dr-filter-left">
+          <span className="dr-filter-label">
+            <Calendar size={13} /> Period:
+          </span>
+          {filterOptions.map(f => {
+            const Icon = f.icon;
+            return (
+              <button
+                key={f.id}
+                className={`dr-chip ${dateRange.type === f.id ? 'active' : ''}`}
+                onClick={() => handleFilterSelect(f.id)}
               >
-                Apply Range
+                <Icon size={12} />
+                <span>{f.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="dr-filter-right">
+          {dateRange.type === 'custom' && (
+            <span className="dr-range-display">
+              {Utils.formatDate(dateRange.startDate)} → {Utils.formatDate(dateRange.endDate)}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Custom Range Panel */}
+      {showCustomPanel && (
+        <div className="dr-custom-panel">
+          <div className="dr-custom-panel-header">
+            <Filter size={14} />
+            <strong>Select Custom Date Range</strong>
+          </div>
+          <div className="dr-custom-panel-body">
+            <div className="dr-custom-field">
+              <label>From</label>
+              <input type="date" value={customStart} onChange={(e) => setCustomStart(e.target.value)} />
+            </div>
+            <div className="dr-custom-field">
+              <label>To</label>
+              <input type="date" value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} />
+            </div>
+            <div className="dr-custom-panel-actions">
+              <button className="dr-btn dr-btn-secondary" onClick={() => setShowCustomPanel(false)}>
+                Cancel
+              </button>
+              <button className="dr-btn dr-btn-primary" onClick={applyCustomRange}>
+                <CheckCircle size={14} /> Apply Range
               </button>
             </div>
           </div>
+        </div>
+      )}
 
-          {/* Single Date Selector */}
-          <div className="single-date-selector">
-            <label>📅 Single Date:</label>
-            <input
-              type="date"
-              value={reportDate}
-              onChange={(e) => setReportDate(e.target.value)}
-            />
-            <button
-              className="btn-primary"
-              onClick={() => {
-                setDateRange({ type: 'single', startDate: reportDate, endDate: reportDate });
-                setShowReport(true);
-              }}
-            >
-              <FileText size={16} /> Generate Report
+      {/* Tabs */}
+      <div className="dr-tabs">
+        {[
+          { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+          { id: 'daily', label: 'Daily', icon: Calendar, badge: filteredData.dailyAggregates.length },
+          { id: 'sites', label: 'Sites', icon: Building2, badge: filteredData.siteSummary.filter(s => s.entryCount > 0).length },
+          { id: 'workers', label: 'Workers', icon: Users, badge: filteredData.workerSummary.filter(w => w.totalWage > 0).length }
+        ].map(t => {
+          const Icon = t.icon;
+          return (
+            <button key={t.id} className={`dr-tab ${viewMode === t.id ? 'active' : ''}`}
+              onClick={() => setViewMode(t.id)}>
+              <Icon size={15} />
+              <span>{t.label}</span>
+              {t.badge !== undefined && t.badge > 0 && <span className="dr-tab-badge">{t.badge}</span>}
             </button>
-          </div>
-        </div>
-
-        {/* Preview Stats */}
-        {renderStats()}
-        {renderTooltip()}
-
-        <div className="report-preview">
-          <div className="preview-stats">
-            <div className="preview-stat">
-              <span className="label">Selected Range:</span>
-              <span className="value">
-                {dateRange.type === 'single' 
-                  ? Utils.formatDate(reportDate)
-                  : `${Utils.formatDate(dateRange.startDate)} - ${Utils.formatDate(dateRange.endDate)}`
-                }
-              </span>
-            </div>
-            <div className="preview-stat">
-              <span className="label">Total Entries:</span>
-              <span className="value">{filteredData.totals.entryCount}</span>
-            </div>
-            <div className="preview-stat">
-              <span className="label">Total Revenue:</span>
-              <span className="value">{Utils.formatCurrency(filteredData.totals.revenue)}</span>
-            </div>
-            <div className="preview-stat">
-              <span className="label">Net Profit:</span>
-              <span className={`value ${filteredData.totals.profit >= 0 ? 'positive' : 'negative'}`}>
-                {Utils.formatCurrency(filteredData.totals.profit)}
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="daily-report-modern">
-      {/* Report Controls */}
-      <div className="report-controls">
-        <div className="report-info">
-          <h3>
-            📊 Report: {dateRange.type === 'single' 
-              ? Utils.formatDate(reportDate)
-              : `${Utils.formatDate(filteredData.startDate)} - ${Utils.formatDate(filteredData.endDate)}`
-            }
-          </h3>
-          <span className="report-days">{filteredData.totals.totalDays} days</span>
-        </div>
-        <div className="report-actions">
-          <button className="btn-primary" onClick={exportDailyReport}>
-            <Download size={16} /> Export CSV
-          </button>
-          <button className="btn-primary" onClick={handlePrintReport}>
-            <Printer size={16} /> Print / PDF
-          </button>
-          <button className="btn-secondary" onClick={() => setShowReport(false)}>
-            <X size={16} /> Close
-          </button>
-        </div>
+          );
+        })}
       </div>
 
-      {/* Screen Report (Simple Preview) */}
-      {renderScreenReport()}
+      {viewMode === 'overview' && renderOverviewTab()}
+      {viewMode === 'daily' && renderDailyTab()}
+      {viewMode === 'sites' && renderSitesTab()}
+      {viewMode === 'workers' && renderWorkersTab()}
     </div>
   );
 };

@@ -1,163 +1,144 @@
 // src/components/MonthlySummaryComponent.jsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { 
-  TrendingUp, TrendingDown, Calendar, Filter, ChevronDown, 
+import { createPortal } from 'react-dom';
+import {
+  TrendingUp, TrendingDown, Calendar, Filter, ChevronDown,
   ChevronLeft, ChevronRight, Search, XCircle, Plus, Save, X,
-  RefreshCw, AlertCircle, Edit, Trash2, DollarSign, 
-  BarChart2, PieChart, Activity, Users, Building2,Truck,
-  Download, Printer, Eye, EyeOff, Calculator,
-  LayoutDashboard, FileText, Tag, Clock, Award, Crown,
-  Sparkles, ArrowUpRight, ArrowDownRight, CheckCircle,
-  Info, BarChart3, Gauge, Zap
+  RefreshCw, AlertCircle, Edit, Trash2, DollarSign, BarChart2,
+  PieChart, Activity, Users, Building2, Truck, Download, Printer,
+  Eye, EyeOff, Calculator, LayoutDashboard, FileText, Tag, Clock,
+  Award, Crown, Sparkles, ArrowUpRight, ArrowDownRight, CheckCircle,
+  Info, BarChart3, Gauge, Zap, ChevronLeft as ChevLeft,
+  ChevronsLeft, ChevronsRight, Layers, Flame, Target, Percent,
+  Wallet, Repeat, CircleDollarSign, Minus, Medal
 } from 'lucide-react';
+import {
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis,
+  CartesianGrid, Tooltip as ReTooltip, Legend, Area, AreaChart,
+  ComposedChart, Bar, PieChart as RePieChart, Pie, Cell,
+  RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar
+} from 'recharts';
 import Utils from '../utils/Utils';
 import './MonthlySummaryComponent.css';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-  Area,
-  ComposedChart,
-  Bar,
-  PieChart as RePieChart,
-  Pie,
-  Cell,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  Radar
-} from 'recharts';
 
 import { CONFIG } from '../config/constants';
 const API_BASE_URL = CONFIG.API_BASE || 'http://localhost:5000/api';
 
-const MonthlySummaryComponent = ({ 
-  data, 
-  refreshData,
-  onDataUpdate
-}) => {
-  // ============================================
-  // STATE
-  // ============================================
+// ============================================
+// PORTAL
+// ============================================
+const ModalPortal = ({ children }) => {
+  if (typeof document === 'undefined') return null;
+  return createPortal(children, document.body);
+};
+
+// ============================================
+// CHART TOOLTIP
+// ============================================
+const ChartTooltip = ({ active, payload, label, formatter }) => {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div className="ms-chart-tooltip">
+      {label && <div className="ms-chart-tooltip-label">{label}</div>}
+      {payload.map((p, i) => (
+        <div key={i} className="ms-chart-tooltip-row">
+          <span className="ms-chart-tooltip-dot" style={{ background: p.color || p.fill || p.payload?.color }} />
+          <span className="ms-chart-tooltip-name">{p.name}</span>
+          <span className="ms-chart-tooltip-val">
+            {formatter ? formatter(p.value, p.name) : Utils.formatCurrency(p.value)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ============================================
+// MAIN COMPONENT
+// ============================================
+const MonthlySummaryComponent = ({ data, refreshData, onDataUpdate }) => {
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
-  const [selectedYear, setSelectedYear] = useState(() => {
-    return new Date().getFullYear().toString();
-  });
-  const [selectedMonth, setSelectedMonth] = useState(() => {
-    const now = new Date();
-    return String(now.getMonth() + 1).padStart(2, '0');
-  });
+  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear().toString());
+  const [selectedMonth, setSelectedMonth] = useState(() => String(new Date().getMonth() + 1).padStart(2, '0'));
   const [chartView, setChartView] = useState('trend');
   const [localMonthlySummaries, setLocalMonthlySummaries] = useState([]);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [apiError, setApiError] = useState(null);
   const [hoveredCard, setHoveredCard] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
-  
-  // Filter states
+  const [mounted, setMounted] = useState(false);
+
+  // View mode tabs
+  const [viewMode, setViewMode] = useState('overview'); // overview | summaries
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
   const [filterType, setFilterType] = useState('year');
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
   const [yearRangeStart, setYearRangeStart] = useState(selectedYear);
   const [yearRangeEnd, setYearRangeEnd] = useState(selectedYear);
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Form state
   const [formData, setFormData] = useState({
-    month: '',
-    totalRevenue: '',
-    totalLabour: '',
-    carPatrol: '',
-    monthlyOh: '',
-    oneTime: '',
-    netProfit: '',
-    status: 'FAIDA',
-    notes: ''
+    month: '', totalRevenue: '', totalLabour: '', carPatrol: '',
+    monthlyOh: '', oneTime: '', netProfit: '', status: 'FAIDA', notes: ''
   });
 
-  // ============================================
-  // MEMOIZED DATA
-  // ============================================
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
   const monthlySummary = useMemo(() => {
-    if (data?.monthlySummary && data.monthlySummary.length > 0) {
-      return data.monthlySummary;
-    }
+    if (data?.monthlySummary && data.monthlySummary.length > 0) return data.monthlySummary;
     return localMonthlySummaries;
   }, [data?.monthlySummary, localMonthlySummaries]);
 
-  const entries = useMemo(() => {
-    if (!data?.entries) return [];
-    return data.entries;
-  }, [data?.entries]);
-
-  // ============================================
-  // EFFECTS
-  // ============================================
   useEffect(() => {
     const fetchData = async () => {
-      setIsInitialLoad(true);
-      setApiError(null);
-      
+      setIsInitialLoad(true); setApiError(null);
       if (data?.monthlySummary && data.monthlySummary.length > 0) {
         setLocalMonthlySummaries(data.monthlySummary);
-        setIsInitialLoad(false);
-        return;
+        setIsInitialLoad(false); return;
       }
-      
       await loadMonthlySummaries();
       setIsInitialLoad(false);
     };
-    
     fetchData();
   }, [data?.monthlySummary]);
 
   // ============================================
-  // LOAD MONTHLY SUMMARIES
+  // LOAD
   // ============================================
   const loadMonthlySummaries = useCallback(async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/monthly-summary/`, {
-        method: 'GET',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        }
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }
       });
-      
       if (!response.ok) {
         let errorMessage = `HTTP error! status: ${response.status}`;
         try {
-          const errorData = await response.json();
-          if (errorData.error) {
-            errorMessage = errorData.error;
-          }
-        } catch (e) {}
+          const errData = await response.json();
+          if (errData.error) errorMessage = errData.error;
+        } catch {}
         throw new Error(errorMessage);
       }
-      
       const result = await response.json();
-      
       if (Array.isArray(result)) {
         setLocalMonthlySummaries(result);
-        if (onDataUpdate) {
-          onDataUpdate({ monthlySummary: result });
-        }
+        if (onDataUpdate) onDataUpdate({ monthlySummary: result });
         setApiError(null);
         return result;
-      } else {
-        setLocalMonthlySummaries([]);
-        setApiError('Unexpected response format from server');
-        return [];
       }
+      setLocalMonthlySummaries([]);
+      setApiError('Unexpected response format from server');
+      return [];
     } catch (error) {
       console.error('Error loading monthly summaries:', error);
       setApiError(error.message || 'Failed to load monthly summaries');
@@ -166,232 +147,216 @@ const MonthlySummaryComponent = ({
     }
   }, [onDataUpdate]);
 
-  // ============================================
-  // REFRESH SUMMARIES
-  // ============================================
   const refreshSummaries = useCallback(async () => {
-    setLoading(true);
-    setErrorMessage('');
-    setSuccessMessage('');
-    setApiError(null);
-    
+    setLoading(true); setErrorMessage(''); setSuccessMessage(''); setApiError(null);
     try {
-      if (refreshData) {
-        await refreshData();
-      }
+      if (refreshData) await refreshData();
       await loadMonthlySummaries();
-      setSuccessMessage('✅ Data refreshed successfully');
+      setSuccessMessage('Data refreshed successfully');
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (error) {
       console.error('Error refreshing summaries:', error);
       setErrorMessage(`Failed to refresh data: ${error.message}`);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }, [refreshData, loadMonthlySummaries]);
 
   // ============================================
-  // AVAILABLE YEARS & MONTHS
+  // FILTERED
   // ============================================
   const availableYears = useMemo(() => {
     const years = new Set();
-    monthlySummary.forEach(item => {
-      if (item.month) {
-        const year = item.month.substring(0, 4);
-        years.add(year);
-      }
-    });
+    monthlySummary.forEach(item => { if (item.month) years.add(item.month.substring(0, 4)); });
     return Array.from(years).sort();
   }, [monthlySummary]);
 
   const availableMonths = useMemo(() => {
     const months = new Set();
     monthlySummary.forEach(item => {
-      if (item.month && item.month.startsWith(selectedYear)) {
-        const month = item.month.substring(5, 7);
-        months.add(month);
-      }
+      if (item.month && item.month.startsWith(selectedYear)) months.add(item.month.substring(5, 7));
     });
     return Array.from(months).sort();
   }, [monthlySummary, selectedYear]);
 
-  // ============================================
-  // FILTERED DATA
-  // ============================================
   const filteredData = useMemo(() => {
     let filtered = [...monthlySummary];
-
-    if (filterType === 'all') {
-      filtered = filtered;
-    } else if (filterType === 'year') {
-      filtered = filtered.filter(item => {
-        if (!item.month) return false;
-        return item.month.substring(0, 4) === selectedYear;
-      });
+    if (filterType === 'year') {
+      filtered = filtered.filter(i => i.month && i.month.substring(0, 4) === selectedYear);
     } else if (filterType === 'month') {
-      filtered = filtered.filter(item => {
-        if (!item.month) return false;
-        return item.month === `${selectedYear}-${selectedMonth}`;
-      });
+      filtered = filtered.filter(i => i.month === `${selectedYear}-${selectedMonth}`);
     } else if (filterType === 'range') {
-      filtered = filtered.filter(item => {
-        if (!item.month) return false;
-        return item.month >= yearRangeStart && item.month <= yearRangeEnd;
-      });
+      filtered = filtered.filter(i => i.month && i.month >= yearRangeStart && i.month <= yearRangeEnd);
     }
-
     if (searchTerm.trim()) {
-      const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(item => {
-        const monthStr = item.month || '';
-        const statusStr = item.status?.toLowerCase() || '';
-        const notesStr = item.notes?.toLowerCase() || '';
-        return monthStr.includes(term) || 
-               statusStr.includes(term) || 
-               notesStr.includes(term);
-      });
+      const t = searchTerm.toLowerCase();
+      filtered = filtered.filter(i =>
+        (i.month || '').includes(t) ||
+        (i.status || '').toLowerCase().includes(t) ||
+        (i.notes || '').toLowerCase().includes(t)
+      );
     }
-
-    return filtered.sort((a, b) => {
-      if (!a.month) return 1;
-      if (!b.month) return -1;
-      return a.month.localeCompare(b.month);
-    });
+    return filtered.sort((a, b) => (!a.month ? 1 : !b.month ? -1 : a.month.localeCompare(b.month)));
   }, [monthlySummary, selectedYear, selectedMonth, filterType, yearRangeStart, yearRangeEnd, searchTerm]);
+
+  // ============================================
+  // PAGINATION
+  // ============================================
+  const totalPages = Math.max(1, Math.ceil(filteredData.length / itemsPerPage));
+  const paginatedData = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredData.slice(start, start + itemsPerPage);
+  }, [filteredData, currentPage, itemsPerPage]);
+
+  useEffect(() => { setCurrentPage(1); }, [filterType, selectedYear, selectedMonth, searchTerm, itemsPerPage, viewMode]);
+  useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
+
+  const goToPage = (p) => setCurrentPage(Math.max(1, Math.min(p, totalPages)));
+  const getPageNumbers = () => {
+    const pages = []; const max = 5;
+    let start = Math.max(1, currentPage - 2);
+    let end = Math.min(totalPages, start + max - 1);
+    if (end - start < max - 1) start = Math.max(1, end - max + 1);
+    for (let i = start; i <= end; i++) pages.push(i);
+    return pages;
+  };
 
   // ============================================
   // TOTALS
   // ============================================
   const totals = useMemo(() => {
-    const totalRevenue = filteredData.reduce((sum, item) => sum + (item.totalRevenue || 0), 0);
-    const totalLabour = filteredData.reduce((sum, item) => sum + (item.totalLabour || 0), 0);
-    const totalCarPatrol = filteredData.reduce((sum, item) => sum + (item.carPatrol || 0), 0);
-    const totalMonthlyOH = filteredData.reduce((sum, item) => sum + (item.monthlyOh || 0), 0);
-    const totalOneTime = filteredData.reduce((sum, item) => sum + (item.oneTime || 0), 0);
-    const totalNet = filteredData.reduce((sum, item) => sum + (item.netProfit || 0), 0);
+    const totalRevenue = filteredData.reduce((s, i) => s + (i.totalRevenue || 0), 0);
+    const totalLabour = filteredData.reduce((s, i) => s + (i.totalLabour || 0), 0);
+    const totalCarPatrol = filteredData.reduce((s, i) => s + (i.carPatrol || 0), 0);
+    const totalMonthlyOH = filteredData.reduce((s, i) => s + (i.monthlyOh || 0), 0);
+    const totalOneTime = filteredData.reduce((s, i) => s + (i.oneTime || 0), 0);
+    const totalNet = filteredData.reduce((s, i) => s + (i.netProfit || 0), 0);
     const totalCosts = totalLabour + totalCarPatrol + totalMonthlyOH + totalOneTime;
-    
     return {
-      totalRevenue,
-      totalLabour,
-      totalCarPatrol,
-      totalMonthlyOH,
-      totalOneTime,
-      totalNet,
-      totalCosts,
+      totalRevenue, totalLabour, totalCarPatrol, totalMonthlyOH, totalOneTime,
+      totalNet, totalCosts,
       isProfit: totalNet >= 0,
       count: filteredData.length,
       avgNet: filteredData.length > 0 ? totalNet / filteredData.length : 0,
+      avgRevenue: filteredData.length > 0 ? totalRevenue / filteredData.length : 0,
       profitMargin: totalRevenue > 0 ? (totalNet / totalRevenue) * 100 : 0,
       bestMonth: filteredData.length > 0 ? filteredData.reduce((a, b) => (a.netProfit || 0) > (b.netProfit || 0) ? a : b) : null,
       worstMonth: filteredData.length > 0 ? filteredData.reduce((a, b) => (a.netProfit || 0) < (b.netProfit || 0) ? a : b) : null,
+      profitableMonths: filteredData.filter(i => (i.netProfit || 0) > 0).length,
+      lossMonths: filteredData.filter(i => (i.netProfit || 0) < 0).length
     };
   }, [filteredData]);
 
   // ============================================
-  // CARD DETAILS FOR TOOLTIPS
-  // ============================================
-  const cardDetails = {
-    revenue: {
-      title: 'Total Revenue',
-      details: [
-        { label: 'Total Revenue', value: Utils.formatCurrency(totals.totalRevenue) },
-        { label: 'Months', value: totals.count },
-        { label: 'Average Revenue', value: totals.count > 0 ? Utils.formatCurrency(totals.totalRevenue / totals.count) : '0.000' },
-        { label: 'Best Month', value: totals.bestMonth ? Utils.formatCurrency(totals.bestMonth.totalRevenue) : '-' }
-      ]
-    },
-    costs: {
-      title: 'Total Costs',
-      details: [
-        { label: 'Total Costs', value: Utils.formatCurrency(totals.totalCosts) },
-        { label: 'Labour', value: Utils.formatCurrency(totals.totalLabour) },
-        { label: 'Car Patrol', value: Utils.formatCurrency(totals.totalCarPatrol) },
-        { label: 'Monthly OH', value: Utils.formatCurrency(totals.totalMonthlyOH) },
-        { label: 'One Time', value: Utils.formatCurrency(totals.totalOneTime) }
-      ]
-    },
-    profit: {
-      title: 'Net Profit',
-      details: [
-        { label: 'Net Profit', value: Utils.formatCurrency(totals.totalNet) },
-        { label: 'Revenue', value: Utils.formatCurrency(totals.totalRevenue) },
-        { label: 'Profit Margin', value: `${totals.profitMargin.toFixed(1)}%` },
-        { label: 'Best Month', value: totals.bestMonth ? Utils.formatCurrency(totals.bestMonth.netProfit) : '-' }
-      ]
-    },
-    months: {
-      title: 'Months Summary',
-      details: [
-        { label: 'Total Months', value: totals.count },
-        { label: 'Total Revenue', value: Utils.formatCurrency(totals.totalRevenue) },
-        { label: 'Total Profit', value: Utils.formatCurrency(totals.totalNet) },
-        { label: 'Avg Profit', value: totals.count > 0 ? Utils.formatCurrency(totals.totalNet / totals.count) : '0.000' }
-      ]
-    }
-  };
-
-  // ============================================
-  // HANDLE CARD HOVER
-  // ============================================
-  const handleCardHover = (cardId, event) => {
-    setHoveredCard(cardId);
-    setTooltipPosition({
-      x: event.clientX + 15,
-      y: event.clientY - 10
-    });
-  };
-
-  const handleCardLeave = () => {
-    setHoveredCard(null);
-  };
-
-  // ============================================
   // CHART DATA
   // ============================================
-  const chartData = useMemo(() => {
-    return filteredData.map(item => {
-      const monthParts = item.month?.split('-') || [];
-      const monthName = monthParts.length === 2 
-        ? ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][parseInt(monthParts[1]) - 1] 
-        : item.month || '';
-      const year = monthParts.length === 2 ? monthParts[0] : '';
-      return {
-        month: monthName,
-        year: year,
-        fullMonth: item.month,
-        revenue: item.totalRevenue || 0,
-        labour: item.totalLabour || 0,
-        carPatrol: item.carPatrol || 0,
-        monthlyOh: item.monthlyOh || 0,
-        oneTime: item.oneTime || 0,
-        net: item.netProfit || 0,
-        status: item.status || 'NUKSAN',
-        profitMargin: item.totalRevenue > 0 ? ((item.netProfit || 0) / (item.totalRevenue || 1)) * 100 : 0
-      };
-    });
-  }, [filteredData]);
+  const chartData = useMemo(() => filteredData.map(item => {
+    const parts = item.month?.split('-') || [];
+    const monthName = parts.length === 2
+      ? ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][parseInt(parts[1]) - 1]
+      : item.month || '';
+    return {
+      month: monthName,
+      fullMonth: item.month,
+      revenue: item.totalRevenue || 0,
+      labour: item.totalLabour || 0,
+      carPatrol: item.carPatrol || 0,
+      monthlyOh: item.monthlyOh || 0,
+      oneTime: item.oneTime || 0,
+      cost: (item.totalLabour || 0) + (item.carPatrol || 0) + (item.monthlyOh || 0) + (item.oneTime || 0),
+      net: item.netProfit || 0,
+      status: item.status || 'NUKSAN',
+      profitMargin: item.totalRevenue > 0 ? ((item.netProfit || 0) / item.totalRevenue) * 100 : 0
+    };
+  }), [filteredData]);
 
-  // ============================================
-  // PIE CHART DATA
-  // ============================================
   const pieData = useMemo(() => {
     const latest = filteredData.length > 0 ? filteredData[filteredData.length - 1] : null;
     if (!latest) return [];
     return [
-      { name: 'Revenue', value: latest.totalRevenue || 0 },
-      { name: 'Labour', value: latest.totalLabour || 0 },
-      { name: 'Car Patrol', value: latest.carPatrol || 0 },
-      { name: 'Monthly OH', value: latest.monthlyOh || 0 },
-      { name: 'One Time', value: latest.oneTime || 0 },
-      { name: 'Net Profit', value: Math.max(0, latest.netProfit || 0) },
-    ];
+      { name: 'Revenue', value: latest.totalRevenue || 0, color: '#10b981' },
+      { name: 'Labour', value: latest.totalLabour || 0, color: '#ef4444' },
+      { name: 'Car Patrol', value: latest.carPatrol || 0, color: '#f59e0b' },
+      { name: 'Monthly OH', value: latest.monthlyOh || 0, color: '#3b82f6' },
+      { name: 'One Time', value: latest.oneTime || 0, color: '#8b5cf6' },
+      { name: 'Net Profit', value: Math.max(0, latest.netProfit || 0), color: '#10b981' }
+    ].filter(d => d.value > 0);
   }, [filteredData]);
 
-  const COLORS = ['#22c55e', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6', '#ec4899'];
+  const costBreakdownData = useMemo(() => ([
+    { name: 'Labour', value: totals.totalLabour, color: '#ef4444' },
+    { name: 'Car Patrol', value: totals.totalCarPatrol, color: '#f59e0b' },
+    { name: 'Monthly OH', value: totals.totalMonthlyOH, color: '#3b82f6' },
+    { name: 'One Time', value: totals.totalOneTime, color: '#8b5cf6' }
+  ].filter(d => d.value > 0)), [totals]);
+
+  const radarData = useMemo(() => ([
+    { metric: 'Revenue', value: totals.avgRevenue || 0 },
+    { metric: 'Profit', value: Math.max(0, totals.avgNet || 0) },
+    { metric: 'Labour', value: totals.count ? totals.totalLabour / totals.count : 0 },
+    { metric: 'Car Patrol', value: totals.count ? totals.totalCarPatrol / totals.count : 0 },
+    { metric: 'Monthly OH', value: totals.count ? totals.totalMonthlyOH / totals.count : 0 }
+  ]), [totals]);
 
   // ============================================
-  // HELPER FUNCTIONS
+  // KPI CARDS
+  // ============================================
+  const kpiItems = [
+    { id: 'revenue', icon: DollarSign, label: 'Total Revenue',
+      value: Utils.formatCurrencyShort(totals.totalRevenue),
+      meta: `Avg ${Utils.formatCurrencyShort(totals.avgRevenue)}/mo`,
+      color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
+    { id: 'costs', icon: Wallet, label: 'Total Costs',
+      value: Utils.formatCurrencyShort(totals.totalCosts),
+      meta: `${totals.totalRevenue > 0 ? ((totals.totalCosts / totals.totalRevenue) * 100).toFixed(0) : 0}% of revenue`,
+      color: '#ef4444', accent: 'linear-gradient(90deg,#ef4444,#f87171)',
+      trend: totals.totalCosts > 0 ? 'down' : 'flat' },
+    { id: 'profit', icon: TrendingUp, label: 'Net Profit',
+      value: Utils.formatCurrencyShort(totals.totalNet),
+      meta: `${totals.profitMargin.toFixed(1)}% margin`,
+      color: totals.isProfit ? '#10b981' : '#ef4444',
+      accent: totals.isProfit ? 'linear-gradient(90deg,#10b981,#34d399)' : 'linear-gradient(90deg,#ef4444,#f87171)',
+      trend: totals.isProfit ? 'up' : 'down' },
+    { id: 'months', icon: Calendar, label: 'Months',
+      value: totals.count,
+      meta: `${totals.profitableMonths} profitable`,
+      color: '#3b82f6', accent: 'linear-gradient(90deg,#3b82f6,#60a5fa)', trend: 'up' }
+  ];
+
+  const cardDetails = {
+    revenue: { title: 'Total Revenue', details: [
+      { label: 'Total Revenue', value: Utils.formatCurrency(totals.totalRevenue) },
+      { label: 'Months', value: totals.count },
+      { label: 'Avg Revenue', value: Utils.formatCurrency(totals.avgRevenue) },
+      { label: 'Best Month', value: totals.bestMonth ? Utils.formatCurrency(totals.bestMonth.totalRevenue) : '-' }
+    ]},
+    costs: { title: 'Total Costs', details: [
+      { label: 'Total Costs', value: Utils.formatCurrency(totals.totalCosts) },
+      { label: 'Labour', value: Utils.formatCurrency(totals.totalLabour) },
+      { label: 'Car Patrol', value: Utils.formatCurrency(totals.totalCarPatrol) },
+      { label: 'Monthly OH', value: Utils.formatCurrency(totals.totalMonthlyOH) },
+      { label: 'One Time', value: Utils.formatCurrency(totals.totalOneTime) }
+    ]},
+    profit: { title: 'Net Profit', details: [
+      { label: 'Net Profit', value: Utils.formatCurrency(totals.totalNet) },
+      { label: 'Revenue', value: Utils.formatCurrency(totals.totalRevenue) },
+      { label: 'Margin', value: `${totals.profitMargin.toFixed(1)}%` },
+      { label: 'Best Month', value: totals.bestMonth ? Utils.formatCurrency(totals.bestMonth.netProfit) : '-' }
+    ]},
+    months: { title: 'Months Summary', details: [
+      { label: 'Total Months', value: totals.count },
+      { label: 'Profitable', value: totals.profitableMonths },
+      { label: 'Loss Making', value: totals.lossMonths },
+      { label: 'Avg Profit', value: Utils.formatCurrency(totals.avgNet) }
+    ]}
+  };
+
+  const handleCardHover = (id, e) => {
+    setHoveredCard(id);
+    setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 });
+  };
+  const handleCardLeave = () => setHoveredCard(null);
+
+  // ============================================
+  // HELPERS
   // ============================================
   const getMonthLabel = (monthStr) => {
     if (!monthStr) return '';
@@ -401,42 +366,32 @@ const MonthlySummaryComponent = ({
   };
 
   const getStatusBadge = (status) => {
-    const isProfit = status === 'FAIDA' || status === 'Profit' || status === '✅ FAIDA' || status?.includes('Faida');
+    const isProfit = status === 'FAIDA' || status === 'Profit' ||
+      status === '✅ FAIDA' || status?.includes('Faida');
     return (
-      <span className={`status-badge ${isProfit ? 'profit' : 'loss'}`}>
-        {isProfit ? '✅ Profit' : '❌ Loss'}
+      <span className={`ms-status ${isProfit ? 'profit' : 'loss'}`}>
+        {isProfit ? <CheckCircle size={11} /> : <AlertCircle size={11} />}
+        {isProfit ? 'Profit' : 'Loss'}
       </span>
     );
   };
 
   // ============================================
-  // FORM HANDLERS
+  // CRUD
   // ============================================
   const resetForm = () => {
     const now = new Date();
-    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     setFormData({
-      month: currentMonth,
-      totalRevenue: '',
-      totalLabour: '',
-      carPatrol: '',
-      monthlyOh: '',
-      oneTime: '',
-      netProfit: '',
-      status: 'FAIDA',
-      notes: ''
+      month: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`,
+      totalRevenue: '', totalLabour: '', carPatrol: '',
+      monthlyOh: '', oneTime: '', netProfit: '', status: 'FAIDA', notes: ''
     });
-    setEditingId(null);
-    setErrorMessage('');
-    setSuccessMessage('');
+    setEditingId(null); setErrorMessage(''); setSuccessMessage('');
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    setErrorMessage('');
-    setSuccessMessage('');
-
+    setLoading(true); setErrorMessage(''); setSuccessMessage('');
     try {
       const summaryData = {
         month: formData.month,
@@ -449,44 +404,28 @@ const MonthlySummaryComponent = ({
         status: formData.status || 'NUKSAN',
         notes: formData.notes || ''
       };
-
-      const url = editingId 
-        ? `${API_BASE_URL}/monthly-summary/${editingId}/`
-        : `${API_BASE_URL}/monthly-summary/`;
+      const url = editingId ? `${API_BASE_URL}/monthly-summary/${editingId}/` : `${API_BASE_URL}/monthly-summary/`;
       const method = editingId ? 'PUT' : 'POST';
-
       const response = await fetch(url, {
-        method: method,
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
+        method, headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(summaryData)
       });
-
       if (!response.ok) {
         let errorMsg = `Failed to save summary: ${response.status}`;
         try {
-          const errorData = await response.json();
-          if (errorData.error) {
-            errorMsg = errorData.error;
-          }
-        } catch (e) {}
+          const errData = await response.json();
+          if (errData.error) errorMsg = errData.error;
+        } catch {}
         throw new Error(errorMsg);
       }
-
-      const result = await response.json();
-      setSuccessMessage(editingId ? '✅ Monthly summary updated successfully!' : '✅ Monthly summary created successfully!');
+      setSuccessMessage(editingId ? 'Summary updated!' : 'Summary created!');
       await refreshSummaries();
-      resetForm();
-      setShowForm(false);
+      resetForm(); setShowForm(false);
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (error) {
       console.error('Error saving monthly summary:', error);
       setErrorMessage(error.message || 'Failed to save. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   const handleEdit = (summary) => {
@@ -502,27 +441,17 @@ const MonthlySummaryComponent = ({
       status: summary.status || 'NUKSAN',
       notes: summary.notes || ''
     });
-    setShowForm(true);
-    setErrorMessage('');
+    setShowForm(true); setErrorMessage('');
   };
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this monthly summary?')) return;
-    
+    if (!window.confirm('Delete this monthly summary?')) return;
     try {
       const response = await fetch(`${API_BASE_URL}/monthly-summary/${id}/`, {
-        method: 'DELETE',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        }
+        method: 'DELETE', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }
       });
-
-      if (!response.ok) {
-        throw new Error(`Failed to delete: ${response.status}`);
-      }
-
-      setSuccessMessage('✅ Monthly summary deleted successfully!');
+      if (!response.ok) throw new Error(`Failed to delete: ${response.status}`);
+      setSuccessMessage('Summary deleted!');
       await refreshSummaries();
       setTimeout(() => setSuccessMessage(''), 3000);
     } catch (error) {
@@ -531,7 +460,6 @@ const MonthlySummaryComponent = ({
     }
   };
 
-  // Auto-calculate net profit
   useEffect(() => {
     const revenue = parseFloat(formData.totalRevenue) || 0;
     const labour = parseFloat(formData.totalLabour) || 0;
@@ -539,251 +467,638 @@ const MonthlySummaryComponent = ({
     const monthlyOh = parseFloat(formData.monthlyOh) || 0;
     const oneTime = parseFloat(formData.oneTime) || 0;
     const net = revenue - labour - carPatrol - monthlyOh - oneTime;
-    const status = net >= 0 ? 'FAIDA' : 'NUKSAN';
     setFormData(prev => ({
       ...prev,
       netProfit: net.toFixed(3),
-      status: status
+      status: net >= 0 ? 'FAIDA' : 'NUKSAN'
     }));
   }, [formData.totalRevenue, formData.totalLabour, formData.carPatrol, formData.monthlyOh, formData.oneTime]);
 
-  // Auto-generate summary
   const handleAutoGenerate = async () => {
-    setLoading(true);
-    setErrorMessage('');
-    setSuccessMessage('');
-
+    setLoading(true); setErrorMessage(''); setSuccessMessage('');
     try {
       const now = new Date();
       const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-      
       const response = await fetch(`${API_BASE_URL}/monthly-summary/auto-update/`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        }
+        method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }
       });
-      
-      if (!response.ok) {
-        let errorMsg = `Failed to auto-update: ${response.status}`;
-        try {
-          const errorData = await response.json();
-          if (errorData.error) {
-            errorMsg = errorData.error;
-          }
-        } catch (e) {}
-        throw new Error(errorMsg);
-      }
-      
+      if (!response.ok) throw new Error(`Failed to auto-update: ${response.status}`);
       const result = await response.json();
-      
       if (result.data) {
-        setSuccessMessage(`✅ Monthly summary updated for ${getMonthLabel(currentMonth)}!`);
+        setSuccessMessage(`Summary updated for ${getMonthLabel(currentMonth)}!`);
         await refreshSummaries();
       } else {
-        setErrorMessage('Failed to generate summary. Please check if there are entries for this month.');
+        setErrorMessage('Failed to generate. Check entries for this month.');
       }
       setTimeout(() => setSuccessMessage(''), 5000);
     } catch (error) {
       console.error('Error auto-generating summary:', error);
-      setErrorMessage(error.message || 'Failed to auto-generate. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+      setErrorMessage(error.message || 'Failed to auto-generate.');
+    } finally { setLoading(false); }
   };
 
   const handleGenerateAll = async () => {
-    setLoading(true);
-    setErrorMessage('');
-    setSuccessMessage('');
-
+    setLoading(true); setErrorMessage(''); setSuccessMessage('');
     try {
       const response = await fetch(`${API_BASE_URL}/monthly-summary/calculate-all/`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        }
+        method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }
       });
-      
-      if (!response.ok) {
-        let errorMsg = `Failed to calculate all: ${response.status}`;
-        try {
-          const errorData = await response.json();
-          if (errorData.error) {
-            errorMsg = errorData.error;
-          }
-        } catch (e) {}
-        throw new Error(errorMsg);
-      }
-      
+      if (!response.ok) throw new Error(`Failed to calculate all: ${response.status}`);
       const result = await response.json();
       await refreshSummaries();
-      
-      setSuccessMessage(`✅ Auto-generated successfully! Created/Updated ${result.success} summaries.`);
+      setSuccessMessage(`Auto-generated! Created/Updated ${result.success} summaries.`);
       setTimeout(() => setSuccessMessage(''), 5000);
     } catch (error) {
       console.error('Error auto-generating summaries:', error);
-      setErrorMessage(error.message || 'Failed to auto-generate. Please try again.');
-    } finally {
-      setLoading(false);
-    }
+      setErrorMessage(error.message || 'Failed to auto-generate.');
+    } finally { setLoading(false); }
   };
 
   // ============================================
-  // FILTER HANDLERS
+  // OVERVIEW TAB
   // ============================================
-  const handleFilterChange = (type) => {
-    setFilterType(type);
-    setShowFilterDropdown(false);
-  };
+  const renderOverviewTab = () => (
+    <div className="ms-view">
+      <div className="ms-kpi-grid">
+        {kpiItems.map(item => {
+          const Icon = item.icon;
+          return (
+            <div key={item.id} className="ms-kpi-card"
+              onMouseEnter={(e) => handleCardHover(item.id, e)}
+              onMouseLeave={handleCardLeave}
+              onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}>
+              <div className="ms-kpi-accent" style={{ background: item.accent }} />
+              <div className="ms-kpi-icon" style={{ background: `${item.color}1f`, color: item.color }}>
+                <Icon size={20} />
+              </div>
+              <div className="ms-kpi-content">
+                <span className="ms-kpi-label">{item.label}</span>
+                <span className="ms-kpi-value">{item.value}</span>
+                <span className="ms-kpi-meta">{item.meta}</span>
+              </div>
+              <div className={`ms-kpi-trend ${item.trend}`}>
+                {item.trend === 'up' && <TrendingUp size={15} />}
+                {item.trend === 'down' && <TrendingDown size={15} />}
+                {item.trend === 'flat' && <Minus size={15} />}
+              </div>
+            </div>
+          );
+        })}
+      </div>
 
-  const handleCustomMonthChange = (e) => {
-    const newMonth = e.target.value;
-    setSelectedMonth(newMonth.substring(5, 7));
-    setSelectedYear(newMonth.substring(0, 4));
-    setShowFilterDropdown(false);
-  };
+      {hoveredCard && cardDetails[hoveredCard] && (
+        <div className="ms-hover-tooltip"
+          style={{ position: 'fixed', left: tooltipPosition.x, top: tooltipPosition.y, zIndex: 9999 }}>
+          <div className="ms-tooltip-header"><strong>{cardDetails[hoveredCard].title}</strong></div>
+          <div className="ms-tooltip-body">
+            {cardDetails[hoveredCard].details.map((d, i) => (
+              <div key={i} className="ms-tooltip-row">
+                <span className="ms-tooltip-label">{d.label}</span>
+                <span className="ms-tooltip-value">{d.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Best & Worst month cards */}
+      {filteredData.length > 0 && (
+        <div className="ms-grid-2">
+          <div className="ms-highlight-card ms-highlight-good">
+            <div className="ms-highlight-icon"><TrendingUp size={20} /></div>
+            <div className="ms-highlight-content">
+              <span className="ms-highlight-label">Best Month</span>
+              <span className="ms-highlight-value">
+                {totals.bestMonth ? getMonthLabel(totals.bestMonth.month) : '—'}
+              </span>
+              <span className="ms-highlight-meta">
+                {totals.bestMonth ? Utils.formatCurrency(totals.bestMonth.netProfit) : ''}
+              </span>
+            </div>
+            <Award size={28} className="ms-highlight-badge" />
+          </div>
+          <div className="ms-highlight-card ms-highlight-bad">
+            <div className="ms-highlight-icon"><TrendingDown size={20} /></div>
+            <div className="ms-highlight-content">
+              <span className="ms-highlight-label">Worst Month</span>
+              <span className="ms-highlight-value">
+                {totals.worstMonth ? getMonthLabel(totals.worstMonth.month) : '—'}
+              </span>
+              <span className="ms-highlight-meta">
+                {totals.worstMonth ? Utils.formatCurrency(totals.worstMonth.netProfit) : ''}
+              </span>
+            </div>
+            <AlertCircle size={28} className="ms-highlight-badge" />
+          </div>
+        </div>
+      )}
+
+      {/* Row 1: Monthly trend */}
+      <div className="ms-card">
+        <div className="ms-card-header">
+          <div className="ms-card-title">
+            <span className="ms-card-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
+              <TrendingUp size={16} />
+            </span>
+            <div>
+              <h4>Revenue & Profit Trend</h4>
+              <span>Monthly performance overview</span>
+            </div>
+          </div>
+          <div className="ms-legend">
+            <span><i style={{ background: '#10b981' }} />Revenue</span>
+            <span><i style={{ background: '#ef4444' }} />Costs</span>
+            <span><i style={{ background: '#f59e0b' }} />Net Profit</span>
+          </div>
+        </div>
+        <ResponsiveContainer width="100%" height={320}>
+          <ComposedChart data={chartData}>
+            <defs>
+              <linearGradient id="msRevGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#10b981" stopOpacity={0.35} />
+                <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+              </linearGradient>
+              <linearGradient id="msNetGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.35} />
+                <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} vertical={false} />
+            <XAxis dataKey="month" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+            <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+              tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+            <ReTooltip content={<ChartTooltip />} />
+            <Area type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={2.5}
+              fill="url(#msRevGrad)" name="Revenue" />
+            <Line type="monotone" dataKey="cost" stroke="#ef4444" strokeWidth={2.5}
+              name="Costs" dot={{ r: 3, strokeWidth: 2 }} />
+            <Area type="monotone" dataKey="net" stroke="#f59e0b" strokeWidth={2.5}
+              fill="url(#msNetGrad)" name="Net Profit" />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Row 2: Cost breakdown pie + Radar */}
+      <div className="ms-grid-2-1">
+        <div className="ms-card">
+          <div className="ms-card-header">
+            <div className="ms-card-title">
+              <span className="ms-card-icon" style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}>
+                <PieChart size={16} />
+              </span>
+              <div>
+                <h4>Cost Breakdown</h4>
+                <span>All categories for selected period</span>
+              </div>
+            </div>
+          </div>
+          {costBreakdownData.length > 0 ? (
+            <>
+              <ResponsiveContainer width="100%" height={220}>
+                <RePieChart>
+                  <Pie data={costBreakdownData} dataKey="value" nameKey="name"
+                    cx="50%" cy="50%" innerRadius={55} outerRadius={88} paddingAngle={3} stroke="none">
+                    {costBreakdownData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Pie>
+                  <ReTooltip content={<ChartTooltip />} />
+                </RePieChart>
+              </ResponsiveContainer>
+              <div className="ms-pie-legend">
+                {costBreakdownData.map((d, i) => (
+                  <div key={i} className="ms-pie-item">
+                    <span className="ms-pie-dot" style={{ background: d.color }} />
+                    <span className="ms-pie-name">{d.name}</span>
+                    <span className="ms-pie-val">{Utils.formatCurrencyShort(d.value)}</span>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : <div className="ms-empty-mini">No cost data</div>}
+        </div>
+
+        <div className="ms-card">
+          <div className="ms-card-header">
+            <div className="ms-card-title">
+              <span className="ms-card-icon" style={{ background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>
+                <Target size={16} />
+              </span>
+              <div>
+                <h4>Performance Radar</h4>
+                <span>Monthly averages</span>
+              </div>
+            </div>
+          </div>
+          {radarData.length > 0 && chartData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={280}>
+              <RadarChart data={radarData}>
+                <PolarGrid stroke="#e5e7eb" />
+                <PolarAngleAxis dataKey="metric" stroke="#94a3b8" fontSize={11} />
+                <PolarRadiusAxis stroke="#94a3b8" fontSize={10} />
+                <Radar name="Average" dataKey="value" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.35} />
+                <ReTooltip content={<ChartTooltip />} />
+              </RadarChart>
+            </ResponsiveContainer>
+          ) : <div className="ms-empty-mini">No data</div>}
+        </div>
+      </div>
+
+      {/* Row 3: Latest distribution pie */}
+      {pieData.length > 0 && (
+        <div className="ms-card">
+          <div className="ms-card-header">
+            <div className="ms-card-title">
+              <span className="ms-card-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
+                <PieChart size={16} />
+              </span>
+              <div>
+                <h4>Latest Month Distribution</h4>
+                <span>{filteredData.length > 0 ? getMonthLabel(filteredData[filteredData.length - 1].month) : ''}</span>
+              </div>
+            </div>
+          </div>
+          <div className="ms-latest-pie-wrap">
+            <ResponsiveContainer width="100%" height={220}>
+              <RePieChart>
+                <Pie data={pieData} dataKey="value" nameKey="name"
+                  cx="50%" cy="50%" innerRadius={55} outerRadius={88} paddingAngle={3} stroke="none">
+                  {pieData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                </Pie>
+                <ReTooltip content={<ChartTooltip />} />
+              </RePieChart>
+            </ResponsiveContainer>
+            <div className="ms-pie-legend">
+              {pieData.map((d, i) => (
+                <div key={i} className="ms-pie-item">
+                  <span className="ms-pie-dot" style={{ background: d.color }} />
+                  <span className="ms-pie-name">{d.name}</span>
+                  <span className="ms-pie-val">{Utils.formatCurrencyShort(d.value)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 
   // ============================================
-  // CHART RENDER
+  // SUMMARIES TAB
   // ============================================
-  const CustomTooltip = ({ active, payload, label }) => {
-    if (active && payload && payload.length) {
-      return (
-        <div className="chart-tooltip">
-          <p className="chart-tooltip-label">{label}</p>
-          {payload.map((entry, index) => (
-            <p key={index} className="chart-tooltip-item" style={{ color: entry.color }}>
-              {entry.name}: {Utils.formatCurrency(entry.value)}
-            </p>
+  const renderSummariesTab = () => (
+    <div className="ms-view">
+      {/* Chart view selector */}
+      {chartData.length > 0 && (
+        <div className="ms-chart-toggle">
+          {[
+            { id: 'trend', label: 'Trend' },
+            { id: 'comparison', label: 'Comparison' },
+            { id: 'distribution', label: 'Distribution' }
+          ].map(v => (
+            <button key={v.id} className={`ms-chart-toggle-btn ${chartView === v.id ? 'active' : ''}`}
+              onClick={() => setChartView(v.id)}>
+              {v.label}
+            </button>
           ))}
         </div>
-      );
-    }
-    return null;
-  };
+      )}
 
-  const getChartTitle = () => {
-    let title = '';
-    switch(chartView) {
-      case 'trend': title = '📈 Monthly Trend'; break;
-      case 'comparison': title = '📊 Revenue vs Costs'; break;
-      case 'distribution': title = '🥧 Cost Distribution'; break;
-      default: title = '📈 Monthly Trend';
-    }
-    
-    if (filterType === 'month') {
-      title += ` - ${getMonthLabel(`${selectedYear}-${selectedMonth}`)}`;
-    } else if (filterType === 'year') {
-      title += ` - ${selectedYear}`;
-    } else if (filterType === 'all') {
-      title += ' - All Months';
-    }
-    
-    return title;
-  };
+      {chartData.length > 0 && (
+        <div className="ms-card">
+          <div className="ms-card-header">
+            <div className="ms-card-title">
+              <span className="ms-card-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
+                <BarChart3 size={16} />
+              </span>
+              <div>
+                <h4>
+                  {chartView === 'trend' ? 'Monthly Trend' :
+                    chartView === 'comparison' ? 'Revenue vs Costs' : 'Cost Distribution'}
+                </h4>
+                <span>{filteredData.length} months</span>
+              </div>
+            </div>
+            <div className="ms-legend">
+              {chartView === 'trend' && (
+                <>
+                  <span><i style={{ background: '#10b981' }} />Revenue</span>
+                  <span><i style={{ background: '#f59e0b' }} />Net</span>
+                  <span><i style={{ background: '#ef4444' }} />Labour</span>
+                </>
+              )}
+              {chartView === 'comparison' && (
+                <>
+                  <span><i style={{ background: '#10b981' }} />Revenue</span>
+                  <span><i style={{ background: '#ef4444' }} />Labour</span>
+                  <span><i style={{ background: '#3b82f6' }} />OH</span>
+                  <span><i style={{ background: '#f59e0b' }} />Patrol</span>
+                </>
+              )}
+              {chartView === 'distribution' && (
+                <>
+                  <span><i style={{ background: '#10b981' }} />Revenue</span>
+                  <span><i style={{ background: '#ef4444' }} />Labour</span>
+                  <span><i style={{ background: '#3b82f6' }} />OH</span>
+                  <span><i style={{ background: '#f59e0b' }} />Net</span>
+                </>
+              )}
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={320}>
+            {chartView === 'trend' ? (
+              <ComposedChart data={chartData}>
+                <defs>
+                  <linearGradient id="msTRev" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.3} />
+                    <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="msTNet" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.3} />
+                    <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} vertical={false} />
+                <XAxis dataKey="month" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                  tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+                <ReTooltip content={<ChartTooltip />} />
+                <Area type="monotone" dataKey="revenue" stroke="#10b981" strokeWidth={2.5}
+                  fill="url(#msTRev)" name="Revenue" />
+                <Area type="monotone" dataKey="net" stroke="#f59e0b" strokeWidth={2.5}
+                  fill="url(#msTNet)" name="Net" />
+                <Line type="monotone" dataKey="labour" stroke="#ef4444" strokeWidth={2.5}
+                  name="Labour" dot={{ r: 3, strokeWidth: 2 }} />
+              </ComposedChart>
+            ) : chartView === 'comparison' ? (
+              <ComposedChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} vertical={false} />
+                <XAxis dataKey="month" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                  tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+                <ReTooltip content={<ChartTooltip />} />
+                <Bar dataKey="revenue" fill="#10b981" name="Revenue" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="labour" fill="#ef4444" name="Labour" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="monthlyOh" fill="#3b82f6" name="Monthly OH" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="carPatrol" fill="#f59e0b" name="Car Patrol" radius={[6, 6, 0, 0]} />
+              </ComposedChart>
+            ) : (
+              <ComposedChart data={chartData}>
+                <defs>
+                  <linearGradient id="msDRev" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="msDLab" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#ef4444" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#ef4444" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="msDOh" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
+                  </linearGradient>
+                  <linearGradient id="msDNet" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#f59e0b" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#f59e0b" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} vertical={false} />
+                <XAxis dataKey="month" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                  tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+                <ReTooltip content={<ChartTooltip />} />
+                <Area type="monotone" dataKey="revenue" stroke="#10b981" fill="url(#msDRev)" name="Revenue" />
+                <Area type="monotone" dataKey="labour" stroke="#ef4444" fill="url(#msDLab)" name="Labour" />
+                <Area type="monotone" dataKey="monthlyOh" stroke="#3b82f6" fill="url(#msDOh)" name="OH" />
+                <Area type="monotone" dataKey="net" stroke="#f59e0b" fill="url(#msDNet)" name="Net" />
+              </ComposedChart>
+            )}
+          </ResponsiveContainer>
+        </div>
+      )}
 
-  const renderChart = () => {
-    switch(chartView) {
-      case 'trend':
-        return (
-          <ComposedChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#30363d" />
-            <XAxis dataKey="month" stroke="#8b949e" fontSize={10} />
-            <YAxis stroke="#8b949e" fontSize={10} />
-            <Tooltip content={<CustomTooltip />} />
-            <Legend />
-            <Area type="monotone" dataKey="revenue" stroke="#22c55e" fill="#22c55e" fillOpacity={0.1} name="Revenue" />
-            <Area type="monotone" dataKey="net" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.1} name="Net Profit" />
-            <Line type="monotone" dataKey="labour" stroke="#ef4444" name="Labour" strokeWidth={2} />
-          </ComposedChart>
-        );
-      case 'comparison':
-        return (
-          <ComposedChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#30363d" />
-            <XAxis dataKey="month" stroke="#8b949e" fontSize={10} />
-            <YAxis stroke="#8b949e" fontSize={10} />
-            <Tooltip content={<CustomTooltip />} />
-            <Legend />
-            <Bar dataKey="revenue" fill="#22c55e" name="Revenue" />
-            <Bar dataKey="labour" fill="#ef4444" name="Labour" />
-            <Bar dataKey="monthlyOh" fill="#3b82f6" name="Monthly OH" />
-            <Bar dataKey="carPatrol" fill="#f59e0b" name="Car Patrol" />
-            <Bar dataKey="oneTime" fill="#8b5cf6" name="One Time" />
-          </ComposedChart>
-        );
-      case 'distribution':
-        return (
-          <ComposedChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#30363d" />
-            <XAxis dataKey="month" stroke="#8b949e" fontSize={10} />
-            <YAxis stroke="#8b949e" fontSize={10} />
-            <Tooltip content={<CustomTooltip />} />
-            <Legend />
-            <Area type="monotone" dataKey="revenue" stroke="#22c55e" fill="#22c55e" fillOpacity={0.2} name="Revenue" />
-            <Area type="monotone" dataKey="labour" stroke="#ef4444" fill="#ef4444" fillOpacity={0.2} name="Labour" />
-            <Area type="monotone" dataKey="monthlyOh" stroke="#3b82f6" fill="#3b82f6" fillOpacity={0.2} name="Monthly OH" />
-            <Area type="monotone" dataKey="net" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.2} name="Net Profit" />
-          </ComposedChart>
-        );
-      default:
-        return null;
-    }
-  };
+      {/* Table */}
+      <div className="ms-card">
+        <div className="ms-card-header">
+          <div className="ms-card-title">
+            <span className="ms-card-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
+              <FileText size={16} />
+            </span>
+            <div>
+              <h4>Summary Entries</h4>
+              <span>{filteredData.length} months</span>
+            </div>
+          </div>
+          <button className="ms-btn ms-btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
+            <Plus size={13} /> Add Summary
+          </button>
+        </div>
+
+        {filteredData.length === 0 ? (
+          <div className="ms-empty">
+            <div className="ms-empty-icon"><FileText size={40} /></div>
+            <h3>No Summary Data</h3>
+            <p>Click "Generate All" or add a summary manually.</p>
+          </div>
+        ) : (
+          <>
+            <div className="ms-table-wrap">
+              <table className="ms-table">
+                <thead>
+                  <tr>
+                    <th>Month</th>
+                    <th className="right">Revenue</th>
+                    <th className="right">Labour</th>
+                    <th className="right">Car Patrol</th>
+                    <th className="right">Monthly OH</th>
+                    <th className="right">One Time</th>
+                    <th className="right">Net Profit</th>
+                    <th className="center">Status</th>
+                    <th className="center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedData.map((item, i) => (
+                    <tr key={item.id || i} style={{ animationDelay: `${Math.min(i * 30, 400)}ms` }}>
+                      <td><strong>{getMonthLabel(item.month)}</strong></td>
+                      <td className="right ms-td-green">{Utils.formatCurrencyShort(item.totalRevenue)}</td>
+                      <td className="right ms-td-red">{Utils.formatCurrencyShort(item.totalLabour)}</td>
+                      <td className="right ms-td-amber">{Utils.formatCurrencyShort(item.carPatrol)}</td>
+                      <td className="right ms-td-blue">{Utils.formatCurrencyShort(item.monthlyOh)}</td>
+                      <td className="right ms-td-purple">{Utils.formatCurrencyShort(item.oneTime)}</td>
+                      <td className={`right ${(item.netProfit || 0) >= 0 ? 'ms-td-green' : 'ms-td-red'}`}>
+                        <strong>{Utils.formatCurrencyShort(item.netProfit)}</strong>
+                      </td>
+                      <td className="center">{getStatusBadge(item.status)}</td>
+                      <td className="center">
+                        <div className="ms-action-btns">
+                          <button className="ms-icon-btn ms-icon-edit" onClick={() => handleEdit(item)}>
+                            <Edit size={13} />
+                          </button>
+                          <button className="ms-icon-btn ms-icon-danger" onClick={() => handleDelete(item.id)}>
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Pagination */}
+            <div className="ms-pagination">
+              <div className="ms-pagination-info">
+                Showing <strong>{((currentPage - 1) * itemsPerPage) + 1}</strong>–
+                <strong>{Math.min(currentPage * itemsPerPage, filteredData.length)}</strong> of{' '}
+                <strong>{filteredData.length}</strong>
+              </div>
+              <div className="ms-pagination-controls">
+                <div className="ms-pagination-items">
+                  <span>Show:</span>
+                  <select value={itemsPerPage}
+                    onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                    className="ms-pagination-select">
+                    {[6, 9, 10, 12, 18, 24, 48].map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+                <div className="ms-pagination-buttons">
+                  <button className="ms-page-btn" onClick={() => goToPage(1)} disabled={currentPage === 1}>
+                    <ChevronsLeft size={13} />
+                  </button>
+                  <button className="ms-page-btn" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1}>
+                    <ChevronLeft size={13} />
+                  </button>
+                  {getPageNumbers().map(p => (
+                    <button key={p} className={`ms-page-btn ${p === currentPage ? 'active' : ''}`}
+                      onClick={() => goToPage(p)}>{p}</button>
+                  ))}
+                  <button className="ms-page-btn" onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}>
+                    <ChevronRight size={13} />
+                  </button>
+                  <button className="ms-page-btn" onClick={() => goToPage(totalPages)} disabled={currentPage === totalPages}>
+                    <ChevronsRight size={13} />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
 
   // ============================================
-  // STATS ITEMS
+  // FORM MODAL
   // ============================================
-  const statItems = [
-    { 
-      id: 'revenue', 
-      icon: DollarSign, 
-      label: 'Total Revenue', 
-      value: Utils.formatCurrencyShort(totals.totalRevenue),
-      color: '#22c55e',
-      bg: 'rgba(34, 197, 94, 0.12)',
-      trend: totals.totalRevenue > 0 ? 'up' : 'neutral'
-    },
-    { 
-      id: 'costs', 
-      icon: BarChart3, 
-      label: 'Total Costs', 
-      value: Utils.formatCurrencyShort(totals.totalCosts),
-      color: '#ef4444',
-      bg: 'rgba(239, 68, 68, 0.12)',
-      trend: totals.totalCosts > 0 ? 'down' : 'neutral'
-    },
-    { 
-      id: 'profit', 
-      icon: TrendingUp, 
-      label: 'Net Profit', 
-      value: Utils.formatCurrencyShort(totals.totalNet),
-      color: totals.isProfit ? '#22c55e' : '#ef4444',
-      bg: totals.isProfit ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
-      trend: totals.isProfit ? 'up' : 'down'
-    },
-    { 
-      id: 'months', 
-      icon: Calendar, 
-      label: 'Months', 
-      value: totals.count,
-      color: '#3b82f6',
-      bg: 'rgba(59, 130, 246, 0.12)',
-      trend: 'neutral'
-    }
-  ];
+  const renderFormModal = () => (
+    <ModalPortal>
+      <div className="ms-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowForm(false); resetForm(); } }}>
+        <div className="ms-modal" onClick={e => e.stopPropagation()}>
+          <div className="ms-modal-header" style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+            <div className="ms-modal-header-left">
+              <div className="ms-modal-icon">
+                {editingId ? <Edit size={18} /> : <Plus size={18} />}
+              </div>
+              <div>
+                <h3>{editingId ? 'Edit Summary' : 'Add Monthly Summary'}</h3>
+                <p className="ms-modal-sub">{editingId ? 'Update summary details' : 'Create a new monthly summary'}</p>
+              </div>
+            </div>
+            <button className="ms-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
+              <X size={18} />
+            </button>
+          </div>
+          <div className="ms-modal-body">
+            <form onSubmit={handleSubmit}>
+              <div className="ms-form-row">
+                <div className="ms-form-group">
+                  <label>Month <span className="ms-required">*</span></label>
+                  <input type="month" value={formData.month} required
+                    onChange={e => setFormData({ ...formData, month: e.target.value })}
+                    className="ms-form-input" />
+                </div>
+                <div className="ms-form-group">
+                  <label>Total Revenue (BD)</label>
+                  <input type="number" step="0.001" value={formData.totalRevenue}
+                    onChange={e => setFormData({ ...formData, totalRevenue: e.target.value })}
+                    placeholder="0.000" className="ms-form-input" />
+                </div>
+              </div>
+
+              <div className="ms-form-row">
+                <div className="ms-form-group">
+                  <label>Total Labour (BD)</label>
+                  <input type="number" step="0.001" value={formData.totalLabour}
+                    onChange={e => setFormData({ ...formData, totalLabour: e.target.value })}
+                    placeholder="0.000" className="ms-form-input" />
+                </div>
+                <div className="ms-form-group">
+                  <label>Car Patrol (BD)</label>
+                  <input type="number" step="0.001" value={formData.carPatrol}
+                    onChange={e => setFormData({ ...formData, carPatrol: e.target.value })}
+                    placeholder="0.000" className="ms-form-input" />
+                </div>
+              </div>
+
+              <div className="ms-form-row">
+                <div className="ms-form-group">
+                  <label>Monthly OH (BD)</label>
+                  <input type="number" step="0.001" value={formData.monthlyOh}
+                    onChange={e => setFormData({ ...formData, monthlyOh: e.target.value })}
+                    placeholder="0.000" className="ms-form-input" />
+                </div>
+                <div className="ms-form-group">
+                  <label>One Time (BD)</label>
+                  <input type="number" step="0.001" value={formData.oneTime}
+                    onChange={e => setFormData({ ...formData, oneTime: e.target.value })}
+                    placeholder="0.000" className="ms-form-input" />
+                </div>
+              </div>
+
+              <div className="ms-form-row">
+                <div className="ms-form-group">
+                  <label>Net Profit (Auto)</label>
+                  <input type="text" value={formData.netProfit} disabled
+                    className="ms-form-input"
+                    style={{ color: parseFloat(formData.netProfit) >= 0 ? '#047857' : '#b91c1c', fontWeight: 800 }} />
+                </div>
+                <div className="ms-form-group">
+                  <label>Status</label>
+                  <input type="text" value={formData.status} disabled
+                    className="ms-form-input"
+                    style={{ color: formData.status === 'FAIDA' ? '#047857' : '#b91c1c', fontWeight: 800 }} />
+                </div>
+              </div>
+
+              <div className="ms-form-group">
+                <label>Notes</label>
+                <input type="text" value={formData.notes}
+                  onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                  placeholder="Additional notes" className="ms-form-input" />
+              </div>
+
+              <div className="ms-form-actions">
+                <button type="submit" className="ms-btn ms-btn-primary" disabled={loading}>
+                  <Save size={14} /> {loading ? 'Saving...' : (editingId ? 'Update' : 'Save')}
+                </button>
+                <button type="button" className="ms-btn ms-btn-secondary" onClick={() => { setShowForm(false); resetForm(); }}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    </ModalPortal>
+  );
 
   // ============================================
   // MAIN RENDER
   // ============================================
   if (isInitialLoad) {
     return (
-      <div className="monthly-summary-modern">
-        <div className="loading-state">
-          <div className="loading-spinner"></div>
+      <div className="ms-root">
+        <div className="ms-loading">
+          <div className="ms-loading-spinner" />
           <span>Loading Monthly Summaries...</span>
         </div>
       </div>
@@ -791,404 +1106,172 @@ const MonthlySummaryComponent = ({
   }
 
   return (
-    <div className="monthly-summary-modern">
-      {/* ==================== HEADER ==================== */}
-      <div className="dashboard-header-modern">
-        <div className="header-left">
-          <div className="header-icon-wrapper">
-            <LayoutDashboard size={28} />
-            <span className="header-badge">Summary</span>
+    <div className={`ms-root ${mounted ? 'is-mounted' : ''}`}>
+      <div className="ms-ambient">
+        <div className="ms-orb ms-orb-1" />
+        <div className="ms-orb ms-orb-2" />
+        <div className="ms-orb ms-orb-3" />
+      </div>
+
+      {/* Header */}
+      <div className="ms-header">
+        <div className="ms-header-left">
+          <div className="ms-header-icon">
+            <LayoutDashboard size={22} />
+            <span className="ms-header-badge"><Sparkles size={10} /> SUMMARY</span>
           </div>
           <div>
             <h2>Monthly Summary</h2>
-            <p className="header-subtitle">
-              {filterType === 'all' && `All months • ${monthlySummary.length} summaries`}
-              {filterType === 'year' && `${selectedYear} • ${filteredData.length} months`}
-              {filterType === 'month' && `${getMonthLabel(`${selectedYear}-${selectedMonth}`)} • ${filteredData.length} summaries`}
-              {filterType === 'range' && `${yearRangeStart} to ${yearRangeEnd} • ${filteredData.length} months`}
-              {apiError && ` ⚠️ API Error: ${apiError}`}
+            <p className="ms-header-subtitle">
+              {totals.count} months · {Utils.formatCurrencyShort(totals.totalRevenue)} revenue · {Utils.formatCurrencyShort(totals.totalNet)} profit
             </p>
           </div>
         </div>
-        <div className="header-right">
-          {/* Filter Dropdown */}
-          <div className="filter-dropdown">
-            <button onClick={() => setShowFilterDropdown(!showFilterDropdown)} className="filter-btn">
-              <Filter size={16} /> 
-              {filterType === 'all' && 'All Months'}
-              {filterType === 'year' && `Year: ${selectedYear}`}
-              {filterType === 'month' && `Month: ${getMonthLabel(`${selectedYear}-${selectedMonth}`)}`}
-              {filterType === 'range' && 'Range'}
-              <ChevronDown size={14} />
+        <div className="ms-header-right">
+          <div className="ms-filter-dropdown">
+            <button className="ms-btn ms-btn-ghost" onClick={() => setShowFilterDropdown(!showFilterDropdown)}>
+              <Filter size={14} />
+              {filterType === 'all' ? 'All' : filterType === 'year' ? `Year: ${selectedYear}` :
+                filterType === 'month' ? getMonthLabel(`${selectedYear}-${selectedMonth}`) : 'Range'}
+              <ChevronDown size={13} />
             </button>
-
             {showFilterDropdown && (
-              <div className="dropdown-menu">
-                <div className="filter-section">
+              <div className="ms-dropdown">
+                <div className="ms-dd-section">
                   <label>View Mode</label>
-                  <div className="view-grid">
-                    <button onClick={() => handleFilterChange('all')} className={`view-btn ${filterType === 'all' ? 'active' : ''}`}>All Months</button>
-                    <button onClick={() => handleFilterChange('year')} className={`view-btn ${filterType === 'year' ? 'active' : ''}`}>Year</button>
-                    <button onClick={() => handleFilterChange('month')} className={`view-btn ${filterType === 'month' ? 'active' : ''}`}>Specific Month</button>
-                    <button onClick={() => handleFilterChange('range')} className={`view-btn ${filterType === 'range' ? 'active' : ''}`}>Date Range</button>
+                  <div className="ms-view-grid">
+                    {[
+                      { id: 'all', label: 'All' },
+                      { id: 'year', label: 'Year' },
+                      { id: 'month', label: 'Month' },
+                      { id: 'range', label: 'Range' }
+                    ].map(v => (
+                      <button key={v.id} className={`ms-view-btn ${filterType === v.id ? 'active' : ''}`}
+                        onClick={() => { setFilterType(v.id); setShowFilterDropdown(false); }}>
+                        {v.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-
                 {(filterType === 'year' || filterType === 'month') && (
-                  <div className="filter-section">
+                  <div className="ms-dd-section">
                     <label>Year</label>
-                    <div className="year-nav">
-                      <button onClick={() => {
-                        const currentYear = parseInt(selectedYear);
-                        if (availableYears.length > 0) {
-                          const index = availableYears.indexOf(selectedYear);
-                          if (index > 0) setSelectedYear(availableYears[index - 1]);
-                        } else {
-                          setSelectedYear((currentYear - 1).toString());
-                        }
-                      }}><ChevronLeft size={14} /></button>
-                      <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)}>
-                        {availableYears.length > 0 ? (
-                          availableYears.map(year => <option key={year} value={year}>{year}</option>)
-                        ) : (
-                          <option value={selectedYear}>{selectedYear}</option>
-                        )}
-                      </select>
-                      <button onClick={() => {
-                        const currentYear = parseInt(selectedYear);
-                        if (availableYears.length > 0) {
-                          const index = availableYears.indexOf(selectedYear);
-                          if (index < availableYears.length - 1) setSelectedYear(availableYears[index + 1]);
-                        } else {
-                          setSelectedYear((currentYear + 1).toString());
-                        }
-                      }}><ChevronRight size={14} /></button>
-                    </div>
+                    <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)}
+                      className="ms-dd-select">
+                      {(availableYears.length > 0 ? availableYears : [selectedYear]).map(y =>
+                        <option key={y} value={y}>{y}</option>)}
+                    </select>
                   </div>
                 )}
-
                 {filterType === 'month' && (
-                  <div className="filter-section">
+                  <div className="ms-dd-section">
                     <label>Month</label>
-                    <div className="month-grid">
-                      {['01','02','03','04','05','06','07','08','09','10','11','12'].map(month => {
-                        const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-                        const hasData = availableMonths.includes(month);
+                    <div className="ms-month-grid">
+                      {['01','02','03','04','05','06','07','08','09','10','11','12'].map(m => {
+                        const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                        const hasData = availableMonths.includes(m);
                         return (
-                          <button key={month} onClick={() => { setSelectedMonth(month); setShowFilterDropdown(false); }} 
-                            className={`month-btn ${selectedMonth === month ? 'active' : ''}`} disabled={!hasData}>
-                            {monthNames[parseInt(month)-1]}
+                          <button key={m} disabled={!hasData}
+                            className={`ms-month-btn ${selectedMonth === m ? 'active' : ''}`}
+                            onClick={() => { setSelectedMonth(m); setShowFilterDropdown(false); }}>
+                            {names[parseInt(m) - 1]}
                           </button>
                         );
                       })}
                     </div>
                   </div>
                 )}
-
                 {filterType === 'range' && (
                   <>
-                    <div className="filter-section">
+                    <div className="ms-dd-section">
                       <label>Start Month</label>
-                      <input type="month" value={yearRangeStart} onChange={(e) => setYearRangeStart(e.target.value)} />
+                      <input type="month" value={yearRangeStart}
+                        onChange={e => setYearRangeStart(e.target.value)} className="ms-dd-input" />
                     </div>
-                    <div className="filter-section">
+                    <div className="ms-dd-section">
                       <label>End Month</label>
-                      <input type="month" value={yearRangeEnd} onChange={(e) => setYearRangeEnd(e.target.value)} />
+                      <input type="month" value={yearRangeEnd}
+                        onChange={e => setYearRangeEnd(e.target.value)} className="ms-dd-input" />
                     </div>
                   </>
                 )}
-
-                <button onClick={() => setShowFilterDropdown(false)} className="apply-btn">Apply Filters</button>
               </div>
             )}
           </div>
-
-          {/* Action Buttons */}
-          <button onClick={handleAutoGenerate} disabled={loading} className="btn-generate">
-            <Calculator size={16} /> {loading ? 'Generating...' : 'Generate Current'}
+          <button className="ms-btn ms-btn-amber" onClick={handleAutoGenerate} disabled={loading}>
+            <Calculator size={14} /> Generate Current
           </button>
-          <button onClick={handleGenerateAll} disabled={loading} className="btn-generate-all">
-            <RefreshCw size={16} /> {loading ? 'Generating...' : 'Generate All'}
+          <button className="ms-btn ms-btn-amber" onClick={handleGenerateAll} disabled={loading}>
+            <RefreshCw size={14} /> Generate All
           </button>
-          <button onClick={() => { resetForm(); setShowForm(true); }} className="btn-primary">
-            <Plus size={18} /> Add Summary
+          <button className="ms-btn ms-btn-ghost" onClick={refreshSummaries} disabled={loading}>
+            <RefreshCw size={14} /> Refresh
           </button>
-          <button onClick={refreshSummaries} disabled={loading} className="btn-refresh-modern">
-            <RefreshCw size={16} /> Refresh
+          <button className="ms-btn ms-btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
+            <Plus size={14} /> Add Summary
           </button>
         </div>
       </div>
 
-      {/* ==================== MESSAGES ==================== */}
-      {successMessage && <div className="success-message-modern"><CheckCircle size={16} /> {successMessage}</div>}
-      {errorMessage && <div className="error-message-modern"><AlertCircle size={16} /> {errorMessage}</div>}
-
-      {/* ==================== API ERROR BANNER ==================== */}
-      {apiError && (
-        <div className="api-error-banner">
-          <AlertCircle size={20} className="error-icon" />
-          <div className="error-content">
-            <div className="error-title">⚠️ API Connection Error</div>
-            <div className="error-detail">{apiError}</div>
-            <div className="error-hint">💡 Make sure the backend server is running at <code>{API_BASE_URL}</code></div>
-            <button onClick={() => { setApiError(null); loadMonthlySummaries(); }} className="retry-btn">Retry Connection</button>
-          </div>
-        </div>
-      )}
-
-      {/* ==================== SEARCH BAR ==================== */}
-      <div className="search-bar-modern">
-        <Search size={18} />
-        <input type="text" placeholder="Search by month, status, or notes..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
-        {searchTerm && <button onClick={() => setSearchTerm('')}><XCircle size={18} /></button>}
-        <span className="result-count">{filteredData.length} months</span>
-      </div>
-
-      {/* ==================== FORM MODAL ==================== */}
-      {showForm && (
-        <div className="summary-modal-overlay" onClick={() => { setShowForm(false); resetForm(); }}>
-          <div className="summary-modal-content" onClick={e => e.stopPropagation()}>
-            <div className="summary-modal-header" style={{ background: 'linear-gradient(135deg, #009846, #007a38)' }}>
-              <div className="summary-modal-header-left">
-                {editingId ? <Edit size={24} color="#ffffff" /> : <Plus size={24} color="#ffffff" />}
-                <h3 style={{ color: '#ffffff' }}>{editingId ? 'Edit Summary' : 'Add Monthly Summary'}</h3>
-              </div>
-              <button className="summary-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
-                <X size={24} color="#ffffff" />
-              </button>
-            </div>
-            <div className="summary-modal-body">
-              <form onSubmit={handleSubmit}>
-                <div className="form-row">
-                  <div className="form-group">
-                    <label><Calendar size={14} /> Month <span className="required">*</span></label>
-                    <input type="month" value={formData.month} onChange={e => setFormData({ ...formData, month: e.target.value })} required className="form-input" />
-                  </div>
-                  <div className="form-group">
-                    <label><DollarSign size={14} /> Total Revenue (BD)</label>
-                    <input type="number" step="0.001" value={formData.totalRevenue} onChange={e => setFormData({ ...formData, totalRevenue: e.target.value })} placeholder="0.000" className="form-input" />
-                  </div>
-                </div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label><Users size={14} /> Total Labour (BD)</label>
-                    <input type="number" step="0.001" value={formData.totalLabour} onChange={e => setFormData({ ...formData, totalLabour: e.target.value })} placeholder="0.000" className="form-input" />
-                  </div>
-                  <div className="form-group">
-                    <label><Truck size={14} /> Car Patrol (BD)</label>
-                    <input type="number" step="0.001" value={formData.carPatrol} onChange={e => setFormData({ ...formData, carPatrol: e.target.value })} placeholder="0.000" className="form-input" />
-                  </div>
-                </div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label><Building2 size={14} /> Monthly OH (BD)</label>
-                    <input type="number" step="0.001" value={formData.monthlyOh} onChange={e => setFormData({ ...formData, monthlyOh: e.target.value })} placeholder="0.000" className="form-input" />
-                  </div>
-                  <div className="form-group">
-                    <label><Clock size={14} /> One Time (BD)</label>
-                    <input type="number" step="0.001" value={formData.oneTime} onChange={e => setFormData({ ...formData, oneTime: e.target.value })} placeholder="0.000" className="form-input" />
-                  </div>
-                </div>
-
-                <div className="form-row">
-                  <div className="form-group">
-                    <label><TrendingUp size={14} /> Net Profit (Auto-calculated)</label>
-                    <input type="text" value={formData.netProfit} disabled className="form-input" style={{ color: parseFloat(formData.netProfit) >= 0 ? '#22c55e' : '#ef4444' }} />
-                  </div>
-                  <div className="form-group">
-                    <label><Tag size={14} /> Status</label>
-                    <input type="text" value={formData.status} disabled className="form-input" style={{ color: formData.status === 'FAIDA' ? '#22c55e' : '#ef4444' }} />
-                  </div>
-                </div>
-
-                <div className="form-group">
-                  <label><FileText size={14} /> Notes</label>
-                  <input type="text" value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} placeholder="Notes..." className="form-input" />
-                </div>
-
-                <div className="form-actions">
-                  <button type="submit" className="btn-primary" disabled={loading}>
-                    <Save size={16} /> {loading ? 'Saving...' : (editingId ? 'Update' : 'Save')}
-                  </button>
-                  <button type="button" className="btn-secondary" onClick={() => { setShowForm(false); resetForm(); }}>Cancel</button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ==================== STATS CARDS ==================== */}
-      <div className="stats-grid">
-        {statItems.map((item) => {
-          const Icon = item.icon;
+      {/* Tabs */}
+      <div className="ms-tabs">
+        {[
+          { id: 'overview', label: 'Overview', icon: BarChart3 },
+          { id: 'summaries', label: 'Summaries', icon: FileText, badge: filteredData.length }
+        ].map(t => {
+          const Icon = t.icon;
           return (
-            <div
-              key={item.id}
-              className="stat-card"
-              onMouseEnter={(e) => handleCardHover(item.id, e)}
-              onMouseLeave={handleCardLeave}
-              onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-            >
-              <div className="stat-icon" style={{ background: item.bg, color: item.color }}>
-                <Icon size={22} />
-              </div>
-              <div className="stat-content">
-                <span className="stat-label">{item.label}</span>
-                <span className="stat-value">{item.value}</span>
-              </div>
-              <div className="stat-trend">
-                {item.trend === 'up' && <TrendingUp size={16} color="#22c55e" />}
-                {item.trend === 'down' && <TrendingDown size={16} color="#ef4444" />}
-                {item.trend === 'neutral' && <BarChart3 size={16} color="#8a9bb5" />}
-              </div>
-            </div>
+            <button key={t.id} className={`ms-tab ${viewMode === t.id ? 'active' : ''}`}
+              onClick={() => setViewMode(t.id)}>
+              <Icon size={15} />
+              <span>{t.label}</span>
+              {t.badge !== undefined && <span className="ms-tab-badge">{t.badge}</span>}
+            </button>
           );
         })}
       </div>
 
-      {/* ==================== TOOLTIP ==================== */}
-      {hoveredCard && cardDetails[hoveredCard] && (
-        <div className="summary-card-tooltip" style={{ position: 'fixed', left: tooltipPosition.x, top: tooltipPosition.y, zIndex: 9999 }}>
-          <div className="summary-tooltip-header"><strong>{cardDetails[hoveredCard].title}</strong></div>
-          <div className="summary-tooltip-body">
-            {cardDetails[hoveredCard].details.map((detail, idx) => (
-              <div key={idx} className="summary-tooltip-row">
-                <span className="summary-tooltip-label">{detail.label}</span>
-                <span className="summary-tooltip-value">{detail.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ==================== BEST/WORST MONTH CARDS ==================== */}
-      {filteredData.length > 0 && (
-        <div className="best-worst-grid">
-          <div className="best-month-card">
-            <div className="header"><TrendingUp size={18} className="icon" /><span className="label">Best Month</span></div>
-            <div className="month-name">{totals.bestMonth ? getMonthLabel(totals.bestMonth.month) : '-'}</div>
-            <div className="month-profit">{totals.bestMonth ? Utils.formatCurrencyShort(totals.bestMonth.netProfit) : '-'}</div>
-          </div>
-          <div className="worst-month-card">
-            <div className="header"><TrendingDown size={18} className="icon" /><span className="label">Worst Month</span></div>
-            <div className="month-name">{totals.worstMonth ? getMonthLabel(totals.worstMonth.month) : '-'}</div>
-            <div className="month-profit">{totals.worstMonth ? Utils.formatCurrencyShort(totals.worstMonth.netProfit) : '-'}</div>
-          </div>
-        </div>
-      )}
-
-      {/* ==================== CHARTS ==================== */}
-      {chartData.length > 0 && (
-        <div className="charts-container">
-          <div className="chart-card full-width">
-            <div className="chart-header">
-              <h3>{getChartTitle()}</h3>
-              <div className="chart-actions">
-                <button onClick={() => setChartView('trend')} className={`chart-btn ${chartView === 'trend' ? 'active' : ''}`}>Trend</button>
-                <button onClick={() => setChartView('comparison')} className={`chart-btn ${chartView === 'comparison' ? 'active' : ''}`}>Comparison</button>
-                <button onClick={() => setChartView('distribution')} className={`chart-btn ${chartView === 'distribution' ? 'active' : ''}`}>Distribution</button>
-              </div>
-            </div>
-            <ResponsiveContainer width="100%" height={300}>{renderChart()}</ResponsiveContainer>
-          </div>
-
-          {pieData.length > 0 && (
-            <div className="chart-card">
-              <div className="chart-header"><h3>🥧 Latest Month Cost Breakdown</h3></div>
-              <ResponsiveContainer width="100%" height={250}>
-                <RePieChart>
-                  <Pie data={pieData} cx="50%" cy="50%" labelLine={false} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`} outerRadius={80} fill="#8884d8" dataKey="value">
-                    {pieData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
-                  </Pie>
-                  <Tooltip formatter={(value) => Utils.formatCurrency(value)} />
-                </RePieChart>
-              </ResponsiveContainer>
-            </div>
+      {/* Search (only in summaries tab) */}
+      {viewMode === 'summaries' && (
+        <div className="ms-search-bar">
+          <Search size={16} />
+          <input type="text" placeholder="Search by month, status, or notes..."
+            value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+          {searchTerm && (
+            <button className="ms-search-clear" onClick={() => setSearchTerm('')}>
+              <XCircle size={15} />
+            </button>
           )}
-
-          {chartData.length > 0 && (
-            <div className="chart-card">
-              <div className="chart-header"><h3>📡 Performance Metrics</h3></div>
-              <ResponsiveContainer width="100%" height={250}>
-                <RadarChart data={[
-                  { metric: 'Revenue', value: totals.totalRevenue / (totals.count || 1) },
-                  { metric: 'Net Profit', value: Math.max(0, totals.totalNet / (totals.count || 1)) },
-                  { metric: 'Labour', value: totals.totalLabour / (totals.count || 1) },
-                  { metric: 'Car Patrol', value: totals.totalCarPatrol / (totals.count || 1) },
-                  { metric: 'Monthly OH', value: totals.totalMonthlyOH / (totals.count || 1) },
-                ]}>
-                  <PolarGrid stroke="#30363d" />
-                  <PolarAngleAxis dataKey="metric" stroke="#8b949e" fontSize={10} />
-                  <PolarRadiusAxis stroke="#8b949e" fontSize={10} />
-                  <Radar name="Monthly Average" dataKey="value" stroke="#f59e0b" fill="#f59e0b" fillOpacity={0.3} />
-                  <Tooltip formatter={(value) => Utils.formatCurrency(value)} />
-                </RadarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
+          <span className="ms-search-count">{filteredData.length} months</span>
         </div>
       )}
 
-      {/* ==================== TABLE ==================== */}
-      <div className="table-container-modern">
-        <div className="table-header-modern">
-          <div className="table-title"><FileText size={18} /><h3>Summary Entries</h3><span className="table-count">{filteredData.length} months</span></div>
+      {/* Messages */}
+      {successMessage && <div className="ms-message success"><CheckCircle size={15} /> {successMessage}</div>}
+      {errorMessage && <div className="ms-message error"><AlertCircle size={15} /> {errorMessage}</div>}
+
+      {/* API Error banner */}
+      {apiError && (
+        <div className="ms-api-error">
+          <AlertCircle size={18} />
+          <div>
+            <div className="ms-api-error-title">API Connection Error</div>
+            <div className="ms-api-error-detail">{apiError}</div>
+            <div className="ms-api-error-hint">
+              Make sure the backend is running at <code>{API_BASE_URL}</code>
+            </div>
+            <button className="ms-btn ms-btn-ghost" onClick={() => { setApiError(null); loadMonthlySummaries(); }}>
+              Retry
+            </button>
+          </div>
         </div>
-        <div className="table-responsive-modern">
-          <table className="summary-table">
-            <thead>
-              <tr>
-                <th>Month</th>
-                <th className="right">Revenue</th>
-                <th className="right">Labour</th>
-                <th className="right">Car Patrol</th>
-                <th className="right">Monthly OH</th>
-                <th className="right">One Time</th>
-                <th className="right">Net Profit</th>
-                <th className="center">Status</th>
-                <th className="center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredData.length === 0 ? (
-                <tr className="empty-row">
-                  <td colSpan="9">
-                    <div className="empty-state">
-                      <FileText size={48} />
-                      <h3>No Monthly Summary Data</h3>
-                      <p>Click "Generate Current" or "Generate All" to create summaries from entries.</p>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                filteredData.map((item, index) => (
-                  <tr key={item.id || index}>
-                    <td>{getMonthLabel(item.month)}</td>
-                    <td className="right revenue">{Utils.formatCurrencyShort(item.totalRevenue)}</td>
-                    <td className="right labour">{Utils.formatCurrencyShort(item.totalLabour)}</td>
-                    <td className="right car-patrol">{Utils.formatCurrencyShort(item.carPatrol)}</td>
-                    <td className="right monthly-oh">{Utils.formatCurrencyShort(item.monthlyOh)}</td>
-                    <td className="right one-time">{Utils.formatCurrencyShort(item.oneTime)}</td>
-                    <td className={`right ${(item.netProfit || 0) >= 0 ? 'net-positive' : 'net-negative'}`}>
-                      {Utils.formatCurrencyShort(item.netProfit)}
-                    </td>
-                    <td className="center">{getStatusBadge(item.status)}</td>
-                    <td className="center">
-                      <div className="action-buttons">
-                        <button onClick={() => handleEdit(item)} className="btn-action" title="Edit"><Edit size={14} /></button>
-                        <button onClick={() => handleDelete(item.id)} className="btn-action delete" title="Delete"><Trash2 size={14} /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      )}
+
+      {/* View */}
+      {viewMode === 'overview' ? renderOverviewTab() : renderSummariesTab()}
+
+      {/* Modals */}
+      {showForm && renderFormModal()}
     </div>
   );
 };

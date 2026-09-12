@@ -189,7 +189,6 @@ body {
   flex: 1;
   margin-left: var(--sidebar-width-expanded);
   margin-top: 64px;
-  padding: 24px 32px;
   min-height: 100vh;
   background: var(--bg-primary);
   transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.3s ease;

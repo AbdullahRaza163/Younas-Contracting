@@ -1,63 +1,57 @@
 // src/components/ItemManager.jsx
-import React, { useState, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
-  Edit,
-  Trash2,
-  Package,
-  Plus,
-  Save,
-  X,
-  Search,
-  RefreshCw,
-  DollarSign,
-  Tag,
-  Box,
-  Layers,
-  Award,
-  Star,
-  TrendingUp,
-  TrendingDown,
-  AlertCircle,
-  CheckCircle,
-  User,
-  Calendar,
-  Building2,
-  Settings,
-  Zap,
-  Shield,
-  Crown,
-  Sparkles,
-  Briefcase,
-  Timer,
-  Activity,
-  Gauge,
-  ArrowUpRight,
-  ArrowDownRight,
-  Info,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  MoreHorizontal,
-  Filter,
-  Clock,
-  FileText,
-  Wallet,
-  CreditCard,
-  Banknote,
-  Percent,
-  HardHat,
-  Layers as LayersIcon,
-  Boxes,
-  FolderKanban
+  Edit, Trash2, Package, Plus, Save, X, Search, RefreshCw,
+  DollarSign, Tag, Box, Layers, Award, Star, TrendingUp, TrendingDown,
+  AlertCircle, CheckCircle, User, Calendar, Building2, Settings,
+  Zap, Shield, Crown, Sparkles, Briefcase, Timer, Activity, Gauge,
+  ArrowUpRight, ArrowDownRight, Info, ChevronLeft, ChevronRight,
+  ChevronsLeft, ChevronsRight, Filter, Clock, FileText, Wallet,
+  CreditCard, Banknote, Percent, HardHat, Boxes, FolderKanban,
+  BarChart3, PieChart as PieChartIcon, LineChart as LineChartIcon,
+  LayoutDashboard, Flame, Target, Minus, Crown as CrownIcon
 } from 'lucide-react';
+import {
+  ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend
+} from 'recharts';
 import Utils from '../utils/Utils';
 import './ItemManager.css';
 
+// ============================================
+// PORTAL
+// ============================================
+const ModalPortal = ({ children }) => {
+  if (typeof document === 'undefined') return null;
+  return createPortal(children, document.body);
+};
+
+// ============================================
+// CHART TOOLTIP
+// ============================================
+const ChartTooltip = ({ active, payload, label, formatter }) => {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div className="im-chart-tooltip">
+      {label && <div className="im-chart-tooltip-label">{label}</div>}
+      {payload.map((p, i) => (
+        <div key={i} className="im-chart-tooltip-row">
+          <span className="im-chart-tooltip-dot" style={{ background: p.color || p.fill || p.payload?.color }} />
+          <span className="im-chart-tooltip-name">{p.name}</span>
+          <span className="im-chart-tooltip-val">
+            {formatter ? formatter(p.value, p.name) : p.value}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ============================================
+// MAIN COMPONENT
+// ============================================
 const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
-  // ============================================
-  // STATE
-  // ============================================
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -65,20 +59,16 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
   const [hoveredCard, setHoveredCard] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
-  
+  const [viewMode, setViewMode] = useState('overview'); // overview | items
+  const [mounted, setMounted] = useState(false);
+
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
   const [formData, setFormData] = useState({
-    name: '',
-    category: 'Materials',
-    unit: 'pcs',
-    unitPrice: '',
-    description: '',
-    sku: '',
-    taxRate: '0',
-    isTaxable: false
+    name: '', category: 'Materials', unit: 'pcs', unitPrice: '',
+    description: '', sku: '', taxRate: '0', isTaxable: false
   });
 
   const categories = [
@@ -89,63 +79,171 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
 
   const units = ['SQ.M', 'SQ.FT', 'PCS', 'KG', 'TON', 'M3', 'M2', 'FT2', 'LITERS', 'HOURS', 'DAYS', 'BOX', 'ROLL'];
 
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
   // ============================================
   // STATS
   // ============================================
-  const totalItems = (data.items || []).length;
-  const totalCategories = new Set((data.items || []).map(i => i.category)).size;
-  const totalValue = (data.items || []).reduce((sum, i) => sum + (i.unitPrice || 0), 0);
+  const items = useMemo(() => data.items || [], [data.items]);
+  const totalItems = items.length;
+  const totalCategories = new Set(items.map(i => i.category)).size;
+  const totalValue = items.reduce((s, i) => s + (i.unitPrice || 0), 0);
+  const taxableItems = items.filter(i => i.isTaxable).length;
+  const avgPrice = totalItems > 0 ? totalValue / totalItems : 0;
+  const maxPrice = totalItems > 0 ? Math.max(...items.map(i => i.unitPrice || 0)) : 0;
+  const minPrice = totalItems > 0 ? Math.min(...items.map(i => i.unitPrice || 0)) : 0;
+
+  // Most popular category
+  const mostPopularCategory = useMemo(() => {
+    const map = {};
+    items.forEach(i => { map[i.category] = (map[i.category] || 0) + 1; });
+    const entries = Object.entries(map);
+    if (!entries.length) return null;
+    return entries.sort((a, b) => b[1] - a[1])[0];
+  }, [items]);
+
+  // ============================================
+  // FILTERED
+  // ============================================
+  const filteredItems = useMemo(() => {
+    let filtered = items;
+    if (searchTerm.trim()) {
+      const s = searchTerm.toLowerCase();
+      filtered = filtered.filter(i =>
+        i.name?.toLowerCase().includes(s) ||
+        i.category?.toLowerCase().includes(s) ||
+        (i.sku && i.sku.toLowerCase().includes(s)) ||
+        (i.description && i.description.toLowerCase().includes(s))
+      );
+    }
+    if (categoryFilter !== 'all') filtered = filtered.filter(i => i.category === categoryFilter);
+    return filtered;
+  }, [items, searchTerm, categoryFilter]);
+
+  // ============================================
+  // PAGINATION
+  // ============================================
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / itemsPerPage));
+  const paginatedItems = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredItems.slice(start, start + itemsPerPage);
+  }, [filteredItems, currentPage, itemsPerPage]);
+
+  useEffect(() => { setCurrentPage(1); }, [searchTerm, categoryFilter, itemsPerPage, viewMode]);
+  useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
+
+  const goToPage = (p) => setCurrentPage(Math.max(1, Math.min(p, totalPages)));
+  const getPageNumbers = () => {
+    const pages = []; const max = 5;
+    let start = Math.max(1, currentPage - 2);
+    let end = Math.min(totalPages, start + max - 1);
+    if (end - start < max - 1) start = Math.max(1, end - max + 1);
+    for (let i = start; i <= end; i++) pages.push(i);
+    return pages;
+  };
+
+  // ============================================
+  // CHART DATA
+  // ============================================
+  const categoryChartData = useMemo(() => {
+    const map = {};
+    items.forEach(i => { map[i.category] = (map[i.category] || 0) + 1; });
+    const palette = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#f97316', '#ec4899'];
+    return Object.entries(map)
+      .map(([name, value], i) => ({ name, value, color: palette[i % palette.length] }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [items]);
+
+  const categoryValueData = useMemo(() => {
+    const map = {};
+    items.forEach(i => { map[i.category] = (map[i.category] || 0) + (i.unitPrice || 0); });
+    const palette = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#f97316'];
+    return Object.entries(map)
+      .map(([name, value], i) => ({
+        name: name.length > 12 ? name.slice(0, 12) + '…' : name,
+        fullName: name,
+        value,
+        color: palette[i % palette.length]
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [items]);
+
+  const taxableChartData = useMemo(() => ([
+    { name: 'Taxable', value: taxableItems, color: '#10b981' },
+    { name: 'Non-Taxable', value: totalItems - taxableItems, color: '#94a3b8' }
+  ].filter(d => d.value > 0)), [taxableItems, totalItems]);
+
+  const topItems = useMemo(() => (
+    [...items]
+      .sort((a, b) => (b.unitPrice || 0) - (a.unitPrice || 0))
+      .slice(0, 8)
+      .map(i => ({
+        name: i.name.length > 14 ? i.name.slice(0, 14) + '…' : i.name,
+        value: i.unitPrice || 0,
+        color: '#10b981'
+      }))
+  ), [items]);
+
+  // ============================================
+  // KPI CARDS
+  // ============================================
+  const kpiItems = [
+    { id: 'total', icon: Package, label: 'Total Items', value: totalItems,
+      meta: `${totalCategories} categories`,
+      color: '#3b82f6', accent: 'linear-gradient(90deg,#3b82f6,#60a5fa)', trend: 'up' },
+    { id: 'categories', icon: Layers, label: 'Categories', value: totalCategories,
+      meta: mostPopularCategory ? `Top: ${mostPopularCategory[0]}` : '—',
+      color: '#8b5cf6', accent: 'linear-gradient(90deg,#8b5cf6,#a78bfa)', trend: 'up' },
+    { id: 'value', icon: DollarSign, label: 'Total Value',
+      value: Utils.formatCurrencyShort(totalValue),
+      meta: `Avg ${Utils.formatCurrencyShort(avgPrice)}`,
+      color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
+    { id: 'taxable', icon: Percent, label: 'Taxable Items', value: taxableItems,
+      meta: `${totalItems > 0 ? ((taxableItems / totalItems) * 100).toFixed(0) : 0}% of items`,
+      color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)',
+      trend: taxableItems > 0 ? 'up' : 'flat' }
+  ];
 
   const cardDetails = {
-    total: {
-      title: 'Total Items',
-      details: [
-        { label: 'Total Items', value: totalItems },
-        { label: 'Categories', value: totalCategories },
-        { label: 'Total Value', value: Utils.formatCurrency(totalValue) },
-        { label: 'Avg Price', value: totalItems > 0 ? Utils.formatCurrency(totalValue / totalItems) : '0.000' }
-      ]
-    },
-    categories: {
-      title: 'Categories',
-      details: [
-        { label: 'Categories', value: totalCategories },
-        { label: 'Total Items', value: totalItems },
-        { label: 'Most Items', value: categories.reduce((a, b) => {
-          const countA = (data.items || []).filter(i => i.category === a).length;
-          const countB = (data.items || []).filter(i => i.category === b).length;
-          return countA > countB ? a : b;
-        }) || 'N/A' }
-      ]
-    },
-    value: {
-      title: 'Total Value',
-      details: [
-        { label: 'Total Value', value: Utils.formatCurrency(totalValue) },
-        { label: 'Total Items', value: totalItems },
-        { label: 'Avg Value', value: totalItems > 0 ? Utils.formatCurrency(totalValue / totalItems) : '0.000' },
-        { label: 'Highest Price', value: totalItems > 0 ? Utils.formatCurrency(Math.max(...(data.items || []).map(i => i.unitPrice || 0))) : '0.000' }
-      ]
-    }
+    total: { title: 'Total Items', details: [
+      { label: 'Total', value: totalItems },
+      { label: 'Categories', value: totalCategories },
+      { label: 'Total Value', value: Utils.formatCurrency(totalValue) },
+      { label: 'Avg Price', value: Utils.formatCurrency(avgPrice) }
+    ]},
+    categories: { title: 'Categories', details: [
+      { label: 'Total', value: totalCategories },
+      { label: 'Most Popular', value: mostPopularCategory ? mostPopularCategory[0] : 'N/A' },
+      { label: 'Items in Top', value: mostPopularCategory ? mostPopularCategory[1] : 0 },
+      { label: 'Total Items', value: totalItems }
+    ]},
+    value: { title: 'Total Value', details: [
+      { label: 'Total', value: Utils.formatCurrency(totalValue) },
+      { label: 'Avg', value: Utils.formatCurrency(avgPrice) },
+      { label: 'Highest', value: Utils.formatCurrency(maxPrice) },
+      { label: 'Lowest', value: Utils.formatCurrency(minPrice) }
+    ]},
+    taxable: { title: 'Taxable Items', details: [
+      { label: 'Taxable', value: taxableItems },
+      { label: 'Non-Taxable', value: totalItems - taxableItems },
+      { label: 'Total', value: totalItems },
+      { label: 'Rate', value: `${totalItems > 0 ? ((taxableItems / totalItems) * 100).toFixed(1) : 0}%` }
+    ]}
   };
 
-  // ============================================
-  // HANDLE HOVER FOR TOOLTIPS
-  // ============================================
-  const handleCardHover = (cardId, event) => {
-    setHoveredCard(cardId);
-    setTooltipPosition({
-      x: event.clientX + 15,
-      y: event.clientY - 10
-    });
+  const handleCardHover = (id, e) => {
+    setHoveredCard(id);
+    setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 });
   };
-
-  const handleCardLeave = () => {
-    setHoveredCard(null);
-  };
+  const handleCardLeave = () => setHoveredCard(null);
 
   // ============================================
-  // HANDLE SUBMIT
+  // CRUD
   // ============================================
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -153,7 +251,6 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
       alert('Item name is required');
       return;
     }
-
     const item = {
       id: editingId || Date.now().toString(),
       ...formData,
@@ -162,28 +259,20 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
       isTaxable: formData.isTaxable,
       createdAt: new Date().toISOString()
     };
-
     if (editingId) {
       updateItem(editingId, item);
       setEditingId(null);
     } else {
       addItem(item);
     }
-
     resetForm();
     setShowForm(false);
   };
 
   const resetForm = () => {
     setFormData({
-      name: '',
-      category: 'Materials',
-      unit: 'pcs',
-      unitPrice: '',
-      description: '',
-      sku: '',
-      taxRate: '0',
-      isTaxable: false
+      name: '', category: 'Materials', unit: 'pcs', unitPrice: '',
+      description: '', sku: '', taxRate: '0', isTaxable: false
     });
     setEditingId(null);
   };
@@ -204,189 +293,419 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
   };
 
   const handleDelete = (id) => {
-    if (!window.confirm('Delete this item?')) return;
     deleteItem(id);
     setShowDeleteConfirm(null);
   };
 
   // ============================================
-  // FILTERED ITEMS
+  // OVERVIEW TAB
   // ============================================
-  const filteredItems = useMemo(() => {
-    const items = data.items || [];
-    let filtered = items;
-    
-    if (searchTerm) {
-      const search = searchTerm.toLowerCase();
-      filtered = filtered.filter(item =>
-        item.name.toLowerCase().includes(search) ||
-        item.category.toLowerCase().includes(search) ||
-        (item.sku && item.sku.toLowerCase().includes(search))
-      );
-    }
-    
-    if (categoryFilter !== 'all') {
-      filtered = filtered.filter(item => item.category === categoryFilter);
-    }
-    
-    return filtered;
-  }, [data.items, searchTerm, categoryFilter]);
-
-  // ============================================
-  // PAGINATION
-  // ============================================
-  const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
-  const paginatedItems = useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    return filteredItems.slice(startIndex, endIndex);
-  }, [filteredItems, currentPage, itemsPerPage]);
-
-  const goToPage = (page) => {
-    const validPage = Math.max(1, Math.min(page, totalPages));
-    setCurrentPage(validPage);
-  };
-
-  const getPageNumbers = () => {
-    const pages = [];
-    const maxVisible = 5;
-    let start = Math.max(1, currentPage - 2);
-    let end = Math.min(totalPages, start + maxVisible - 1);
-
-    if (end - start < maxVisible - 1) {
-      start = Math.max(1, end - maxVisible + 1);
-    }
-
-    for (let i = start; i <= end; i++) {
-      pages.push(i);
-    }
-    return pages;
-  };
-
-  // Reset to page 1 when filters change
-  React.useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, categoryFilter]);
-
-  // ============================================
-  // RENDER FORM MODAL
-  // ============================================
-  const renderFormModal = () => {
-    return (
-      <div className="item-modal-overlay" onClick={() => { setShowForm(false); resetForm(); }}>
-        <div className="item-modal-content item-form-modal" onClick={e => e.stopPropagation()}>
-          <div className="item-modal-header" style={{ background: 'linear-gradient(135deg, #009846, #007a38)' }}>
-            <div className="item-modal-header-left">
-              {editingId ? <Edit size={24} color="#ffffff" /> : <Package size={24} color="#ffffff" />}
-              <h3 style={{ color: '#ffffff' }}>{editingId ? 'Edit Item' : 'New Item'}</h3>
+  const renderOverviewTab = () => (
+    <div className="im-view">
+      <div className="im-kpi-grid">
+        {kpiItems.map(item => {
+          const Icon = item.icon;
+          return (
+            <div key={item.id} className="im-kpi-card"
+              onMouseEnter={(e) => handleCardHover(item.id, e)}
+              onMouseLeave={handleCardLeave}
+              onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}>
+              <div className="im-kpi-accent" style={{ background: item.accent }} />
+              <div className="im-kpi-icon" style={{ background: `${item.color}1f`, color: item.color }}>
+                <Icon size={20} />
+              </div>
+              <div className="im-kpi-content">
+                <span className="im-kpi-label">{item.label}</span>
+                <span className="im-kpi-value">{item.value}</span>
+                <span className="im-kpi-meta">{item.meta}</span>
+              </div>
+              <div className={`im-kpi-trend ${item.trend}`}>
+                {item.trend === 'up' && <TrendingUp size={15} />}
+                {item.trend === 'down' && <TrendingDown size={15} />}
+                {item.trend === 'flat' && <Minus size={15} />}
+              </div>
             </div>
-            <button className="item-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
-              <X size={24} color="#ffffff" />
+          );
+        })}
+      </div>
+
+      {hoveredCard && cardDetails[hoveredCard] && (
+        <div className="im-hover-tooltip"
+          style={{ position: 'fixed', left: tooltipPosition.x, top: tooltipPosition.y, zIndex: 9999 }}>
+          <div className="im-tooltip-header"><strong>{cardDetails[hoveredCard].title}</strong></div>
+          <div className="im-tooltip-body">
+            {cardDetails[hoveredCard].details.map((d, i) => (
+              <div key={i} className="im-tooltip-row">
+                <span className="im-tooltip-label">{d.label}</span>
+                <span className="im-tooltip-value">{d.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Row 1 — category distribution donut + taxable donut */}
+      <div className="im-grid-1-1">
+        <div className="im-card">
+          <div className="im-card-header">
+            <div className="im-card-title">
+              <span className="im-card-icon" style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}>
+                <PieChartIcon size={16} />
+              </span>
+              <div>
+                <h4>Items by Category</h4>
+                <span>{totalCategories} categories</span>
+              </div>
+            </div>
+          </div>
+          {categoryChartData.length > 0 ? (
+            <div className="im-donut-wrap">
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={categoryChartData} dataKey="value" nameKey="name"
+                    cx="50%" cy="50%" innerRadius={52} outerRadius={85} paddingAngle={3} stroke="none">
+                    {categoryChartData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Pie>
+                  <ReTooltip content={<ChartTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="im-donut-legend">
+                {categoryChartData.map((d, i) => (
+                  <div key={i} className="im-donut-item">
+                    <span className="im-donut-dot" style={{ background: d.color }} />
+                    <span className="im-donut-name">{d.name}</span>
+                    <span className="im-donut-val">{d.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : <div className="im-empty-mini">No items</div>}
+        </div>
+
+        <div className="im-card">
+          <div className="im-card-header">
+            <div className="im-card-title">
+              <span className="im-card-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
+                <Percent size={16} />
+              </span>
+              <div>
+                <h4>Taxability</h4>
+                <span>Taxable vs non-taxable</span>
+              </div>
+            </div>
+          </div>
+          {taxableChartData.length > 0 ? (
+            <div className="im-donut-wrap">
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={taxableChartData} dataKey="value" nameKey="name"
+                    cx="50%" cy="50%" innerRadius={52} outerRadius={85} paddingAngle={3} stroke="none">
+                    {taxableChartData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Pie>
+                  <ReTooltip content={<ChartTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="im-donut-legend">
+                {taxableChartData.map((d, i) => (
+                  <div key={i} className="im-donut-item">
+                    <span className="im-donut-dot" style={{ background: d.color }} />
+                    <span className="im-donut-name">{d.name}</span>
+                    <span className="im-donut-val">{d.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : <div className="im-empty-mini">No items</div>}
+        </div>
+      </div>
+
+      {/* Row 2 — Top items bar chart */}
+      <div className="im-card">
+        <div className="im-card-header">
+          <div className="im-card-title">
+            <span className="im-card-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
+              <CrownIcon size={16} />
+            </span>
+            <div>
+              <h4>Most Expensive Items</h4>
+              <span>Top 8 by unit price</span>
+            </div>
+          </div>
+        </div>
+        {topItems.length > 0 ? (
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={topItems} layout="vertical" margin={{ left: 10, right: 20 }}>
+              <defs>
+                <linearGradient id="imTopGrad" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#10b981" stopOpacity={0.7} />
+                  <stop offset="100%" stopColor="#10b981" stopOpacity={1} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} horizontal={false} />
+              <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+              <YAxis type="category" dataKey="name" stroke="#94a3b8" fontSize={11}
+                tickLine={false} axisLine={false} width={110} />
+              <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />}
+                cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
+              <Bar dataKey="value" name="Unit Price" fill="url(#imTopGrad)" radius={[0, 8, 8, 0]} barSize={22} />
+            </BarChart>
+          </ResponsiveContainer>
+        ) : <div className="im-empty-mini">No items</div>}
+      </div>
+
+      {/* Row 3 — Category value */}
+      <div className="im-card">
+        <div className="im-card-header">
+          <div className="im-card-title">
+            <span className="im-card-icon" style={{ background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>
+              <BarChart3 size={16} />
+            </span>
+            <div>
+              <h4>Value by Category</h4>
+              <span>Total unit price per category</span>
+            </div>
+          </div>
+        </div>
+        {categoryValueData.length > 0 ? (
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={categoryValueData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} vertical={false} />
+              <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+              <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />}
+                cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
+              <Bar dataKey="value" radius={[8, 8, 0, 0]} barSize={40}>
+                {categoryValueData.map((d, i) => <Cell key={i} fill={d.color} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        ) : <div className="im-empty-mini">No data</div>}
+      </div>
+    </div>
+  );
+
+  // ============================================
+  // ITEMS TAB
+  // ============================================
+  const renderItemsTab = () => (
+    <div className="im-view">
+      {/* Filters */}
+      <div className="im-filters">
+        <div className="im-search">
+          <Search size={15} className="im-search-icon" />
+          <input type="text" placeholder="Search by name, SKU, or category..."
+            value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+          {searchTerm && (
+            <button className="im-search-clear" onClick={() => setSearchTerm('')}>
+              <X size={13} />
+            </button>
+          )}
+        </div>
+        <div className="im-filter-group">
+          <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="im-select">
+            <option value="all">All Categories</option>
+            {categories.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+        <span className="im-result-count">
+          Showing {filteredItems.length} of {items.length}
+        </span>
+        <button className="im-btn im-btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
+          <Plus size={14} /> New Item
+        </button>
+      </div>
+
+      {filteredItems.length === 0 ? (
+        <div className="im-empty">
+          <div className="im-empty-icon"><Package size={40} /></div>
+          <h3>No Items Found</h3>
+          <p>{searchTerm || categoryFilter !== 'all' ? 'Try adjusting your filters.' : 'Add your first item to get started.'}</p>
+          <button className="im-btn im-btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
+            <Plus size={14} /> Add Item
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="im-items-grid">
+            {paginatedItems.map((item, index) => (
+              <div key={item.id} className="im-item-card" style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}>
+                <div className="im-item-card-accent" />
+                <div className="im-item-header">
+                  <div className="im-item-icon-wrapper">
+                    <Package size={18} />
+                  </div>
+                  <div className="im-item-info">
+                    <div className="im-item-name">{item.name}</div>
+                    <div className="im-item-meta">
+                      <span className="im-item-category">{item.category}</span>
+                      {item.sku && <span className="im-item-sku">SKU: {item.sku}</span>}
+                      <span className="im-item-unit">{item.unit}</span>
+                    </div>
+                  </div>
+                  <div className="im-item-price">
+                    <span className="im-price-value">{Utils.formatCurrency(item.unitPrice)}</span>
+                    {item.isTaxable && <span className="im-tax-badge">+ VAT</span>}
+                  </div>
+                </div>
+
+                {item.description && (
+                  <div className="im-item-description">
+                    <FileText size={12} /> {item.description}
+                  </div>
+                )}
+
+                <div className="im-item-footer">
+                  <div className="im-item-actions">
+                    <button className="im-icon-btn im-icon-edit" onClick={() => handleEdit(item)}>
+                      <Edit size={13} />
+                    </button>
+                    <button className="im-icon-btn im-icon-danger" onClick={() => setShowDeleteConfirm(item.id)}>
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Pagination */}
+          <div className="im-pagination">
+            <div className="im-pagination-info">
+              Showing <strong>{((currentPage - 1) * itemsPerPage) + 1}</strong>–
+              <strong>{Math.min(currentPage * itemsPerPage, filteredItems.length)}</strong> of{' '}
+              <strong>{filteredItems.length}</strong>
+            </div>
+            <div className="im-pagination-controls">
+              <div className="im-pagination-items">
+                <span>Show:</span>
+                <select value={itemsPerPage}
+                  onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
+                  className="im-pagination-select">
+                  {[6, 9, 10, 12, 18, 24, 48].map(n => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </div>
+              <div className="im-pagination-buttons">
+                <button className="im-page-btn" onClick={() => goToPage(1)} disabled={currentPage === 1}>
+                  <ChevronsLeft size={13} />
+                </button>
+                <button className="im-page-btn" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1}>
+                  <ChevronLeft size={13} />
+                </button>
+                {getPageNumbers().map(p => (
+                  <button key={p} className={`im-page-btn ${p === currentPage ? 'active' : ''}`}
+                    onClick={() => goToPage(p)}>{p}</button>
+                ))}
+                <button className="im-page-btn" onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}>
+                  <ChevronRight size={13} />
+                </button>
+                <button className="im-page-btn" onClick={() => goToPage(totalPages)} disabled={currentPage === totalPages}>
+                  <ChevronsRight size={13} />
+                </button>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  // ============================================
+  // FORM MODAL
+  // ============================================
+  const renderFormModal = () => (
+    <ModalPortal>
+      <div className="im-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowForm(false); resetForm(); } }}>
+        <div className="im-modal" onClick={e => e.stopPropagation()}>
+          <div className="im-modal-header" style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+            <div className="im-modal-header-left">
+              <div className="im-modal-icon">
+                {editingId ? <Edit size={18} /> : <Package size={18} />}
+              </div>
+              <div>
+                <h3>{editingId ? 'Edit Item' : 'New Item'}</h3>
+                <p className="im-modal-sub">{editingId ? 'Update item details' : 'Add a new item to inventory'}</p>
+              </div>
+            </div>
+            <button className="im-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
+              <X size={18} />
             </button>
           </div>
-          <div className="item-modal-body">
+          <div className="im-modal-body">
             <form onSubmit={handleSubmit}>
-              <div className="item-form-row">
-                <div className="item-form-group">
-                  <label><FileText size={14} /> Item Name <span className="item-required">*</span></label>
-                  <input
-                    type="text"
-                    value={formData.name}
+              <div className="im-form-row">
+                <div className="im-form-group">
+                  <label>Item Name <span className="im-required">*</span></label>
+                  <input type="text" value={formData.name} required autoFocus
                     onChange={e => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="Enter item name"
-                    required
-                    className="item-form-input"
-                  />
+                    placeholder="Enter item name" className="im-form-input" />
                 </div>
-                <div className="item-form-group">
-                  <label><FolderKanban size={14} /> Category</label>
-                  <select
-                    value={formData.category}
+                <div className="im-form-group">
+                  <label>Category</label>
+                  <select value={formData.category}
                     onChange={e => setFormData({ ...formData, category: e.target.value })}
-                    className="item-form-select"
-                  >
-                    {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                    className="im-form-select">
+                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
               </div>
 
-              <div className="item-form-row">
-                <div className="item-form-group">
-                  <label><Tag size={14} /> SKU (Stock Keeping Unit)</label>
-                  <input
-                    type="text"
-                    value={formData.sku}
+              <div className="im-form-row">
+                <div className="im-form-group">
+                  <label>SKU</label>
+                  <input type="text" value={formData.sku}
                     onChange={e => setFormData({ ...formData, sku: e.target.value })}
-                    placeholder="e.g., MAT-001"
-                    className="item-form-input"
-                  />
+                    placeholder="e.g., MAT-001" className="im-form-input" />
                 </div>
-                <div className="item-form-group">
-                  <label><Boxes size={14} /> Unit</label>
-                  <select
-                    value={formData.unit}
+                <div className="im-form-group">
+                  <label>Unit</label>
+                  <select value={formData.unit}
                     onChange={e => setFormData({ ...formData, unit: e.target.value })}
-                    className="item-form-select"
-                  >
+                    className="im-form-select">
                     {units.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </div>
               </div>
 
-              <div className="item-form-row">
-                <div className="item-form-group">
-                  <label><DollarSign size={14} /> Unit Price (BD) <span className="item-required">*</span></label>
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={formData.unitPrice}
+              <div className="im-form-row">
+                <div className="im-form-group">
+                  <label>Unit Price (BD) <span className="im-required">*</span></label>
+                  <input type="number" step="0.001" value={formData.unitPrice} required
                     onChange={e => setFormData({ ...formData, unitPrice: e.target.value })}
-                    placeholder="0.000"
-                    required
-                    className="item-form-input"
-                  />
+                    placeholder="0.000" className="im-form-input" />
                 </div>
-                <div className="item-form-group">
-                  <label><FileText size={14} /> Description</label>
-                  <input
-                    type="text"
-                    value={formData.description}
+                <div className="im-form-group">
+                  <label>Description</label>
+                  <input type="text" value={formData.description}
                     onChange={e => setFormData({ ...formData, description: e.target.value })}
-                    placeholder="Item description"
-                    className="item-form-input"
-                  />
+                    placeholder="Item description" className="im-form-input" />
                 </div>
               </div>
 
-              <div className="item-form-row">
-                <div className="item-form-group">
-                  <label><Percent size={14} /> Tax Rate (%)</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.taxRate}
+              <div className="im-form-row">
+                <div className="im-form-group">
+                  <label>Tax Rate (%)</label>
+                  <input type="number" step="0.01" value={formData.taxRate}
                     onChange={e => setFormData({ ...formData, taxRate: e.target.value })}
-                    placeholder="0"
-                    className="item-form-input"
-                  />
+                    placeholder="0" className="im-form-input" />
                 </div>
-                <div className="item-form-group">
-                  <label className="item-checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={formData.isTaxable}
-                      onChange={e => setFormData({ ...formData, isTaxable: e.target.checked })}
-                    />
-                    Is Taxable
+                <div className="im-form-group">
+                  <label>Tax</label>
+                  <label className="im-checkbox">
+                    <input type="checkbox" checked={formData.isTaxable}
+                      onChange={e => setFormData({ ...formData, isTaxable: e.target.checked })} />
+                    <span>Is Taxable</span>
                   </label>
                 </div>
               </div>
 
-              <div className="item-form-actions">
-                <button type="submit" className="item-btn-primary">
-                  <Save size={16} /> {editingId ? 'Update Item' : 'Add Item'}
+              <div className="im-form-actions">
+                <button type="submit" className="im-btn im-btn-primary">
+                  <Save size={14} /> {editingId ? 'Update' : 'Add Item'}
                 </button>
-                <button type="button" className="item-btn-secondary" onClick={() => { setShowForm(false); resetForm(); }}>
+                <button type="button" className="im-btn im-btn-secondary"
+                  onClick={() => { setShowForm(false); resetForm(); }}>
                   Cancel
                 </button>
               </div>
@@ -394,43 +713,48 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
           </div>
         </div>
       </div>
-    );
-  };
+    </ModalPortal>
+  );
 
   // ============================================
-  // RENDER DELETE CONFIRM
+  // DELETE CONFIRM
   // ============================================
   const renderDeleteConfirm = () => {
     if (!showDeleteConfirm) return null;
     return (
-      <div className="item-modal-overlay" onClick={() => setShowDeleteConfirm(null)}>
-        <div className="item-modal-content item-delete-modal" onClick={e => e.stopPropagation()}>
-          <div className="item-modal-header" style={{ background: 'linear-gradient(135deg, #dc2626, #b91c1c)' }}>
-            <div className="item-modal-header-left">
-              <Trash2 size={24} color="#ffffff" />
-              <h3 style={{ color: '#ffffff' }}>Delete Item</h3>
+      <ModalPortal>
+        <div className="im-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowDeleteConfirm(null); }}>
+          <div className="im-modal im-delete-modal" onClick={e => e.stopPropagation()}>
+            <div className="im-modal-header" style={{ background: 'linear-gradient(135deg, #ef4444, #b91c1c)' }}>
+              <div className="im-modal-header-left">
+                <div className="im-modal-icon"><Trash2 size={18} /></div>
+                <div>
+                  <h3>Delete Item</h3>
+                  <p className="im-modal-sub">This action cannot be undone</p>
+                </div>
+              </div>
+              <button className="im-modal-close" onClick={() => setShowDeleteConfirm(null)}>
+                <X size={18} />
+              </button>
             </div>
-            <button className="item-modal-close" onClick={() => setShowDeleteConfirm(null)}>
-              <X size={24} color="#ffffff" />
-            </button>
-          </div>
-          <div className="item-modal-body">
-            <div className="item-delete-content">
-              <AlertCircle size={48} color="#dc2626" />
-              <p>Are you sure you want to delete this item?</p>
-              <p className="item-delete-subtext">This action cannot be undone.</p>
-              <div className="item-delete-actions">
-                <button className="item-btn-danger" onClick={() => handleDelete(showDeleteConfirm)}>
-                  <Trash2 size={16} /> Delete
-                </button>
-                <button className="item-btn-secondary" onClick={() => setShowDeleteConfirm(null)}>
-                  Cancel
-                </button>
+            <div className="im-modal-body">
+              <div className="im-delete-content">
+                <div className="im-delete-icon"><AlertCircle size={40} /></div>
+                <p className="im-delete-text">Are you sure you want to delete this item?</p>
+                <p className="im-delete-subtext">This action cannot be undone.</p>
+                <div className="im-delete-actions">
+                  <button className="im-btn im-btn-danger" onClick={() => handleDelete(showDeleteConfirm)}>
+                    <Trash2 size={14} /> Delete
+                  </button>
+                  <button className="im-btn im-btn-secondary" onClick={() => setShowDeleteConfirm(null)}>
+                    Cancel
+                  </button>
+                </div>
               </div>
             </div>
           </div>
         </div>
-      </div>
+      </ModalPortal>
     );
   };
 
@@ -438,263 +762,57 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
   // MAIN RENDER
   // ============================================
   return (
-    <div className="item-manager-modern">
+    <div className={`im-root ${mounted ? 'is-mounted' : ''}`}>
+      <div className="im-ambient">
+        <div className="im-orb im-orb-1" />
+        <div className="im-orb im-orb-2" />
+        <div className="im-orb im-orb-3" />
+      </div>
+
       {/* Header */}
-      <div className="dashboard-header-modern">
-        <div className="header-left">
-          <div className="header-icon-wrapper">
-            <Package size={28} />
-            <span className="header-badge">Items</span>
+      <div className="im-header">
+        <div className="im-header-left">
+          <div className="im-header-icon">
+            <Package size={22} />
+            <span className="im-header-badge"><Sparkles size={10} /> ITEMS</span>
           </div>
           <div>
-            <h2>Item & Inventory Management</h2>
-            <p className="header-subtitle">Manage your inventory items and pricing</p>
+            <h2>Item &amp; Inventory Management</h2>
+            <p className="im-header-subtitle">
+              {totalItems} items · {totalCategories} categories · {Utils.formatCurrencyShort(totalValue)} value
+            </p>
           </div>
         </div>
-        <div className="header-right">
-          <button className="btn-refresh-modern" onClick={() => window.location.reload()}>
-            <RefreshCw size={16} />
-            Refresh
+        <div className="im-header-right">
+          <button className="im-btn im-btn-ghost" onClick={() => window.location.reload()}>
+            <RefreshCw size={14} /> Refresh
           </button>
-          <button className="item-btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
-            <Plus size={18} />
-            New Item
+          <button className="im-btn im-btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
+            <Plus size={14} /> New Item
           </button>
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="item-stats-grid">
-        <div
-          className="item-stat-card"
-          onMouseEnter={(e) => handleCardHover('total', e)}
-          onMouseLeave={handleCardLeave}
-          onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-        >
-          <div className="item-stat-icon" style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#3b82f6' }}>
-            <Package size={22} />
-          </div>
-          <div className="item-stat-content">
-            <span className="item-stat-label">Total Items</span>
-            <span className="item-stat-value">{totalItems}</span>
-          </div>
-          <div className="item-stat-trend">
-            <TrendingUp size={16} />
-          </div>
-        </div>
-
-        <div
-          className="item-stat-card"
-          onMouseEnter={(e) => handleCardHover('categories', e)}
-          onMouseLeave={handleCardLeave}
-          onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-        >
-          <div className="item-stat-icon" style={{ background: 'rgba(139, 92, 246, 0.12)', color: '#8b5cf6' }}>
-            <Layers size={22} />
-          </div>
-          <div className="item-stat-content">
-            <span className="item-stat-label">Categories</span>
-            <span className="item-stat-value">{totalCategories}</span>
-          </div>
-          <div className="item-stat-trend">
-            <TrendingUp size={16} />
-          </div>
-        </div>
-
-        <div
-          className="item-stat-card"
-          onMouseEnter={(e) => handleCardHover('value', e)}
-          onMouseLeave={handleCardLeave}
-          onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-        >
-          <div className="item-stat-icon" style={{ background: 'rgba(245, 158, 11, 0.12)', color: '#f59e0b' }}>
-            <DollarSign size={22} />
-          </div>
-          <div className="item-stat-content">
-            <span className="item-stat-label">Total Value</span>
-            <span className="item-stat-value">{Utils.formatCurrencyShort(totalValue)}</span>
-          </div>
-          <div className="item-stat-trend">
-            <TrendingUp size={16} />
-          </div>
-        </div>
-      </div>
-
-      {/* Tooltip */}
-      {hoveredCard && cardDetails[hoveredCard] && (
-        <div
-          className="item-card-tooltip"
-          style={{
-            position: 'fixed',
-            left: tooltipPosition.x,
-            top: tooltipPosition.y,
-            zIndex: 9999
-          }}
-        >
-          <div className="item-tooltip-header">
-            <strong>{cardDetails[hoveredCard].title}</strong>
-          </div>
-          <div className="item-tooltip-body">
-            {cardDetails[hoveredCard].details.map((detail, idx) => (
-              <div key={idx} className="item-tooltip-row">
-                <span className="item-tooltip-label">{detail.label}</span>
-                <span className="item-tooltip-value">{detail.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="item-filters-section">
-        <div className="item-search-box">
-          <Search size={18} className="item-search-icon" />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={e => setSearchTerm(e.target.value)}
-            placeholder="Search items..."
-            className="item-search-input"
-          />
-          {searchTerm && (
-            <button className="item-clear-search" onClick={() => setSearchTerm('')}>
-              <X size={16} />
+      {/* Tabs */}
+      <div className="im-tabs">
+        {[
+          { id: 'overview', label: 'Overview', icon: BarChart3 },
+          { id: 'items', label: 'Items', icon: Package, badge: filteredItems.length }
+        ].map(t => {
+          const Icon = t.icon;
+          return (
+            <button key={t.id} className={`im-tab ${viewMode === t.id ? 'active' : ''}`}
+              onClick={() => setViewMode(t.id)}>
+              <Icon size={15} />
+              <span>{t.label}</span>
+              {t.badge !== undefined && <span className="im-tab-badge">{t.badge}</span>}
             </button>
-          )}
-        </div>
-        <div className="item-filter-group">
-          <select
-            value={categoryFilter}
-            onChange={e => setCategoryFilter(e.target.value)}
-            className={categoryFilter !== 'all' ? 'filter-active' : ''}
-          >
-            <option value="all">All Categories</option>
-            {categories.map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
-        </div>
+          );
+        })}
       </div>
 
-      {/* Items Grid */}
-      <div className="items-grid">
-        {paginatedItems.length === 0 ? (
-          <div className="empty-state">
-            <Package size={64} />
-            <h3>No Items Found</h3>
-            <p>Add your first item by clicking the "New Item" button above.</p>
-          </div>
-        ) : (
-          paginatedItems.map(item => (
-            <div key={item.id} className="item-card">
-              <div className="item-card-header">
-                <div className="item-card-info">
-                  <div className="item-icon-wrapper">
-                    <Package size={18} />
-                  </div>
-                  <div>
-                    <div className="item-name">{item.name}</div>
-                    <div className="item-meta">
-                      <span className="item-category">{item.category}</span>
-                      {item.sku && <span className="item-sku">SKU: {item.sku}</span>}
-                      <span className="item-unit">{item.unit}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="item-price">
-                  <span className="price-value">{Utils.formatCurrency(item.unitPrice)}</span>
-                  {item.isTaxable && <span className="tax-badge">+ VAT</span>}
-                </div>
-              </div>
+      {viewMode === 'overview' ? renderOverviewTab() : renderItemsTab()}
 
-              {item.description && (
-                <div className="item-description">{item.description}</div>
-              )}
-
-              <div className="item-card-footer">
-                <div className="item-actions">
-                  <button className="btn-icon btn-edit" onClick={() => handleEdit(item)}>
-                    <Edit size={14} /> Edit
-                  </button>
-                  <button className="btn-icon btn-delete" onClick={() => setShowDeleteConfirm(item.id)}>
-                    <Trash2 size={14} /> Delete
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))
-        )}
-      </div>
-
-      {/* Pagination */}
-      {filteredItems.length > 0 && (
-        <div className="item-pagination">
-          <div className="item-pagination-info">
-            Showing {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, filteredItems.length)} of {filteredItems.length} items
-          </div>
-          <div className="item-pagination-controls">
-            <div className="item-pagination-items">
-              <span>Show:</span>
-              <select
-                value={itemsPerPage}
-                onChange={(e) => {
-                  setItemsPerPage(Number(e.target.value));
-                  setCurrentPage(1);
-                }}
-                className="item-pagination-select"
-              >
-                <option value={5}>5</option>
-                <option value={10}>10</option>
-                <option value={20}>20</option>
-                <option value={50}>50</option>
-              </select>
-            </div>
-            <div className="item-pagination-buttons">
-              <button 
-                className="item-page-btn" 
-                onClick={() => goToPage(1)}
-                disabled={currentPage === 1}
-              >
-                <ChevronsLeft size={16} />
-              </button>
-              <button 
-                className="item-page-btn" 
-                onClick={() => goToPage(currentPage - 1)}
-                disabled={currentPage === 1}
-              >
-                <ChevronLeft size={16} />
-              </button>
-              
-              {getPageNumbers().map(page => (
-                <button
-                  key={page}
-                  className={`item-page-btn ${page === currentPage ? 'active' : ''}`}
-                  onClick={() => goToPage(page)}
-                >
-                  {page}
-                </button>
-              ))}
-              
-              <button 
-                className="item-page-btn" 
-                onClick={() => goToPage(currentPage + 1)}
-                disabled={currentPage === totalPages}
-              >
-                <ChevronRight size={16} />
-              </button>
-              <button 
-                className="item-page-btn" 
-                onClick={() => goToPage(totalPages)}
-                disabled={currentPage === totalPages}
-              >
-                <ChevronsRight size={16} />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Modals */}
       {showForm && renderFormModal()}
       {renderDeleteConfirm()}
     </div>

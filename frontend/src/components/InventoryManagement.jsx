@@ -1,43 +1,78 @@
 // src/components/InventoryManagement.jsx
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
-  Package, Plus, Search, Edit, Trash2, Eye, X, Save,
-  RefreshCw, ChevronDown, ChevronUp, CheckCircle,
-  AlertCircle, Clock, Building2, User, Calendar,
-  DollarSign, TrendingUp, TrendingDown, Boxes,
-  Truck, ShoppingCart, Warehouse, Tag, Layers,
-  FileText, Shield, Users,
-  AlertTriangle, Check, XCircle,
-  Star, MapPin, Bell, Zap, Gauge,
-  TrendingUp as TrendingUpIcon,
-  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  FolderKanban, Box, HardHat, Award, Landmark, Phone, Mail
+  Package, Plus, Search, Edit, Trash2, Eye, X, Save, RefreshCw,
+  ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Building2,
+  User, Calendar, DollarSign, TrendingUp, TrendingDown, Boxes, Truck,
+  ShoppingCart, Warehouse, Tag, Layers, FileText, Shield, Users,
+  AlertTriangle, Check, XCircle, Star, MapPin, Bell, Zap, Gauge,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FolderKanban,
+  Box, HardHat, Award, Landmark, Phone, Mail, BarChart3,
+  PieChart as PieChartIcon, LineChart as LineChartIcon,
+  LayoutDashboard, Sparkles, Flame, Target, Percent, Wallet,
+  Minus, Crown, CircleDollarSign, ClipboardList, PackageCheck,
+  PackageX, PackageSearch
 } from 'lucide-react';
+import {
+  ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend,
+  AreaChart, Area, LineChart as ReLineChart, Line
+} from 'recharts';
 import Utils from '../utils/Utils';
 import './InventoryManagement.css';
 
 import { CONFIG } from '../config/constants';
 const API_BASE_URL = CONFIG.API_BASE || 'http://localhost:5000/api';
 
+// ============================================
+// PORTAL
+// ============================================
+const ModalPortal = ({ children }) => {
+  if (typeof document === 'undefined') return null;
+  return createPortal(children, document.body);
+};
+
+// ============================================
+// CHART TOOLTIP
+// ============================================
+const ChartTooltip = ({ active, payload, label, formatter }) => {
+  if (!active || !payload || !payload.length) return null;
+  return (
+    <div className="inv-chart-tooltip">
+      {label && <div className="inv-chart-tooltip-label">{label}</div>}
+      {payload.map((p, i) => (
+        <div key={i} className="inv-chart-tooltip-row">
+          <span className="inv-chart-tooltip-dot" style={{ background: p.color || p.fill || p.payload?.color }} />
+          <span className="inv-chart-tooltip-name">{p.name}</span>
+          <span className="inv-chart-tooltip-val">
+            {formatter ? formatter(p.value, p.name) : p.value}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ============================================
+// MAIN COMPONENT
+// ============================================
 const InventoryManagement = ({ data, refreshData }) => {
-  // ============================================
-  // STATE
-  // ============================================
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [viewMode, setViewMode] = useState('materials');
-  
-  // Modal states
+  const [viewMode, setViewMode] = useState('overview'); // overview | materials | suppliers | orders | movements
+  const [mounted, setMounted] = useState(false);
+
   const [showForm, setShowForm] = useState(false);
   const [showSupplierForm, setShowSupplierForm] = useState(false);
   const [showPurchaseForm, setShowPurchaseForm] = useState(false);
   const [showAdjustStock, setShowAdjustStock] = useState(false);
   const [showDetailModal, setShowDetailModal] = useState(false);
-  
+
   const [editingId, setEditingId] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
-  
+
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -46,228 +81,140 @@ const InventoryManagement = ({ data, refreshData }) => {
   const [summary, setSummary] = useState(null);
   const [showCostOptimizer, setShowCostOptimizer] = useState(false);
   const [optimizationResults, setOptimizationResults] = useState(null);
-  
-  // Pagination
-  const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(10);
+  const [autoReorderResults, setAutoReorderResults] = useState(null);
 
-  // Data states
+  // Pagination — separate per tab
+  const [matPage, setMatPage] = useState(1);
+  const [matPer, setMatPer] = useState(10);
+  const [supPage, setSupPage] = useState(1);
+  const [supPer, setSupPer] = useState(9);
+  const [ordPage, setOrdPage] = useState(1);
+  const [ordPer, setOrdPer] = useState(9);
+  const [movPage, setMovPage] = useState(1);
+  const [movPer, setMovPer] = useState(10);
+
   const [materials, setMaterials] = useState([]);
   const [categories, setCategories] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
   const [purchaseOrders, setPurchaseOrders] = useState([]);
   const [stockMovements, setStockMovements] = useState([]);
 
-  // Form state for materials
   const [formData, setFormData] = useState({
-    name: '',
-    categoryId: '',
-    unit: '',
-    unitPrice: '',
-    quantity: '',
-    minQuantity: '',
-    maxQuantity: '',
-    reorderLevel: '',
-    location: '',
-    warehouse: '',
-    supplierId: '',
-    description: '',
-    status: 'active'
+    name: '', categoryId: '', unit: '', unitPrice: '', quantity: '',
+    minQuantity: '', maxQuantity: '', reorderLevel: '', location: '',
+    warehouse: '', supplierId: '', description: '', status: 'active'
   });
 
-  // Supplier form state
   const [supplierForm, setSupplierForm] = useState({
-    name: '',
-    contactPerson: '',
-    email: '',
-    phone: '',
-    mobile: '',
-    address: '',
-    city: '',
-    country: '',
-    crNumber: '',
-    vatNumber: '',
-    paymentTerms: '',
-    rating: 3,
-    notes: ''
+    name: '', contactPerson: '', email: '', phone: '', mobile: '',
+    address: '', city: '', country: '', crNumber: '', vatNumber: '',
+    paymentTerms: '', rating: 3, notes: ''
   });
 
-  // Purchase order form
   const [poForm, setPoForm] = useState({
-    supplierId: '',
-    orderDate: Utils.today(),
-    expectedDelivery: '',
-    vatRate: 0,
-    notes: '',
-    items: []
+    supplierId: '', orderDate: Utils.today(), expectedDelivery: '',
+    vatRate: 0, notes: '', items: []
   });
 
-  // Stock adjustment form
   const [stockForm, setStockForm] = useState({
-    quantity: '',
-    movementType: 'adjustment',
-    notes: ''
+    quantity: '', movementType: 'adjustment', notes: ''
   });
 
-  // PO Item form
   const [poItemForm, setPoItemForm] = useState({
-    materialId: '',
-    quantity: '',
-    unitPrice: ''
+    materialId: '', quantity: '', unitPrice: ''
   });
 
-  // Auto-reorder state
-  const [autoReorderResults, setAutoReorderResults] = useState(null);
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
 
   // ============================================
-  // RESET FUNCTIONS
+  // RESET
   // ============================================
   const resetForm = () => {
     setFormData({
-      name: '',
-      categoryId: '',
-      unit: '',
-      unitPrice: '',
-      quantity: '',
-      minQuantity: '',
-      maxQuantity: '',
-      reorderLevel: '',
-      location: '',
-      warehouse: '',
-      supplierId: '',
-      description: '',
-      status: 'active'
+      name: '', categoryId: '', unit: '', unitPrice: '', quantity: '',
+      minQuantity: '', maxQuantity: '', reorderLevel: '', location: '',
+      warehouse: '', supplierId: '', description: '', status: 'active'
     });
     setEditingId(null);
   };
-
   const resetSupplierForm = () => {
     setSupplierForm({
-      name: '',
-      contactPerson: '',
-      email: '',
-      phone: '',
-      mobile: '',
-      address: '',
-      city: '',
-      country: '',
-      crNumber: '',
-      vatNumber: '',
-      paymentTerms: '',
-      rating: 3,
-      notes: ''
+      name: '', contactPerson: '', email: '', phone: '', mobile: '',
+      address: '', city: '', country: '', crNumber: '', vatNumber: '',
+      paymentTerms: '', rating: 3, notes: ''
     });
     setEditingId(null);
   };
-
   const resetPoForm = () => {
     setPoForm({
-      supplierId: '',
-      orderDate: Utils.today(),
-      expectedDelivery: '',
-      vatRate: 0,
-      notes: '',
-      items: []
+      supplierId: '', orderDate: Utils.today(), expectedDelivery: '',
+      vatRate: 0, notes: '', items: []
     });
-    setPoItemForm({
-      materialId: '',
-      quantity: '',
-      unitPrice: ''
-    });
+    setPoItemForm({ materialId: '', quantity: '', unitPrice: '' });
     setEditingId(null);
   };
-
-  const resetStockForm = () => {
-    setStockForm({
-      quantity: '',
-      movementType: 'adjustment',
-      notes: ''
-    });
-  };
+  const resetStockForm = () => setStockForm({ quantity: '', movementType: 'adjustment', notes: '' });
 
   // ============================================
-  // LOAD DATA
+  // LOAD
   // ============================================
   const loadData = useCallback(async () => {
-    setLoading(true);
-    setError('');
+    setLoading(true); setError('');
     try {
       const [materialsRes, categoriesRes, suppliersRes, ordersRes, summaryRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/inventory/materials`, {
-          headers: { 'Accept': 'application/json' }
-        }).then(res => res.ok ? res.json() : []),
-        fetch(`${API_BASE_URL}/inventory/categories`, {
-          headers: { 'Accept': 'application/json' }
-        }).then(res => res.ok ? res.json() : []),
-        fetch(`${API_BASE_URL}/inventory/suppliers`, {
-          headers: { 'Accept': 'application/json' }
-        }).then(res => res.ok ? res.json() : []),
-        fetch(`${API_BASE_URL}/inventory/purchase-orders`, {
-          headers: { 'Accept': 'application/json' }
-        }).then(res => res.ok ? res.json() : []),
-        fetch(`${API_BASE_URL}/inventory/summary`, {
-          headers: { 'Accept': 'application/json' }
-        }).then(res => res.ok ? res.json() : {})
+        fetch(`${API_BASE_URL}/inventory/materials`, { headers: { 'Accept': 'application/json' } }).then(r => r.ok ? r.json() : []),
+        fetch(`${API_BASE_URL}/inventory/categories`, { headers: { 'Accept': 'application/json' } }).then(r => r.ok ? r.json() : []),
+        fetch(`${API_BASE_URL}/inventory/suppliers`, { headers: { 'Accept': 'application/json' } }).then(r => r.ok ? r.json() : []),
+        fetch(`${API_BASE_URL}/inventory/purchase-orders`, { headers: { 'Accept': 'application/json' } }).then(r => r.ok ? r.json() : []),
+        fetch(`${API_BASE_URL}/inventory/summary`, { headers: { 'Accept': 'application/json' } }).then(r => r.ok ? r.json() : {})
       ]);
-
       setMaterials(materialsRes);
       setCategories(categoriesRes);
       setSuppliers(suppliersRes);
       setPurchaseOrders(ordersRes);
       setSummary(summaryRes);
-
       if (viewMode === 'movements') {
-        const movementsRes = await fetch(`${API_BASE_URL}/inventory/stock-movements`, {
-          headers: { 'Accept': 'application/json' }
-        });
-        if (movementsRes.ok) {
-          const movements = await movementsRes.json();
-          setStockMovements(movements);
-        }
+        const mv = await fetch(`${API_BASE_URL}/inventory/stock-movements`, { headers: { 'Accept': 'application/json' } });
+        if (mv.ok) setStockMovements(await mv.json());
       }
-
       checkLowStockAlerts(materialsRes);
-      checkCostOptimization(materialsRes);
-
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+      checkCostOptimization(materialsRes, categoriesRes);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
   }, [viewMode]);
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useEffect(() => { loadData(); }, [loadData]);
 
   // ============================================
-  // AUTOMATION FUNCTIONS
+  // AUTOMATION
   // ============================================
-  const checkLowStockAlerts = (materialsList) => {
-    const lowStock = materialsList.filter(m => m.quantity <= m.reorderLevel && m.reorderLevel > 0);
-    if (lowStock.length > 0) {
-      setSuccess(`⚠️ ${lowStock.length} items need reordering`);
+  const checkLowStockAlerts = (list) => {
+    const low = list.filter(m => m.quantity <= m.reorderLevel && m.reorderLevel > 0);
+    if (low.length > 0) {
+      setSuccess(`${low.length} items need reordering`);
       setTimeout(() => setSuccess(''), 6000);
     }
   };
 
-  const checkCostOptimization = (materialsList) => {
-    const opportunities = [];
-    const grouped = materialsList.reduce((acc, m) => {
+  const checkCostOptimization = (list, cats) => {
+    const opps = [];
+    const grouped = list.reduce((acc, m) => {
       if (!acc[m.categoryId]) acc[m.categoryId] = [];
       acc[m.categoryId].push(m);
       return acc;
     }, {});
-
     Object.keys(grouped).forEach(catId => {
       const items = grouped[catId];
       if (items.length > 1) {
-        const sorted = items.sort((a, b) => a.unitPrice - b.unitPrice);
+        const sorted = [...items].sort((a, b) => a.unitPrice - b.unitPrice);
         const cheapest = sorted[0];
         const expensive = sorted[sorted.length - 1];
         if (expensive.unitPrice > cheapest.unitPrice * 1.3) {
-          opportunities.push({
-            category: categories.find(c => c.id === catId)?.name || catId,
+          opps.push({
+            category: cats.find(c => c.id === catId)?.name || catId,
             item: expensive.name,
             currentPrice: expensive.unitPrice,
             potentialPrice: cheapest.unitPrice,
@@ -277,212 +224,169 @@ const InventoryManagement = ({ data, refreshData }) => {
         }
       }
     });
-
-    if (opportunities.length > 0) {
-      setOptimizationResults(opportunities);
-    }
+    if (opps.length > 0) setOptimizationResults(opps);
   };
 
   const handleAutoReorder = async () => {
-    const lowStockItems = materials.filter(m => m.quantity <= m.reorderLevel && m.reorderLevel > 0);
-    
-    if (lowStockItems.length === 0) {
-      setSuccess('✅ All items are above reorder level');
+    const lowItems = materials.filter(m => m.quantity <= m.reorderLevel && m.reorderLevel > 0);
+    if (lowItems.length === 0) {
+      setSuccess('All items are above reorder level');
       setTimeout(() => setSuccess(''), 3000);
       return;
     }
-
     setLoading(true);
     try {
-      const reorderItems = lowStockItems.map(m => ({
-        materialId: m.id,
-        quantity: Math.ceil(m.reorderLevel * 2),
-        unitPrice: m.unitPrice,
-        name: m.name
+      const reorderItems = lowItems.map(m => ({
+        materialId: m.id, quantity: Math.ceil(m.reorderLevel * 2),
+        unitPrice: m.unitPrice, name: m.name
       }));
-
       const groupedBySupplier = reorderItems.reduce((acc, item) => {
         const material = materials.find(m => m.id === item.materialId);
-        const supplierId = material?.supplierId || 'unknown';
-        if (!acc[supplierId]) acc[supplierId] = [];
-        acc[supplierId].push(item);
+        const sid = material?.supplierId || 'unknown';
+        if (!acc[sid]) acc[sid] = [];
+        acc[sid].push(item);
         return acc;
       }, {});
-
       setAutoReorderResults({
         totalItems: reorderItems.length,
         groupedBySupplier,
-        estimatedCost: reorderItems.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0)
+        estimatedCost: reorderItems.reduce((s, i) => s + (i.quantity * i.unitPrice), 0)
       });
-
-      setSuccess(`📦 Auto-reorder prepared for ${reorderItems.length} items`);
+      setSuccess(`Auto-reorder prepared for ${reorderItems.length} items`);
       setTimeout(() => setSuccess(''), 5000);
-    } catch (err) {
-      setError('Failed to auto-reorder');
-    } finally {
-      setLoading(false);
-    }
+    } catch { setError('Failed to auto-reorder'); }
+    finally { setLoading(false); }
   };
 
   // ============================================
-  // FILTER MATERIALS
+  // FILTER
   // ============================================
   const filteredMaterials = useMemo(() => {
-    let filtered = materials;
-    
+    let f = materials;
     if (searchTerm) {
-      const search = searchTerm.toLowerCase();
-      filtered = filtered.filter(m =>
-        m.name.toLowerCase().includes(search) ||
-        (m.sku && m.sku.toLowerCase().includes(search))
-      );
+      const s = searchTerm.toLowerCase();
+      f = f.filter(m => m.name?.toLowerCase().includes(s) || (m.sku && m.sku.toLowerCase().includes(s)));
     }
-    
-    if (categoryFilter !== 'all') {
-      filtered = filtered.filter(m => m.categoryId === categoryFilter);
-    }
-    
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(m => m.status === statusFilter);
-    }
-    
-    if (lowStockFilter) {
-      filtered = filtered.filter(m => m.needsReorder);
-    }
-    
-    return filtered;
+    if (categoryFilter !== 'all') f = f.filter(m => m.categoryId === categoryFilter);
+    if (statusFilter !== 'all') f = f.filter(m => m.status === statusFilter);
+    if (lowStockFilter) f = f.filter(m => m.needsReorder);
+    return f;
   }, [materials, searchTerm, categoryFilter, statusFilter, lowStockFilter]);
 
   // ============================================
-  // PAGINATION
+  // PAGINATION HELPERS
   // ============================================
-  const totalPages = Math.ceil(filteredMaterials.length / itemsPerPage);
-  const paginatedMaterials = useMemo(() => {
-    const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    return filteredMaterials.slice(startIndex, endIndex);
-  }, [filteredMaterials, currentPage, itemsPerPage]);
-
-  const goToPage = (page) => {
-    const validPage = Math.max(1, Math.min(page, totalPages));
-    setCurrentPage(validPage);
+  const paginate = (list, page, per) => {
+    const total = Math.max(1, Math.ceil(list.length / per));
+    const p = Math.max(1, Math.min(page, total));
+    const start = (p - 1) * per;
+    return { total, page: p, items: list.slice(start, start + per) };
   };
-
-  const getPageNumbers = () => {
-    const pages = [];
-    const maxVisible = 5;
-    let start = Math.max(1, currentPage - 2);
-    let end = Math.min(totalPages, start + maxVisible - 1);
-
-    if (end - start < maxVisible - 1) {
-      start = Math.max(1, end - maxVisible + 1);
-    }
-
-    for (let i = start; i <= end; i++) {
-      pages.push(i);
-    }
+  const getPageNumbers = (current, total) => {
+    const pages = []; const max = 5;
+    let start = Math.max(1, current - 2);
+    let end = Math.min(total, start + max - 1);
+    if (end - start < max - 1) start = Math.max(1, end - max + 1);
+    for (let i = start; i <= end; i++) pages.push(i);
     return pages;
   };
+  const renderPagination = (current, total, per, setPer, setPage, count, label = 'items') => {
+    if (count === 0) return null;
+    const startItem = (current - 1) * per + 1;
+    const endItem = Math.min(current * per, count);
+    return (
+      <div className="inv-pagination">
+        <div className="inv-pagination-info">
+          Showing <strong>{startItem}</strong>–<strong>{endItem}</strong> of <strong>{count}</strong> {label}
+        </div>
+        <div className="inv-pagination-controls">
+          <div className="inv-pagination-items">
+            <span>Show:</span>
+            <select value={per} onChange={(e) => { setPer(Number(e.target.value)); setPage(1); }} className="inv-pagination-select">
+              {[6, 9, 10, 12, 18, 24, 48].map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+          <div className="inv-pagination-buttons">
+            <button className="inv-page-btn" onClick={() => setPage(1)} disabled={current === 1}><ChevronsLeft size={13} /></button>
+            <button className="inv-page-btn" onClick={() => setPage(current - 1)} disabled={current === 1}><ChevronLeft size={13} /></button>
+            {getPageNumbers(current, total).map(p => (
+              <button key={p} className={`inv-page-btn ${p === current ? 'active' : ''}`} onClick={() => setPage(p)}>{p}</button>
+            ))}
+            <button className="inv-page-btn" onClick={() => setPage(current + 1)} disabled={current === total}><ChevronRight size={13} /></button>
+            <button className="inv-page-btn" onClick={() => setPage(total)} disabled={current === total}><ChevronsRight size={13} /></button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, categoryFilter, statusFilter, lowStockFilter]);
+  useEffect(() => { setMatPage(1); }, [searchTerm, categoryFilter, statusFilter, lowStockFilter, matPer]);
 
   // ============================================
-  // UTILITY FUNCTIONS
+  // HELPERS
   // ============================================
   const getStatusBadge = (status) => {
-    const config = {
-      active: { color: '#22c55e', label: 'Active', icon: <CheckCircle size={12} /> },
-      inactive: { color: '#6b7280', label: 'Inactive', icon: <XCircle size={12} /> },
-      discontinued: { color: '#ef4444', label: 'Discontinued', icon: <AlertCircle size={12} /> },
-      draft: { color: '#f59e0b', label: 'Draft', icon: <Clock size={12} /> },
-      sent: { color: '#3b82f6', label: 'Sent', icon: <Check size={12} /> },
-      confirmed: { color: '#8b5cf6', label: 'Confirmed', icon: <CheckCircle size={12} /> },
-      received: { color: '#22c55e', label: 'Received', icon: <CheckCircle size={12} /> },
-      cancelled: { color: '#ef4444', label: 'Cancelled', icon: <XCircle size={12} /> }
+    const cfg = {
+      active: { color: '#10b981', label: 'Active', icon: CheckCircle },
+      inactive: { color: '#64748b', label: 'Inactive', icon: XCircle },
+      discontinued: { color: '#ef4444', label: 'Discontinued', icon: AlertCircle },
+      draft: { color: '#f59e0b', label: 'Draft', icon: Clock },
+      sent: { color: '#3b82f6', label: 'Sent', icon: Check },
+      confirmed: { color: '#8b5cf6', label: 'Confirmed', icon: CheckCircle },
+      received: { color: '#10b981', label: 'Received', icon: PackageCheck },
+      cancelled: { color: '#ef4444', label: 'Cancelled', icon: XCircle }
     };
-    const c = config[status] || config.active;
+    const c = cfg[status] || cfg.active;
+    const Icon = c.icon;
     return (
-      <span className={`status-badge ${status}`}>
-        {c.icon} {c.label}
+      <span className={`inv-status ${status}`}>
+        <Icon size={10} /> {c.label}
       </span>
     );
   };
 
-  const getStockStatus = (material) => {
-    if (material.quantity <= material.reorderLevel) {
-      return { label: 'Low Stock', color: '#ef4444', icon: <AlertTriangle size={12} /> };
-    } else if (material.quantity <= material.reorderLevel * 1.5) {
-      return { label: 'Approaching Reorder', color: '#f59e0b', icon: <Clock size={12} /> };
-    }
-    return { label: 'In Stock', color: '#22c55e', icon: <CheckCircle size={12} /> };
+  const getStockStatus = (m) => {
+    if (m.quantity <= m.reorderLevel) return { label: 'Low Stock', color: '#ef4444', icon: AlertTriangle };
+    if (m.quantity <= m.reorderLevel * 1.5) return { label: 'Approaching', color: '#f59e0b', icon: Clock };
+    return { label: 'In Stock', color: '#10b981', icon: CheckCircle };
   };
 
-  const toggleExpand = (id) => {
-    setExpandedItems(prev => ({
-      ...prev,
-      [id]: !prev[id]
-    }));
-  };
+  const toggleExpand = (id) => setExpandedItems(p => ({ ...p, [id]: !p[id] }));
 
   // ============================================
-  // CRUD OPERATIONS
+  // CRUD
   // ============================================
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    setError('');
-    setSuccess('');
-
+    setLoading(true); setError(''); setSuccess('');
     try {
-      const url = editingId 
-        ? `${API_BASE_URL}/inventory/materials/${editingId}`
-        : `${API_BASE_URL}/inventory/materials`;
+      const url = editingId ? `${API_BASE_URL}/inventory/materials/${editingId}` : `${API_BASE_URL}/inventory/materials`;
       const method = editingId ? 'PUT' : 'POST';
-
-      const response = await fetch(url, {
-        method: method,
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
+      const r = await fetch(url, {
+        method, headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to save material');
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to save material');
       }
-
-      setSuccess(editingId ? '✅ Material updated!' : '✅ Material created!');
+      setSuccess(editingId ? 'Material updated!' : 'Material created!');
       await loadData();
-      resetForm();
-      setShowForm(false);
-      setTimeout(() => setSuccess(''), 5000);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+      resetForm(); setShowForm(false);
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
   };
 
-  const handleEdit = (material) => {
-    setEditingId(material.id);
+  const handleEdit = (m) => {
+    setEditingId(m.id);
     setFormData({
-      name: material.name || '',
-      categoryId: material.categoryId || '',
-      unit: material.unit || '',
-      unitPrice: material.unitPrice || '',
-      quantity: material.quantity || '',
-      minQuantity: material.minQuantity || '',
-      maxQuantity: material.maxQuantity || '',
-      reorderLevel: material.reorderLevel || '',
-      location: material.location || '',
-      warehouse: material.warehouse || '',
-      supplierId: material.supplierId || '',
-      description: material.description || '',
-      status: material.status || 'active'
+      name: m.name || '', categoryId: m.categoryId || '', unit: m.unit || '',
+      unitPrice: m.unitPrice || '', quantity: m.quantity || '',
+      minQuantity: m.minQuantity || '', maxQuantity: m.maxQuantity || '',
+      reorderLevel: m.reorderLevel || '', location: m.location || '',
+      warehouse: m.warehouse || '', supplierId: m.supplierId || '',
+      description: m.description || '', status: m.status || 'active'
     });
     setShowForm(true);
   };
@@ -491,271 +395,488 @@ const InventoryManagement = ({ data, refreshData }) => {
     if (!window.confirm('Delete this material?')) return;
     try {
       await fetch(`${API_BASE_URL}/inventory/materials/${id}`, { method: 'DELETE' });
-      setSuccess('✅ Material deleted!');
+      setSuccess('Material deleted!');
       await loadData();
-      setTimeout(() => setSuccess(''), 5000);
-    } catch (err) {
-      setError(err.message);
-    }
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err) { setError(err.message); }
   };
 
   const handleSupplierSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    setError('');
-    setSuccess('');
-
+    setLoading(true); setError(''); setSuccess('');
     try {
-      const url = editingId 
-        ? `${API_BASE_URL}/inventory/suppliers/${editingId}`
-        : `${API_BASE_URL}/inventory/suppliers`;
+      const url = editingId ? `${API_BASE_URL}/inventory/suppliers/${editingId}` : `${API_BASE_URL}/inventory/suppliers`;
       const method = editingId ? 'PUT' : 'POST';
-
-      const response = await fetch(url, {
-        method: method,
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
+      const r = await fetch(url, {
+        method, headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(supplierForm)
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to save supplier');
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to save supplier');
       }
-
-      setSuccess(editingId ? '✅ Supplier updated!' : '✅ Supplier created!');
+      setSuccess(editingId ? 'Supplier updated!' : 'Supplier created!');
       await loadData();
-      resetSupplierForm();
-      setShowSupplierForm(false);
-      setTimeout(() => setSuccess(''), 5000);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+      resetSupplierForm(); setShowSupplierForm(false);
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
   };
 
   const handleAdjustStock = async (e) => {
     e.preventDefault();
     if (!selectedItem) return;
-    
-    setLoading(true);
-    setError('');
-    setSuccess('');
-
+    setLoading(true); setError(''); setSuccess('');
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/inventory/materials/${selectedItem.id}/stock-adjust`,
-        {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            quantity: parseFloat(stockForm.quantity),
-            movementType: stockForm.movementType,
-            notes: stockForm.notes,
-            createdBy: 'User'
-          })
-        }
-      );
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to adjust stock');
+      const r = await fetch(`${API_BASE_URL}/inventory/materials/${selectedItem.id}/stock-adjust`, {
+        method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quantity: parseFloat(stockForm.quantity),
+          movementType: stockForm.movementType,
+          notes: stockForm.notes, createdBy: 'User'
+        })
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to adjust stock');
       }
-
-      setSuccess('✅ Stock adjusted successfully!');
+      setSuccess('Stock adjusted!');
       await loadData();
-      setShowAdjustStock(false);
-      resetStockForm();
-      setTimeout(() => setSuccess(''), 5000);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+      setShowAdjustStock(false); resetStockForm();
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
   };
 
   const handlePOSubmit = async (e) => {
     e.preventDefault();
-    setLoading(true);
-    setError('');
-    setSuccess('');
-
+    setLoading(true); setError(''); setSuccess('');
     try {
-      const response = await fetch(`${API_BASE_URL}/inventory/purchase-orders`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
+      const r = await fetch(`${API_BASE_URL}/inventory/purchase-orders`, {
+        method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(poForm)
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to create purchase order');
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to create purchase order');
       }
-
-      const result = await response.json();
-      setSuccess(`✅ Purchase Order ${result.poNumber} created!`);
+      const result = await r.json();
+      setSuccess(`PO ${result.poNumber} created!`);
       await loadData();
-      resetPoForm();
-      setShowPurchaseForm(false);
-      setTimeout(() => setSuccess(''), 5000);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+      resetPoForm(); setShowPurchaseForm(false);
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
   };
 
   const handleAddPOItem = () => {
     if (!poItemForm.materialId || !poItemForm.quantity) return;
-    
-    const material = materials.find(m => m.id === poItemForm.materialId);
-    if (!material) return;
-
-    const newItem = {
-      materialId: material.id,
-      materialName: material.name,
-      quantity: parseFloat(poItemForm.quantity),
-      unitPrice: parseFloat(poItemForm.unitPrice) || material.unitPrice,
-      total: (parseFloat(poItemForm.quantity) || 0) * (parseFloat(poItemForm.unitPrice) || material.unitPrice)
-    };
-
+    const mat = materials.find(m => m.id === poItemForm.materialId);
+    if (!mat) return;
+    const q = parseFloat(poItemForm.quantity) || 0;
+    const p = parseFloat(poItemForm.unitPrice) || mat.unitPrice;
     setPoForm(prev => ({
       ...prev,
-      items: [...prev.items, newItem]
+      items: [...prev.items, {
+        materialId: mat.id, materialName: mat.name,
+        quantity: q, unitPrice: p, total: q * p
+      }]
     }));
-
     setPoItemForm({ materialId: '', quantity: '', unitPrice: '' });
   };
 
   const handleRemovePOItem = (index) => {
-    setPoForm(prev => ({
-      ...prev,
-      items: prev.items.filter((_, i) => i !== index)
-    }));
+    setPoForm(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
   };
 
   // ============================================
-  // RENDER FUNCTIONS
+  // CHART DATA
   // ============================================
-  const renderStats = () => {
-    if (!summary) return null;
+  const categoryChartData = useMemo(() => {
+    const map = {};
+    materials.forEach(m => {
+      const key = categories.find(c => c.id === m.categoryId)?.name || 'Uncategorized';
+      map[key] = (map[key] || 0) + 1;
+    });
+    const palette = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#f97316', '#ec4899'];
+    return Object.entries(map)
+      .map(([name, value], i) => ({ name, value, color: palette[i % palette.length] }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [materials, categories]);
 
-    const statItems = [
-      { id: 'total', icon: Package, label: 'Total Materials', value: summary.totalMaterials || 0, color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.12)' },
-      { id: 'active', icon: CheckCircle, label: 'Active Items', value: summary.activeMaterials || 0, color: '#22c55e', bg: 'rgba(34, 197, 94, 0.12)' },
-      { id: 'low', icon: AlertTriangle, label: 'Low Stock', value: summary.lowStockItems || 0, color: '#ef4444', bg: 'rgba(239, 68, 68, 0.12)' },
-      { id: 'value', icon: DollarSign, label: 'Stock Value', value: Utils.formatCurrencyShort(summary.totalStockValue || 0), color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)' }
-    ];
+  const stockValueByCategory = useMemo(() => {
+    const map = {};
+    materials.forEach(m => {
+      const key = categories.find(c => c.id === m.categoryId)?.name || 'Uncategorized';
+      map[key] = (map[key] || 0) + ((m.quantity || 0) * (m.unitPrice || 0));
+    });
+    const palette = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4'];
+    return Object.entries(map)
+      .map(([name, value], i) => ({
+        name: name.length > 12 ? name.slice(0, 12) + '…' : name,
+        fullName: name, value, color: palette[i % palette.length]
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8);
+  }, [materials, categories]);
 
-    return (
-      <div className="stats-grid">
-        {statItems.map((item) => {
+  const stockStatusData = useMemo(() => {
+    const low = materials.filter(m => m.quantity <= m.reorderLevel && m.reorderLevel > 0).length;
+    const approaching = materials.filter(m => m.quantity > m.reorderLevel && m.quantity <= m.reorderLevel * 1.5).length;
+    const good = materials.length - low - approaching;
+    return [
+      { name: 'Good', value: good, color: '#10b981' },
+      { name: 'Approaching', value: approaching, color: '#f59e0b' },
+      { name: 'Low Stock', value: low, color: '#ef4444' }
+    ].filter(d => d.value > 0);
+  }, [materials]);
+
+  const topValueItems = useMemo(() => (
+    [...materials]
+      .map(m => ({ ...m, stockValue: (m.quantity || 0) * (m.unitPrice || 0) }))
+      .sort((a, b) => b.stockValue - a.stockValue)
+      .slice(0, 8)
+      .map(m => ({
+        name: m.name.length > 14 ? m.name.slice(0, 14) + '…' : m.name,
+        value: m.stockValue, color: '#10b981'
+      }))
+  ), [materials]);
+
+  const poStatusData = useMemo(() => {
+    const map = {};
+    purchaseOrders.forEach(o => { map[o.status || 'draft'] = (map[o.status || 'draft'] || 0) + 1; });
+    const palette = {
+      draft: '#94a3b8', sent: '#3b82f6', confirmed: '#8b5cf6',
+      received: '#10b981', cancelled: '#ef4444'
+    };
+    return Object.entries(map).map(([name, value]) => ({
+      name: name.charAt(0).toUpperCase() + name.slice(1),
+      value, color: palette[name] || '#10b981'
+    }));
+  }, [purchaseOrders]);
+
+  // ============================================
+  // KPIs
+  // ============================================
+  const kpiItems = [
+    { id: 'total', icon: Package, label: 'Total Materials',
+      value: summary?.totalMaterials || materials.length,
+      meta: `${categories.length} categories`,
+      color: '#3b82f6', accent: 'linear-gradient(90deg,#3b82f6,#60a5fa)', trend: 'up' },
+    { id: 'active', icon: CheckCircle, label: 'Active Items',
+      value: summary?.activeMaterials || materials.filter(m => m.status === 'active').length,
+      meta: `${materials.filter(m => m.status === 'inactive').length} inactive`,
+      color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
+    { id: 'low', icon: AlertTriangle, label: 'Low Stock',
+      value: summary?.lowStockItems || materials.filter(m => m.quantity <= m.reorderLevel && m.reorderLevel > 0).length,
+      meta: 'Need reordering',
+      color: '#ef4444', accent: 'linear-gradient(90deg,#ef4444,#f87171)',
+      trend: (summary?.lowStockItems || 0) > 0 ? 'down' : 'flat' },
+    { id: 'value', icon: DollarSign, label: 'Stock Value',
+      value: Utils.formatCurrencyShort(summary?.totalStockValue ||
+        materials.reduce((s, m) => s + (m.quantity || 0) * (m.unitPrice || 0), 0)),
+      meta: `${suppliers.length} suppliers`,
+      color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)', trend: 'up' }
+  ];
+
+  const cardDetails = {
+    total: { title: 'Total Materials', details: [
+      { label: 'Total', value: materials.length },
+      { label: 'Categories', value: categories.length },
+      { label: 'Active', value: materials.filter(m => m.status === 'active').length },
+      { label: 'Suppliers', value: suppliers.length }
+    ]},
+    active: { title: 'Active Items', details: [
+      { label: 'Active', value: materials.filter(m => m.status === 'active').length },
+      { label: 'Inactive', value: materials.filter(m => m.status === 'inactive').length },
+      { label: 'Discontinued', value: materials.filter(m => m.status === 'discontinued').length },
+      { label: 'Total', value: materials.length }
+    ]},
+    low: { title: 'Low Stock', details: [
+      { label: 'Low Stock', value: materials.filter(m => m.quantity <= m.reorderLevel && m.reorderLevel > 0).length },
+      { label: 'Approaching', value: materials.filter(m => m.quantity > m.reorderLevel && m.quantity <= m.reorderLevel * 1.5).length },
+      { label: 'Good', value: materials.filter(m => m.quantity > m.reorderLevel * 1.5).length },
+      { label: 'Total', value: materials.length }
+    ]},
+    value: { title: 'Stock Value', details: [
+      { label: 'Total', value: Utils.formatCurrency(materials.reduce((s, m) => s + (m.quantity || 0) * (m.unitPrice || 0), 0)) },
+      { label: 'Avg', value: materials.length ? Utils.formatCurrency(materials.reduce((s, m) => s + (m.quantity || 0) * (m.unitPrice || 0), 0) / materials.length) : '0' },
+      { label: 'Highest', value: Utils.formatCurrency(Math.max(...materials.map(m => (m.quantity || 0) * (m.unitPrice || 0)), 0)) },
+      { label: 'Items', value: materials.length }
+    ]}
+  };
+
+  const [hoveredCard, setHoveredCard] = useState(null);
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+  const handleCardHover = (id, e) => { setHoveredCard(id); setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 }); };
+  const handleCardLeave = () => setHoveredCard(null);
+
+  // ============================================
+  // OVERVIEW TAB
+  // ============================================
+  const renderOverviewTab = () => (
+    <div className="inv-view">
+      <div className="inv-kpi-grid">
+        {kpiItems.map(item => {
           const Icon = item.icon;
           return (
-            <div key={item.id} className="stat-card">
-              <div className="stat-icon" style={{ background: item.bg, color: item.color }}>
+            <div key={item.id} className="inv-kpi-card"
+              onMouseEnter={(e) => handleCardHover(item.id, e)}
+              onMouseLeave={handleCardLeave}
+              onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}>
+              <div className="inv-kpi-accent" style={{ background: item.accent }} />
+              <div className="inv-kpi-icon" style={{ background: `${item.color}1f`, color: item.color }}>
                 <Icon size={20} />
               </div>
-              <div className="stat-content">
-                <span className="stat-label">{item.label}</span>
-                <span className="stat-value">{item.value}</span>
+              <div className="inv-kpi-content">
+                <span className="inv-kpi-label">{item.label}</span>
+                <span className="inv-kpi-value">{item.value}</span>
+                <span className="inv-kpi-meta">{item.meta}</span>
+              </div>
+              <div className={`inv-kpi-trend ${item.trend}`}>
+                {item.trend === 'up' && <TrendingUp size={15} />}
+                {item.trend === 'down' && <TrendingDown size={15} />}
+                {item.trend === 'flat' && <Minus size={15} />}
               </div>
             </div>
           );
         })}
       </div>
-    );
-  };
 
+      {hoveredCard && cardDetails[hoveredCard] && (
+        <div className="inv-hover-tooltip"
+          style={{ position: 'fixed', left: tooltipPosition.x, top: tooltipPosition.y, zIndex: 9999 }}>
+          <div className="inv-tooltip-header"><strong>{cardDetails[hoveredCard].title}</strong></div>
+          <div className="inv-tooltip-body">
+            {cardDetails[hoveredCard].details.map((d, i) => (
+              <div key={i} className="inv-tooltip-row">
+                <span className="inv-tooltip-label">{d.label}</span>
+                <span className="inv-tooltip-value">{d.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Automation widgets */}
+      {renderAutomationWidgets()}
+
+      {/* Row 1 — Stock status donut + Category donut */}
+      <div className="inv-grid-1-1">
+        <div className="inv-card">
+          <div className="inv-card-header">
+            <div className="inv-card-title">
+              <span className="inv-card-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
+                <PackageCheck size={16} />
+              </span>
+              <div>
+                <h4>Stock Health</h4>
+                <span>Material status overview</span>
+              </div>
+            </div>
+          </div>
+          {stockStatusData.length > 0 ? (
+            <div className="inv-donut-wrap">
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={stockStatusData} dataKey="value" nameKey="name"
+                    cx="50%" cy="50%" innerRadius={52} outerRadius={85} paddingAngle={3} stroke="none">
+                    {stockStatusData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Pie>
+                  <ReTooltip content={<ChartTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="inv-donut-legend">
+                {stockStatusData.map((d, i) => (
+                  <div key={i} className="inv-donut-item">
+                    <span className="inv-donut-dot" style={{ background: d.color }} />
+                    <span className="inv-donut-name">{d.name}</span>
+                    <span className="inv-donut-val">{d.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : <div className="inv-empty-mini">No materials yet</div>}
+        </div>
+
+        <div className="inv-card">
+          <div className="inv-card-header">
+            <div className="inv-card-title">
+              <span className="inv-card-icon" style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}>
+                <PieChartIcon size={16} />
+              </span>
+              <div>
+                <h4>Items by Category</h4>
+                <span>{categories.length} categories</span>
+              </div>
+            </div>
+          </div>
+          {categoryChartData.length > 0 ? (
+            <div className="inv-donut-wrap">
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie data={categoryChartData} dataKey="value" nameKey="name"
+                    cx="50%" cy="50%" innerRadius={52} outerRadius={85} paddingAngle={3} stroke="none">
+                    {categoryChartData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                  </Pie>
+                  <ReTooltip content={<ChartTooltip />} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="inv-donut-legend">
+                {categoryChartData.map((d, i) => (
+                  <div key={i} className="inv-donut-item">
+                    <span className="inv-donut-dot" style={{ background: d.color }} />
+                    <span className="inv-donut-name">{d.name}</span>
+                    <span className="inv-donut-val">{d.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : <div className="inv-empty-mini">No data</div>}
+        </div>
+      </div>
+
+      {/* Row 2 — Stock value by category bar */}
+      <div className="inv-card">
+        <div className="inv-card-header">
+          <div className="inv-card-title">
+            <span className="inv-card-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
+              <BarChart3 size={16} />
+            </span>
+            <div>
+              <h4>Stock Value by Category</h4>
+              <span>Quantity × Unit Price</span>
+            </div>
+          </div>
+        </div>
+        {stockValueByCategory.length > 0 ? (
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={stockValueByCategory}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} vertical={false} />
+              <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+              <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />}
+                cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
+              <Bar dataKey="value" radius={[8, 8, 0, 0]} barSize={40}>
+                {stockValueByCategory.map((d, i) => <Cell key={i} fill={d.color} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        ) : <div className="inv-empty-mini">No data</div>}
+      </div>
+
+      {/* Row 3 — Top value items */}
+      {topValueItems.length > 0 && (
+        <div className="inv-card">
+          <div className="inv-card-header">
+            <div className="inv-card-title">
+              <span className="inv-card-icon" style={{ background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>
+                <Crown size={16} />
+              </span>
+              <div>
+                <h4>Top Value Items</h4>
+                <span>Highest stock value</span>
+              </div>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={280}>
+            <BarChart data={topValueItems} layout="vertical" margin={{ left: 10, right: 20 }}>
+              <defs>
+                <linearGradient id="invTopGrad" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.7} />
+                  <stop offset="100%" stopColor="#8b5cf6" stopOpacity={1} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} horizontal={false} />
+              <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+              <YAxis type="category" dataKey="name" stroke="#94a3b8" fontSize={11}
+                tickLine={false} axisLine={false} width={110} />
+              <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />}
+                cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
+              <Bar dataKey="value" name="Value" fill="url(#invTopGrad)" radius={[0, 8, 8, 0]} barSize={22} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Row 4 — PO status */}
+      {poStatusData.length > 0 && (
+        <div className="inv-card">
+          <div className="inv-card-header">
+            <div className="inv-card-title">
+              <span className="inv-card-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
+                <ClipboardList size={16} />
+              </span>
+              <div>
+                <h4>Purchase Orders by Status</h4>
+                <span>{purchaseOrders.length} total orders</span>
+              </div>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={poStatusData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} vertical={false} />
+              <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} allowDecimals={false} />
+              <ReTooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
+              <Bar dataKey="value" name="Orders" radius={[8, 8, 0, 0]} barSize={44}>
+                {poStatusData.map((d, i) => <Cell key={i} fill={d.color} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+
+  // ============================================
+  // AUTOMATION WIDGETS
+  // ============================================
   const renderAutomationWidgets = () => {
     const lowStockCount = materials.filter(m => m.quantity <= m.reorderLevel && m.reorderLevel > 0).length;
-    const costSavingOpportunities = optimizationResults?.length || 0;
-
+    const costCount = optimizationResults?.length || 0;
+    if (lowStockCount === 0 && costCount === 0 && !autoReorderResults) return null;
     return (
-      <div className="automation-widgets">
+      <div className="inv-automation-grid">
         {lowStockCount > 0 && (
-          <div className="automation-card alert">
-            <div className="automation-icon"><Bell size={20} /></div>
-            <div className="automation-content">
-              <div className="automation-title">Low Stock Alert</div>
-              <div className="automation-description">
-                {lowStockCount} items need reordering
-              </div>
-              <button className="automation-btn" onClick={handleAutoReorder}>
-                <Zap size={14} /> Auto-Reorder
-              </button>
+          <div className="inv-automation-card alert">
+            <div className="inv-automation-icon"><Bell size={20} /></div>
+            <div className="inv-automation-content">
+              <span className="inv-automation-title">Low Stock Alert</span>
+              <span className="inv-automation-desc">{lowStockCount} items need reordering</span>
             </div>
+            <button className="inv-btn inv-btn-primary" onClick={handleAutoReorder}>
+              <Zap size={13} /> Auto-Reorder
+            </button>
           </div>
         )}
-
-        {costSavingOpportunities > 0 && (
-          <div className="automation-card success">
-            <div className="automation-icon"><TrendingUpIcon size={20} /></div>
-            <div className="automation-content">
-              <div className="automation-title">Cost Savings Found</div>
-              <div className="automation-description">
-                {costSavingOpportunities} optimization opportunities
-              </div>
-              <button 
-                className="automation-btn" 
-                onClick={() => setShowCostOptimizer(!showCostOptimizer)}
-              >
-                <Gauge size={14} /> View Savings
-              </button>
+        {costCount > 0 && (
+          <div className="inv-automation-card success">
+            <div className="inv-automation-icon"><TrendingUp size={20} /></div>
+            <div className="inv-automation-content">
+              <span className="inv-automation-title">Cost Savings Found</span>
+              <span className="inv-automation-desc">{costCount} optimization opportunities</span>
             </div>
+            <button className="inv-btn inv-btn-secondary" onClick={() => setShowCostOptimizer(true)}>
+              <Gauge size={13} /> View
+            </button>
           </div>
         )}
-
         {autoReorderResults && (
-          <div className="automation-card success">
-            <div className="automation-icon"><ShoppingCart size={20} /></div>
-            <div className="automation-content">
-              <div className="automation-title">Auto-Reorder Ready</div>
-              <div className="automation-description">
-                {autoReorderResults.totalItems} items • {Utils.formatCurrency(autoReorderResults.estimatedCost)}
-              </div>
-              <div className="automation-actions">
-                {Object.entries(autoReorderResults.groupedBySupplier).map(([supplierId, items]) => {
-                  const supplier = suppliers.find(s => s.id === supplierId);
-                  return supplier && (
-                    <button 
-                      key={supplierId}
-                      className="automation-btn primary"
-                      onClick={() => {
-                        setPoForm(prev => ({
-                          ...prev,
-                          supplierId: supplierId,
-                          items: items.map(item => ({
-                            materialId: item.materialId,
-                            quantity: item.quantity,
-                            unitPrice: item.unitPrice
-                          }))
-                        }));
-                        setShowPurchaseForm(true);
-                        setAutoReorderResults(null);
-                      }}
-                    >
-                      <FileText size={14} /> PO from {supplier.name}
-                    </button>
-                  );
-                })}
-                <button 
-                  className="automation-btn secondary"
-                  onClick={() => setAutoReorderResults(null)}
-                >
-                  <X size={14} /> Dismiss
-                </button>
-              </div>
+          <div className="inv-automation-card info">
+            <div className="inv-automation-icon"><ShoppingCart size={20} /></div>
+            <div className="inv-automation-content">
+              <span className="inv-automation-title">Auto-Reorder Ready</span>
+              <span className="inv-automation-desc">
+                {autoReorderResults.totalItems} items · {Utils.formatCurrency(autoReorderResults.estimatedCost)}
+              </span>
             </div>
+            <button className="inv-btn inv-btn-ghost" onClick={() => setAutoReorderResults(null)}>
+              <X size={13} /> Dismiss
+            </button>
           </div>
         )}
       </div>
@@ -763,434 +884,399 @@ const InventoryManagement = ({ data, refreshData }) => {
   };
 
   // ============================================
-  // RENDER MATERIALS LIST
+  // MATERIALS TAB
   // ============================================
-  const renderMaterialsList = () => {
+  const renderMaterialsTab = () => {
+    const { total, page, items } = paginate(filteredMaterials, matPage, matPer);
+    if (page !== matPage) setMatPage(page);
     return (
-      <div className="materials-container">
-        <div className="section-header">
-          <div className="section-header-left">
-            <h3><Package size={18} /> Materials Inventory</h3>
-            <span className="section-count">{filteredMaterials.length} items</span>
-          </div>
-          <div className="section-header-right">
-            <button className="btn-refresh" onClick={loadData}>
-              <RefreshCw size={16} /> Refresh
-            </button>
-            <button className="btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
-              <Plus size={16} /> Add Material
-            </button>
-          </div>
-        </div>
-
-        {/* Filters */}
-        <div className="filters-section">
-          <div className="search-box">
-            <Search size={18} />
-            <input
-              type="text"
-              placeholder="Search materials..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-            />
+      <div className="inv-view">
+        <div className="inv-filters">
+          <div className="inv-search">
+            <Search size={15} className="inv-search-icon" />
+            <input type="text" placeholder="Search materials by name or SKU..."
+              value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
             {searchTerm && (
-              <button className="clear-search" onClick={() => setSearchTerm('')}>
-                <X size={16} />
+              <button className="inv-search-clear" onClick={() => setSearchTerm('')}>
+                <X size={13} />
               </button>
             )}
           </div>
-          <div className="filter-group">
-            <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+          <div className="inv-filter-group">
+            <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="inv-select">
               <option value="all">All Categories</option>
-              {categories.map(c => (
-                <option key={c.id} value={c.id}>{c.icon || '📦'} {c.name}</option>
-              ))}
+              {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
-            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="inv-select">
               <option value="all">All Status</option>
               <option value="active">Active</option>
               <option value="inactive">Inactive</option>
               <option value="discontinued">Discontinued</option>
             </select>
-            <label className="filter-checkbox">
-              <input
-                type="checkbox"
-                checked={lowStockFilter}
-                onChange={(e) => setLowStockFilter(e.target.checked)}
-              />
+            <label className="inv-checkbox">
+              <input type="checkbox" checked={lowStockFilter}
+                onChange={(e) => setLowStockFilter(e.target.checked)} />
               Low Stock Only
             </label>
           </div>
+          <span className="inv-result-count">
+            {filteredMaterials.length} of {materials.length}
+          </span>
+          <button className="inv-btn inv-btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
+            <Plus size={14} /> Add Material
+          </button>
         </div>
 
-        {/* Materials Grid */}
-        <div className="materials-grid">
-          {paginatedMaterials.length === 0 ? (
-            <div className="empty-state">
-              <Package size={48} />
-              <h3>No Materials Found</h3>
-              <p>Add your first material to start tracking inventory.</p>
-            </div>
-          ) : (
-            paginatedMaterials.map(material => {
-              const stockStatus = getStockStatus(material);
-              const isExpanded = expandedItems[material.id];
-              
-              return (
-                <div key={material.id} className="material-card">
-                  <div className="material-card-header">
-                    <div className="material-info">
-                      <div className="material-name">{material.name}</div>
-                      <div className="material-sku">{material.sku || 'No SKU'}</div>
-                    </div>
-                    <div className="material-badges">
-                      {getStatusBadge(material.status)}
-                      <span className={`stock-badge ${material.needsReorder ? 'low' : 'good'}`}>
-                        {stockStatus.icon} {stockStatus.label}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="material-card-body">
-                    <div className="material-details">
-                      <div className="detail-item">
-                        <span className="label">Category:</span>
-                        <span>{categories.find(c => c.id === material.categoryId)?.name || 'N/A'}</span>
+        {filteredMaterials.length === 0 ? (
+          <div className="inv-empty">
+            <div className="inv-empty-icon"><Package size={40} /></div>
+            <h3>No Materials Found</h3>
+            <p>Add your first material to start tracking inventory.</p>
+          </div>
+        ) : (
+          <>
+            <div className="inv-materials-grid">
+              {items.map((m, index) => {
+                const stockStatus = getStockStatus(m);
+                const StockIcon = stockStatus.icon;
+                const isExpanded = expandedItems[m.id];
+                const supplier = suppliers.find(s => s.id === m.supplierId);
+                const cat = categories.find(c => c.id === m.categoryId);
+                return (
+                  <div key={m.id} className="inv-material-card" style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}>
+                    <div className="inv-material-accent" style={{
+                      background: m.needsReorder
+                        ? 'linear-gradient(90deg,#ef4444,#f87171)'
+                        : stockStatus.color === '#f59e0b'
+                        ? 'linear-gradient(90deg,#f59e0b,#fbbf24)'
+                        : 'linear-gradient(90deg,#10b981,#34d399)'
+                    }} />
+                    <div className="inv-material-header">
+                      <div className="inv-material-info">
+                        <div className="inv-material-icon" style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+                          <Package size={18} />
+                        </div>
+                        <div className="inv-material-title">
+                          <div className="inv-material-name">{m.name}</div>
+                          <div className="inv-material-sku">{m.sku || 'No SKU'}</div>
+                        </div>
                       </div>
-                      <div className="detail-item">
-                        <span className="label">Unit:</span>
-                        <span>{material.unit || 'N/A'}</span>
-                      </div>
-                      <div className="detail-item">
-                        <span className="label">Unit Price:</span>
-                        <span className="price">{Utils.formatCurrency(material.unitPrice)}</span>
-                      </div>
-                      <div className="detail-item">
-                        <span className="label">Quantity:</span>
-                        <span className={`quantity ${material.quantity <= material.reorderLevel ? 'low' : ''}`}>
-                          {material.quantity}
+                      <div className="inv-material-badges">
+                        {getStatusBadge(m.status)}
+                        <span className="inv-stock-badge" style={{
+                          background: `${stockStatus.color}1f`, color: stockStatus.color
+                        }}>
+                          <StockIcon size={10} /> {stockStatus.label}
                         </span>
                       </div>
                     </div>
 
-                    <div className="material-stock-bar">
-                      <div className="stock-bar-track">
-                        <div 
-                          className="stock-bar-fill"
-                          style={{
-                            width: `${Math.min((material.quantity / (material.maxQuantity || 100)) * 100, 100)}%`,
-                            background: material.quantity <= material.reorderLevel ? '#ef4444' : '#22c55e'
-                          }}
-                        />
+                    <div className="inv-material-body">
+                      <div className="inv-material-details">
+                        <div className="inv-detail-item">
+                          <span className="inv-detail-label">Category</span>
+                          <span className="inv-detail-value">{cat?.name || '—'}</span>
+                        </div>
+                        <div className="inv-detail-item">
+                          <span className="inv-detail-label">Unit</span>
+                          <span className="inv-detail-value">{m.unit || '—'}</span>
+                        </div>
+                        <div className="inv-detail-item">
+                          <span className="inv-detail-label">Price</span>
+                          <span className="inv-detail-value inv-td-green">
+                            {Utils.formatCurrencyShort(m.unitPrice)}
+                          </span>
+                        </div>
+                        <div className="inv-detail-item">
+                          <span className="inv-detail-label">Qty</span>
+                          <span className={`inv-detail-value ${m.quantity <= m.reorderLevel ? 'inv-td-red' : ''}`}>
+                            {m.quantity || 0}
+                          </span>
+                        </div>
                       </div>
-                      <div className="stock-bar-labels">
-                        <span>0</span>
-                        <span>Reorder: {material.reorderLevel || 0}</span>
-                        <span>{material.maxQuantity || 'Max'}</span>
+
+                      <div className="inv-stock-bar">
+                        <div className="inv-stock-track">
+                          <div className="inv-stock-fill"
+                            style={{
+                              width: `${Math.min((m.quantity / (m.maxQuantity || 100)) * 100, 100)}%`,
+                              background: m.quantity <= m.reorderLevel ? '#ef4444' : '#10b981'
+                            }} />
+                        </div>
+                        <div className="inv-stock-labels">
+                          <span>0</span>
+                          <span>Reorder: {m.reorderLevel || 0}</span>
+                          <span>{m.maxQuantity || 'Max'}</span>
+                        </div>
+                      </div>
+
+                      {m.location && (
+                        <div className="inv-material-meta">
+                          <MapPin size={11} /> {m.location} {m.warehouse ? `(${m.warehouse})` : ''}
+                        </div>
+                      )}
+                      {supplier && (
+                        <div className="inv-material-meta">
+                          <Truck size={11} /> {supplier.name}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="inv-material-footer">
+                      <div className="inv-material-actions">
+                        <button className="inv-icon-btn" title="View"
+                          onClick={() => { setSelectedItem(m); setShowDetailModal(true); }}>
+                          <Eye size={13} />
+                        </button>
+                        <button className="inv-icon-btn inv-icon-edit" title="Edit"
+                          onClick={() => handleEdit(m)}>
+                          <Edit size={13} />
+                        </button>
+                        <button className="inv-icon-btn inv-icon-adjust" title="Adjust Stock"
+                          onClick={() => { setSelectedItem(m); resetStockForm(); setShowAdjustStock(true); }}>
+                          <RefreshCw size={13} />
+                        </button>
+                        <button className="inv-icon-btn inv-icon-danger" title="Delete"
+                          onClick={() => handleDelete(m.id)}>
+                          <Trash2 size={13} />
+                        </button>
+                        <button className="inv-icon-btn inv-icon-expand"
+                          onClick={() => toggleExpand(m.id)}>
+                          {isExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                        </button>
                       </div>
                     </div>
 
-                    {material.location && (
-                      <div className="material-location">
-                        <MapPin size={14} /> {material.location} {material.warehouse ? `(${material.warehouse})` : ''}
-                      </div>
-                    )}
-                    {material.supplierId && suppliers.find(s => s.id === material.supplierId) && (
-                      <div className="material-supplier">
-                        <Truck size={14} /> {suppliers.find(s => s.id === material.supplierId)?.name}
+                    {isExpanded && (
+                      <div className="inv-material-expanded">
+                        <div className="inv-expanded-grid">
+                          <div><strong>Description:</strong> {m.description || '—'}</div>
+                          <div><strong>Min Qty:</strong> {m.minQuantity || 0}</div>
+                          <div><strong>Max Qty:</strong> {m.maxQuantity || '—'}</div>
+                          <div><strong>Stock Value:</strong> {Utils.formatCurrency((m.quantity || 0) * (m.unitPrice || 0))}</div>
+                          <div><strong>Location:</strong> {m.location || '—'}</div>
+                          <div><strong>Warehouse:</strong> {m.warehouse || '—'}</div>
+                        </div>
                       </div>
                     )}
                   </div>
-
-                  <div className="material-card-footer">
-                    <div className="material-actions">
-                      <button 
-                        className="btn-icon" 
-                        title="View Details"
-                        onClick={() => {
-                          setSelectedItem(material);
-                          setShowDetailModal(true);
-                        }}
-                      >
-                        <Eye size={15} />
-                      </button>
-                      <button 
-                        className="btn-icon" 
-                        title="Edit"
-                        onClick={() => handleEdit(material)}
-                      >
-                        <Edit size={15} />
-                      </button>
-                      <button 
-                        className="btn-icon stock-adjust-btn" 
-                        title="Adjust Stock"
-                        onClick={() => {
-                          setSelectedItem(material);
-                          resetStockForm();
-                          setShowAdjustStock(true);
-                        }}
-                      >
-                        <RefreshCw size={14} /> 
-                        <span className="btn-label">Adjust</span>
-                      </button>
-                      <button 
-                        className="btn-icon danger" 
-                        title="Delete"
-                        onClick={() => handleDelete(material.id)}
-                      >
-                        <Trash2 size={15} />
-                      </button>
-                      <button 
-                        className={`btn-icon ${isExpanded ? 'expanded' : ''}`} 
-                        onClick={() => toggleExpand(material.id)}
-                      >
-                        {isExpanded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
-                      </button>
-                    </div>
-                  </div>
-
-                  {isExpanded && (
-                    <div className="material-expanded">
-                      <div className="expanded-grid">
-                        <div><strong>Description:</strong> {material.description || 'N/A'}</div>
-                        <div><strong>Min Quantity:</strong> {material.minQuantity || 0}</div>
-                        <div><strong>Max Quantity:</strong> {material.maxQuantity || 'N/A'}</div>
-                        <div><strong>Stock Value:</strong> {Utils.formatCurrency((material.quantity || 0) * (material.unitPrice || 0))}</div>
-                        <div><strong>Location:</strong> {material.location || 'N/A'}</div>
-                        <div><strong>Warehouse:</strong> {material.warehouse || 'N/A'}</div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-        </div>
-
-        {/* Pagination */}
-        {filteredMaterials.length > 0 && (
-          <div className="inventory-pagination">
-            <div className="inventory-pagination-info">
-              Showing {((currentPage - 1) * itemsPerPage) + 1} - {Math.min(currentPage * itemsPerPage, filteredMaterials.length)} of {filteredMaterials.length} items
+                );
+              })}
             </div>
-            <div className="inventory-pagination-controls">
-              <div className="inventory-pagination-items">
-                <span>Show:</span>
-                <select
-                  value={itemsPerPage}
-                  onChange={(e) => {
-                    setItemsPerPage(Number(e.target.value));
-                    setCurrentPage(1);
-                  }}
-                  className="inventory-pagination-select"
-                >
-                  <option value={5}>5</option>
-                  <option value={10}>10</option>
-                  <option value={20}>20</option>
-                  <option value={50}>50</option>
-                </select>
-              </div>
-              <div className="inventory-pagination-buttons">
-                <button 
-                  className="inventory-page-btn" 
-                  onClick={() => goToPage(1)}
-                  disabled={currentPage === 1}
-                >
-                  <ChevronsLeft size={16} />
-                </button>
-                <button 
-                  className="inventory-page-btn" 
-                  onClick={() => goToPage(currentPage - 1)}
-                  disabled={currentPage === 1}
-                >
-                  <ChevronLeft size={16} />
-                </button>
-                
-                {getPageNumbers().map(page => (
-                  <button
-                    key={page}
-                    className={`inventory-page-btn ${page === currentPage ? 'active' : ''}`}
-                    onClick={() => goToPage(page)}
-                  >
-                    {page}
-                  </button>
-                ))}
-                
-                <button 
-                  className="inventory-page-btn" 
-                  onClick={() => goToPage(currentPage + 1)}
-                  disabled={currentPage === totalPages}
-                >
-                  <ChevronRight size={16} />
-                </button>
-                <button 
-                  className="inventory-page-btn" 
-                  onClick={() => goToPage(totalPages)}
-                  disabled={currentPage === totalPages}
-                >
-                  <ChevronsRight size={16} />
-                </button>
-              </div>
-            </div>
-          </div>
+            {renderPagination(matPage, total, matPer, setMatPer, setMatPage, filteredMaterials.length, 'items')}
+          </>
         )}
       </div>
     );
   };
 
   // ============================================
-  // RENDER SUPPLIERS LIST
+  // SUPPLIERS TAB
   // ============================================
-  const renderSuppliersList = () => {
+  const renderSuppliersTab = () => {
+    const { total, page, items } = paginate(suppliers, supPage, supPer);
+    if (page !== supPage) setSupPage(page);
     return (
-      <div className="suppliers-container">
-        <div className="section-header">
-          <div className="section-header-left">
-            <h3><Truck size={18} /> Suppliers</h3>
-            <span className="section-count">{suppliers.length} suppliers</span>
-          </div>
-          <div className="section-header-right">
-            <button className="btn-primary" onClick={() => { resetSupplierForm(); setShowSupplierForm(true); }}>
-              <Plus size={16} /> Add Supplier
-            </button>
-          </div>
+      <div className="inv-view">
+        <div className="inv-filters">
+          <span className="inv-result-count" style={{ marginLeft: 0 }}>
+            {suppliers.length} suppliers
+          </span>
+          <button className="inv-btn inv-btn-primary" style={{ marginLeft: 'auto' }}
+            onClick={() => { resetSupplierForm(); setShowSupplierForm(true); }}>
+            <Plus size={14} /> Add Supplier
+          </button>
         </div>
 
-        <div className="suppliers-grid">
-          {suppliers.length === 0 ? (
-            <div className="empty-state">
-              <Truck size={48} />
-              <h3>No Suppliers</h3>
-              <p>Add suppliers to manage your supply chain.</p>
+        {suppliers.length === 0 ? (
+          <div className="inv-empty">
+            <div className="inv-empty-icon"><Truck size={40} /></div>
+            <h3>No Suppliers</h3>
+            <p>Add suppliers to manage your supply chain.</p>
+          </div>
+        ) : (
+          <>
+            <div className="inv-suppliers-grid">
+              {items.map((s, index) => (
+                <div key={s.id} className="inv-supplier-card" style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}>
+                  <div className="inv-supplier-header">
+                    <div className="inv-supplier-info">
+                      <div className="inv-supplier-icon">
+                        <Truck size={18} />
+                      </div>
+                      <div>
+                        <div className="inv-supplier-name">{s.name}</div>
+                        <div className="inv-supplier-contact">{s.contactPerson || 'No contact'}</div>
+                      </div>
+                    </div>
+                    <div className="inv-supplier-rating">
+                      {[...Array(5)].map((_, i) => (
+                        <Star key={i} size={13} fill={i < (s.rating || 3) ? '#f59e0b' : 'none'} stroke="#f59e0b" />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="inv-supplier-body">
+                    {s.email && <div className="inv-supplier-row"><Mail size={12} /><span>{s.email}</span></div>}
+                    {s.phone && <div className="inv-supplier-row"><Phone size={12} /><span>{s.phone}</span></div>}
+                    {s.paymentTerms && <div className="inv-supplier-row"><Clock size={12} /><span>{s.paymentTerms}</span></div>}
+                    {s.crNumber && <div className="inv-supplier-row"><Landmark size={12} /><span>CR: {s.crNumber}</span></div>}
+                  </div>
+                  <div className="inv-supplier-footer">
+                    <div className="inv-material-actions">
+                      <button className="inv-icon-btn inv-icon-edit" onClick={() => {
+                        setEditingId(s.id);
+                        setSupplierForm({
+                          name: s.name || '', contactPerson: s.contactPerson || '',
+                          email: s.email || '', phone: s.phone || '', mobile: s.mobile || '',
+                          address: s.address || '', city: s.city || '', country: s.country || '',
+                          crNumber: s.crNumber || '', vatNumber: s.vatNumber || '',
+                          paymentTerms: s.paymentTerms || '', rating: s.rating || 3, notes: s.notes || ''
+                        });
+                        setShowSupplierForm(true);
+                      }}>
+                        <Edit size={13} />
+                      </button>
+                      <button className="inv-icon-btn inv-icon-danger" onClick={() => {
+                        if (window.confirm('Delete this supplier?')) { /* delete logic */ }
+                      }}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
-          ) : (
-            suppliers.map(supplier => (
-              <div key={supplier.id} className="supplier-card">
-                <div className="supplier-card-header">
-                  <div className="supplier-info">
-                    <div className="supplier-name">{supplier.name}</div>
-                    <div className="supplier-contact">{supplier.contactPerson || 'No contact'}</div>
-                  </div>
-                  <div className="supplier-rating">
-                    {[...Array(5)].map((_, i) => (
-                      <Star key={i} size={16} fill={i < (supplier.rating || 3) ? '#f59e0b' : 'none'} stroke="#f59e0b" />
-                    ))}
-                  </div>
-                </div>
-                <div className="supplier-card-body">
-                  {supplier.email && (
-                    <div className="detail-item"><span className="label">Email:</span> {supplier.email}</div>
-                  )}
-                  {supplier.phone && (
-                    <div className="detail-item"><span className="label">Phone:</span> {supplier.phone}</div>
-                  )}
-                  {supplier.paymentTerms && (
-                    <div className="detail-item"><span className="label">Payment Terms:</span> {supplier.paymentTerms}</div>
-                  )}
-                  {supplier.crNumber && (
-                    <div className="detail-item"><span className="label">CR #:</span> {supplier.crNumber}</div>
-                  )}
-                </div>
-                <div className="supplier-card-footer">
-                  <button className="btn-icon" onClick={() => {
-                    setEditingId(supplier.id);
-                    setSupplierForm({
-                      name: supplier.name || '',
-                      contactPerson: supplier.contactPerson || '',
-                      email: supplier.email || '',
-                      phone: supplier.phone || '',
-                      mobile: supplier.mobile || '',
-                      address: supplier.address || '',
-                      city: supplier.city || '',
-                      country: supplier.country || '',
-                      crNumber: supplier.crNumber || '',
-                      vatNumber: supplier.vatNumber || '',
-                      paymentTerms: supplier.paymentTerms || '',
-                      rating: supplier.rating || 3,
-                      notes: supplier.notes || ''
-                    });
-                    setShowSupplierForm(true);
-                  }}>
-                    <Edit size={15} />
-                  </button>
-                  <button className="btn-icon danger" onClick={() => {
-                    if (window.confirm('Delete this supplier?')) {
-                      // Delete supplier logic
-                    }
-                  }}>
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+            {renderPagination(supPage, total, supPer, setSupPer, setSupPage, suppliers.length, 'suppliers')}
+          </>
+        )}
       </div>
     );
   };
 
   // ============================================
-  // RENDER PURCHASE ORDERS
+  // ORDERS TAB
   // ============================================
-  const renderPurchaseOrders = () => {
+  const renderOrdersTab = () => {
+    const { total, page, items } = paginate(purchaseOrders, ordPage, ordPer);
+    if (page !== ordPage) setOrdPage(page);
     return (
-      <div className="orders-container">
-        <div className="section-header">
-          <div className="section-header-left">
-            <h3><ShoppingCart size={18} /> Purchase Orders</h3>
-            <span className="section-count">{purchaseOrders.length} orders</span>
-          </div>
-          <div className="section-header-right">
-            <button className="btn-primary" onClick={() => { resetPoForm(); setShowPurchaseForm(true); }}>
-              <Plus size={16} /> New PO
-            </button>
-          </div>
+      <div className="inv-view">
+        <div className="inv-filters">
+          <span className="inv-result-count" style={{ marginLeft: 0 }}>
+            {purchaseOrders.length} orders
+          </span>
+          <button className="inv-btn inv-btn-primary" style={{ marginLeft: 'auto' }}
+            onClick={() => { resetPoForm(); setShowPurchaseForm(true); }}>
+            <Plus size={14} /> New PO
+          </button>
         </div>
 
-        <div className="orders-grid">
-          {purchaseOrders.length === 0 ? (
-            <div className="empty-state">
-              <ShoppingCart size={48} />
-              <h3>No Purchase Orders</h3>
-              <p>Create purchase orders to manage procurement.</p>
-            </div>
-          ) : (
-            purchaseOrders.map(order => (
-              <div key={order.id} className="order-card">
-                <div className="order-card-header">
-                  <div className="order-info">
-                    <div className="order-number">{order.poNumber}</div>
-                    <div className="order-supplier">{order.supplierName}</div>
-                    <div className="order-date">{Utils.formatDate(order.orderDate)}</div>
+        {purchaseOrders.length === 0 ? (
+          <div className="inv-empty">
+            <div className="inv-empty-icon"><ShoppingCart size={40} /></div>
+            <h3>No Purchase Orders</h3>
+            <p>Create purchase orders to manage procurement.</p>
+          </div>
+        ) : (
+          <>
+            <div className="inv-orders-grid">
+              {items.map((o, index) => (
+                <div key={o.id} className="inv-order-card" style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}>
+                  <div className="inv-order-header">
+                    <div>
+                      <div className="inv-order-number">{o.poNumber}</div>
+                      <div className="inv-order-supplier">{o.supplierName}</div>
+                      <div className="inv-order-date"><Calendar size={11} /> {Utils.formatDate(o.orderDate)}</div>
+                    </div>
+                    <div className="inv-order-badges">
+                      {getStatusBadge(o.status)}
+                      <div className="inv-order-total">{Utils.formatCurrency(o.totalAmount)}</div>
+                    </div>
                   </div>
-                  <div className="order-badges">
-                    {getStatusBadge(order.status)}
-                    <span className="order-total">{Utils.formatCurrency(order.totalAmount)}</span>
-                  </div>
-                </div>
-                <div className="order-card-body">
-                  <div className="order-items">
-                    {order.items?.slice(0, 3).map((item, idx) => (
-                      <div key={idx} className="order-item">
+                  <div className="inv-order-body">
+                    {o.items?.slice(0, 3).map((item, i) => (
+                      <div key={i} className="inv-order-item">
                         <span>{item.materialName}</span>
                         <span>{item.quantity} × {Utils.formatCurrencyShort(item.unitPrice)}</span>
                       </div>
                     ))}
-                    {order.items?.length > 3 && (
-                      <div className="order-more">+{order.items.length - 3} more items</div>
-                    )}
+                    {o.items?.length > 3 && <div className="inv-order-more">+{o.items.length - 3} more</div>}
+                  </div>
+                  <div className="inv-order-footer">
+                    <button className="inv-icon-btn" onClick={() => { setSelectedItem(o); setShowDetailModal(true); }}>
+                      <Eye size={13} />
+                    </button>
                   </div>
                 </div>
-                <div className="order-card-footer">
-                  <button className="btn-icon" onClick={() => {
-                    setSelectedItem(order);
-                    setShowDetailModal(true);
-                  }}>
-                    <Eye size={15} />
-                  </button>
-                </div>
+              ))}
+            </div>
+            {renderPagination(ordPage, total, ordPer, setOrdPer, setOrdPage, purchaseOrders.length, 'orders')}
+          </>
+        )}
+      </div>
+    );
+  };
+
+  // ============================================
+  // MOVEMENTS TAB
+  // ============================================
+  const renderMovementsTab = () => {
+    const { total, page, items } = paginate(stockMovements, movPage, movPer);
+    if (page !== movPage) setMovPage(page);
+    return (
+      <div className="inv-view">
+        <div className="inv-card">
+          <div className="inv-card-header">
+            <div className="inv-card-title">
+              <span className="inv-card-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
+                <RefreshCw size={16} />
+              </span>
+              <div>
+                <h4>Stock Movements</h4>
+                <span>{stockMovements.length} records</span>
               </div>
-            ))
+            </div>
+            <button className="inv-btn inv-btn-ghost" onClick={loadData}>
+              <RefreshCw size={13} /> Refresh
+            </button>
+          </div>
+
+          {stockMovements.length === 0 ? (
+            <div className="inv-empty-mini">No stock movements recorded</div>
+          ) : (
+            <>
+              <div className="inv-table-wrap">
+                <table className="inv-table">
+                  <thead>
+                    <tr>
+                      <th>Material</th>
+                      <th>Type</th>
+                      <th className="right">Quantity</th>
+                      <th className="right">Previous</th>
+                      <th className="right">New</th>
+                      <th>Date</th>
+                      <th>By</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {items.map((m, i) => (
+                      <tr key={m.id} style={{ animationDelay: `${Math.min(i * 30, 400)}ms` }}>
+                        <td><strong>{m.materialName}</strong></td>
+                        <td><span className={`inv-movement-type ${m.movementType}`}>{m.movementType}</span></td>
+                        <td className={`right ${m.quantity > 0 ? 'inv-td-green' : 'inv-td-red'}`}>
+                          {m.quantity > 0 ? '+' : ''}{m.quantity}
+                        </td>
+                        <td className="right">{m.previousQuantity}</td>
+                        <td className="right"><strong>{m.newQuantity}</strong></td>
+                        <td>{Utils.formatDate(m.createdAt)}</td>
+                        <td>{m.createdBy || 'System'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              {renderPagination(movPage, total, movPer, setMovPer, setMovPage, stockMovements.length, 'records')}
+            </>
           )}
         </div>
       </div>
@@ -1198,123 +1284,52 @@ const InventoryManagement = ({ data, refreshData }) => {
   };
 
   // ============================================
-  // RENDER STOCK MOVEMENTS
+  // MATERIAL FORM MODAL
   // ============================================
-  const renderStockMovements = () => {
-    return (
-      <div className="movements-container">
-        <div className="section-header">
-          <div className="section-header-left">
-            <h3><RefreshCw size={18} /> Stock Movements</h3>
-            <span className="section-count">{stockMovements.length} records</span>
-          </div>
-          <div className="section-header-right">
-            <button className="btn-refresh" onClick={loadData}>
-              <RefreshCw size={16} /> Refresh
-            </button>
-          </div>
-        </div>
-
-        <div className="movements-table-container">
-          <table className="movements-table">
-            <thead>
-              <tr>
-                <th>Material</th>
-                <th>Type</th>
-                <th>Quantity</th>
-                <th>Previous</th>
-                <th>New</th>
-                <th>Date</th>
-                <th>By</th>
-              </tr>
-            </thead>
-            <tbody>
-              {stockMovements.length === 0 ? (
-                <tr>
-                  <td colSpan="7" className="empty-state-cell">
-                    <div className="empty-state-small">No stock movements recorded</div>
-                  </td>
-                </tr>
-              ) : (
-                stockMovements.map(movement => (
-                  <tr key={movement.id}>
-                    <td>{movement.materialName}</td>
-                    <td>
-                      <span className={`movement-type-badge ${movement.movementType}`}>
-                        {movement.movementType}
-                      </span>
-                    </td>
-                    <td className={movement.quantity > 0 ? 'positive' : 'negative'}>
-                      {movement.quantity > 0 ? '+' : ''}{movement.quantity}
-                    </td>
-                    <td>{movement.previousQuantity}</td>
-                    <td>{movement.newQuantity}</td>
-                    <td>{Utils.formatDate(movement.createdAt)}</td>
-                    <td>{movement.createdBy || 'System'}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
-  // ============================================
-  // RENDER MATERIAL FORM MODAL
-  // ============================================
-  const renderMaterialFormModal = () => {
-    return (
-      <div className="inventory-modal-overlay" onClick={() => { setShowForm(false); resetForm(); }}>
-        <div className="inventory-modal-content form-modal" onClick={e => e.stopPropagation()}>
-          <div className="inventory-modal-header" style={{ background: 'linear-gradient(135deg, #009846, #007a38)' }}>
-            <div className="inventory-modal-header-left">
-              {editingId ? <Edit size={24} color="#ffffff" /> : <Package size={24} color="#ffffff" />}
-              <h3 style={{ color: '#ffffff' }}>{editingId ? 'Edit Material' : 'New Material'}</h3>
+  const renderMaterialFormModal = () => (
+    <ModalPortal>
+      <div className="inv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowForm(false); resetForm(); } }}>
+        <div className="inv-modal" onClick={e => e.stopPropagation()}>
+          <div className="inv-modal-header" style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+            <div className="inv-modal-header-left">
+              <div className="inv-modal-icon">
+                {editingId ? <Edit size={18} /> : <Package size={18} />}
+              </div>
+              <div>
+                <h3>{editingId ? 'Edit Material' : 'New Material'}</h3>
+                <p className="inv-modal-sub">{editingId ? 'Update material details' : 'Add a new material'}</p>
+              </div>
             </div>
-            <button className="inventory-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
-              <X size={24} color="#ffffff" />
+            <button className="inv-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
+              <X size={18} />
             </button>
           </div>
-          <div className="inventory-modal-body">
+          <div className="inv-modal-body">
             <form onSubmit={handleSubmit}>
-              <div className="form-row">
-                <div className="form-group">
-                  <label><FileText size={14} /> Name <span className="required">*</span></label>
-                  <input
-                    type="text"
-                    value={formData.name}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>Name <span className="inv-required">*</span></label>
+                  <input type="text" value={formData.name} required autoFocus
                     onChange={e => setFormData({ ...formData, name: e.target.value })}
-                    required
-                    placeholder="Material name"
-                    className="form-input"
-                  />
+                    placeholder="Material name" className="inv-form-input" />
                 </div>
-                <div className="form-group">
-                  <label><FolderKanban size={14} /> Category</label>
-                  <select
-                    value={formData.categoryId}
+                <div className="inv-form-group">
+                  <label>Category</label>
+                  <select value={formData.categoryId}
                     onChange={e => setFormData({ ...formData, categoryId: e.target.value })}
-                    className="form-select"
-                  >
+                    className="inv-form-select">
                     <option value="">Select Category</option>
-                    {categories.map(c => (
-                      <option key={c.id} value={c.id}>{c.icon || '📦'} {c.name}</option>
-                    ))}
+                    {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
               </div>
 
-              <div className="form-row">
-                <div className="form-group">
-                  <label><Boxes size={14} /> Unit <span className="required">*</span></label>
-                  <select
-                    value={formData.unit}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>Unit <span className="inv-required">*</span></label>
+                  <select value={formData.unit} required
                     onChange={e => setFormData({ ...formData, unit: e.target.value })}
-                    required
-                    className="form-select"
-                  >
+                    className="inv-form-select">
                     <option value="">Select Unit</option>
                     <option value="pcs">Pieces</option>
                     <option value="kg">Kilogram</option>
@@ -1326,113 +1341,74 @@ const InventoryManagement = ({ data, refreshData }) => {
                     <option value="sheet">Sheet</option>
                   </select>
                 </div>
-                <div className="form-group">
-                  <label><DollarSign size={14} /> Unit Price (BD)</label>
-                  <input
-                    type="number"
-                    step="0.001"
-                    value={formData.unitPrice}
+                <div className="inv-form-group">
+                  <label>Unit Price (BD)</label>
+                  <input type="number" step="0.001" value={formData.unitPrice}
                     onChange={e => setFormData({ ...formData, unitPrice: e.target.value })}
-                    placeholder="0.000"
-                    className="form-input"
-                  />
+                    placeholder="0.000" className="inv-form-input" />
                 </div>
               </div>
 
-              <div className="form-row">
-                <div className="form-group">
-                  <label><Box size={14} /> Quantity</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.quantity}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>Quantity</label>
+                  <input type="number" step="0.01" value={formData.quantity}
                     onChange={e => setFormData({ ...formData, quantity: e.target.value })}
-                    placeholder="0"
-                    className="form-input"
-                  />
+                    placeholder="0" className="inv-form-input" />
                 </div>
-                <div className="form-group">
-                  <label><AlertCircle size={14} /> Reorder Level</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.reorderLevel}
+                <div className="inv-form-group">
+                  <label>Reorder Level</label>
+                  <input type="number" step="0.01" value={formData.reorderLevel}
                     onChange={e => setFormData({ ...formData, reorderLevel: e.target.value })}
-                    placeholder="0"
-                    className="form-input"
-                  />
+                    placeholder="0" className="inv-form-input" />
                 </div>
               </div>
 
-              <div className="form-row">
-                <div className="form-group">
-                  <label><ChevronDown size={14} /> Min Quantity</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.minQuantity}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>Min Quantity</label>
+                  <input type="number" step="0.01" value={formData.minQuantity}
                     onChange={e => setFormData({ ...formData, minQuantity: e.target.value })}
-                    placeholder="0"
-                    className="form-input"
-                  />
+                    placeholder="0" className="inv-form-input" />
                 </div>
-                <div className="form-group">
-                  <label><ChevronUp size={14} /> Max Quantity</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={formData.maxQuantity}
+                <div className="inv-form-group">
+                  <label>Max Quantity</label>
+                  <input type="number" step="0.01" value={formData.maxQuantity}
                     onChange={e => setFormData({ ...formData, maxQuantity: e.target.value })}
-                    placeholder="0"
-                    className="form-input"
-                  />
+                    placeholder="0" className="inv-form-input" />
                 </div>
               </div>
 
-              <div className="form-row">
-                <div className="form-group">
-                  <label><MapPin size={14} /> Location</label>
-                  <input
-                    type="text"
-                    value={formData.location}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>Location</label>
+                  <input type="text" value={formData.location}
                     onChange={e => setFormData({ ...formData, location: e.target.value })}
-                    placeholder="e.g., Aisle 1"
-                    className="form-input"
-                  />
+                    placeholder="e.g. Aisle 1" className="inv-form-input" />
                 </div>
-                <div className="form-group">
-                  <label><Warehouse size={14} /> Warehouse</label>
-                  <input
-                    type="text"
-                    value={formData.warehouse}
+                <div className="inv-form-group">
+                  <label>Warehouse</label>
+                  <input type="text" value={formData.warehouse}
                     onChange={e => setFormData({ ...formData, warehouse: e.target.value })}
-                    placeholder="e.g., Main"
-                    className="form-input"
-                  />
+                    placeholder="e.g. Main" className="inv-form-input" />
                 </div>
               </div>
 
-              <div className="form-row">
-                <div className="form-group">
-                  <label><Truck size={14} /> Supplier</label>
-                  <select
-                    value={formData.supplierId}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>Supplier</label>
+                  <select value={formData.supplierId}
                     onChange={e => setFormData({ ...formData, supplierId: e.target.value })}
-                    className="form-select"
-                  >
+                    className="inv-form-select">
                     <option value="">Select Supplier</option>
-                    {suppliers.map(s => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
+                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
-                <div className="form-group">
-                  <label><Shield size={14} /> Status</label>
-                  <select
-                    value={formData.status}
+                <div className="inv-form-group">
+                  <label>Status</label>
+                  <select value={formData.status}
                     onChange={e => setFormData({ ...formData, status: e.target.value })}
-                    className="form-select"
-                  >
+                    className="inv-form-select">
                     <option value="active">Active</option>
                     <option value="inactive">Inactive</option>
                     <option value="discontinued">Discontinued</option>
@@ -1440,22 +1416,19 @@ const InventoryManagement = ({ data, refreshData }) => {
                 </div>
               </div>
 
-              <div className="form-group">
-                <label><FileText size={14} /> Description</label>
-                <textarea
-                  value={formData.description}
+              <div className="inv-form-group">
+                <label>Description</label>
+                <textarea value={formData.description}
                   onChange={e => setFormData({ ...formData, description: e.target.value })}
-                  placeholder="Additional notes"
-                  rows="2"
-                  className="form-textarea"
-                />
+                  placeholder="Additional notes" rows="2" className="inv-form-textarea" />
               </div>
 
-              <div className="form-actions">
-                <button type="submit" className="btn-primary" disabled={loading}>
-                  <Save size={16} /> {loading ? 'Saving...' : (editingId ? 'Update' : 'Create')}
+              <div className="inv-form-actions">
+                <button type="submit" className="inv-btn inv-btn-primary" disabled={loading}>
+                  <Save size={14} /> {loading ? 'Saving...' : (editingId ? 'Update' : 'Create')}
                 </button>
-                <button type="button" className="btn-secondary" onClick={() => { setShowForm(false); resetForm(); }}>
+                <button type="button" className="inv-btn inv-btn-secondary"
+                  onClick={() => { setShowForm(false); resetForm(); }}>
                   Cancel
                 </button>
               </div>
@@ -1463,167 +1436,132 @@ const InventoryManagement = ({ data, refreshData }) => {
           </div>
         </div>
       </div>
-    );
-  };
+    </ModalPortal>
+  );
 
   // ============================================
-  // RENDER SUPPLIER FORM MODAL
+  // SUPPLIER FORM MODAL
   // ============================================
-  const renderSupplierFormModal = () => {
-    return (
-      <div className="inventory-modal-overlay" onClick={() => { setShowSupplierForm(false); resetSupplierForm(); }}>
-        <div className="inventory-modal-content form-modal" onClick={e => e.stopPropagation()}>
-          <div className="inventory-modal-header" style={{ background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)' }}>
-            <div className="inventory-modal-header-left">
-              {editingId ? <Edit size={24} color="#ffffff" /> : <Truck size={24} color="#ffffff" />}
-              <h3 style={{ color: '#ffffff' }}>{editingId ? 'Edit Supplier' : 'New Supplier'}</h3>
+  const renderSupplierFormModal = () => (
+    <ModalPortal>
+      <div className="inv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowSupplierForm(false); resetSupplierForm(); } }}>
+        <div className="inv-modal" onClick={e => e.stopPropagation()}>
+          <div className="inv-modal-header" style={{ background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)' }}>
+            <div className="inv-modal-header-left">
+              <div className="inv-modal-icon">
+                {editingId ? <Edit size={18} /> : <Truck size={18} />}
+              </div>
+              <div>
+                <h3>{editingId ? 'Edit Supplier' : 'New Supplier'}</h3>
+                <p className="inv-modal-sub">{editingId ? 'Update supplier details' : 'Add a new supplier'}</p>
+              </div>
             </div>
-            <button className="inventory-modal-close" onClick={() => { setShowSupplierForm(false); resetSupplierForm(); }}>
-              <X size={24} color="#ffffff" />
+            <button className="inv-modal-close" onClick={() => { setShowSupplierForm(false); resetSupplierForm(); }}>
+              <X size={18} />
             </button>
           </div>
-          <div className="inventory-modal-body">
+          <div className="inv-modal-body">
             <form onSubmit={handleSupplierSubmit}>
-              <div className="form-row">
-                <div className="form-group">
-                  <label><Building2 size={14} /> Company Name <span className="required">*</span></label>
-                  <input
-                    type="text"
-                    value={supplierForm.name}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>Company Name <span className="inv-required">*</span></label>
+                  <input type="text" value={supplierForm.name} required
                     onChange={e => setSupplierForm({ ...supplierForm, name: e.target.value })}
-                    required
-                    placeholder="Company name"
-                    className="form-input"
-                  />
+                    placeholder="Company name" className="inv-form-input" />
                 </div>
-                <div className="form-group">
-                  <label><User size={14} /> Contact Person</label>
-                  <input
-                    type="text"
-                    value={supplierForm.contactPerson}
+                <div className="inv-form-group">
+                  <label>Contact Person</label>
+                  <input type="text" value={supplierForm.contactPerson}
                     onChange={e => setSupplierForm({ ...supplierForm, contactPerson: e.target.value })}
-                    placeholder="Contact person name"
-                    className="form-input"
-                  />
+                    placeholder="Contact name" className="inv-form-input" />
                 </div>
               </div>
 
-              <div className="form-row">
-                <div className="form-group">
-                  <label><Mail size={14} /> Email</label>
-                  <input
-                    type="email"
-                    value={supplierForm.email}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>Email</label>
+                  <input type="email" value={supplierForm.email}
                     onChange={e => setSupplierForm({ ...supplierForm, email: e.target.value })}
-                    placeholder="email@company.com"
-                    className="form-input"
-                  />
+                    placeholder="email@company.com" className="inv-form-input" />
                 </div>
-                <div className="form-group">
-                  <label><Phone size={14} /> Phone</label>
-                  <input
-                    type="text"
-                    value={supplierForm.phone}
+                <div className="inv-form-group">
+                  <label>Phone</label>
+                  <input type="text" value={supplierForm.phone}
                     onChange={e => setSupplierForm({ ...supplierForm, phone: e.target.value })}
-                    placeholder="Phone number"
-                    className="form-input"
-                  />
+                    placeholder="Phone" className="inv-form-input" />
                 </div>
               </div>
 
-              <div className="form-row">
-                <div className="form-group">
-                  <label><MapPin size={14} /> Address</label>
-                  <input
-                    type="text"
-                    value={supplierForm.address}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>Address</label>
+                  <input type="text" value={supplierForm.address}
                     onChange={e => setSupplierForm({ ...supplierForm, address: e.target.value })}
-                    placeholder="Street address"
-                    className="form-input"
-                  />
+                    placeholder="Street address" className="inv-form-input" />
                 </div>
-                <div className="form-group">
-                  <label><Building2 size={14} /> City</label>
-                  <input
-                    type="text"
-                    value={supplierForm.city}
+                <div className="inv-form-group">
+                  <label>City</label>
+                  <input type="text" value={supplierForm.city}
                     onChange={e => setSupplierForm({ ...supplierForm, city: e.target.value })}
-                    placeholder="City"
-                    className="form-input"
-                  />
+                    placeholder="City" className="inv-form-input" />
                 </div>
               </div>
 
-              <div className="form-row">
-                <div className="form-group">
-                  <label><Landmark size={14} /> CR Number</label>
-                  <input
-                    type="text"
-                    value={supplierForm.crNumber}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>CR Number</label>
+                  <input type="text" value={supplierForm.crNumber}
                     onChange={e => setSupplierForm({ ...supplierForm, crNumber: e.target.value })}
-                    placeholder="Commercial Registration"
-                    className="form-input"
-                  />
+                    placeholder="Commercial Registration" className="inv-form-input" />
                 </div>
-                <div className="form-group">
-                  <label><Tag size={14} /> VAT Number</label>
-                  <input
-                    type="text"
-                    value={supplierForm.vatNumber}
+                <div className="inv-form-group">
+                  <label>VAT Number</label>
+                  <input type="text" value={supplierForm.vatNumber}
                     onChange={e => setSupplierForm({ ...supplierForm, vatNumber: e.target.value })}
-                    placeholder="VAT Registration"
-                    className="form-input"
-                  />
+                    placeholder="VAT Registration" className="inv-form-input" />
                 </div>
               </div>
 
-              <div className="form-row">
-                <div className="form-group">
-                  <label><Clock size={14} /> Payment Terms</label>
-                  <select
-                    value={supplierForm.paymentTerms}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>Payment Terms</label>
+                  <select value={supplierForm.paymentTerms}
                     onChange={e => setSupplierForm({ ...supplierForm, paymentTerms: e.target.value })}
-                    className="form-select"
-                  >
+                    className="inv-form-select">
                     <option value="">Select Payment Terms</option>
                     <option value="net30">Net 30</option>
                     <option value="net60">Net 60</option>
                     <option value="cash">Cash</option>
-                    <option value="advance">Advance Payment</option>
+                    <option value="advance">Advance</option>
                   </select>
                 </div>
-                <div className="form-group">
-                  <label><Star size={14} /> Rating</label>
-                  <select
-                    value={supplierForm.rating}
+                <div className="inv-form-group">
+                  <label>Rating</label>
+                  <select value={supplierForm.rating}
                     onChange={e => setSupplierForm({ ...supplierForm, rating: parseInt(e.target.value) })}
-                    className="form-select"
-                  >
-                    <option value="1">⭐ 1 Star</option>
-                    <option value="2">⭐⭐ 2 Stars</option>
-                    <option value="3">⭐⭐⭐ 3 Stars</option>
-                    <option value="4">⭐⭐⭐⭐ 4 Stars</option>
-                    <option value="5">⭐⭐⭐⭐⭐ 5 Stars</option>
+                    className="inv-form-select">
+                    <option value="1">1 Star</option>
+                    <option value="2">2 Stars</option>
+                    <option value="3">3 Stars</option>
+                    <option value="4">4 Stars</option>
+                    <option value="5">5 Stars</option>
                   </select>
                 </div>
               </div>
 
-              <div className="form-group">
-                <label><FileText size={14} /> Notes</label>
-                <textarea
-                  value={supplierForm.notes}
+              <div className="inv-form-group">
+                <label>Notes</label>
+                <textarea value={supplierForm.notes}
                   onChange={e => setSupplierForm({ ...supplierForm, notes: e.target.value })}
-                  placeholder="Additional notes"
-                  rows="2"
-                  className="form-textarea"
-                />
+                  placeholder="Additional notes" rows="2" className="inv-form-textarea" />
               </div>
 
-              <div className="form-actions">
-                <button type="submit" className="btn-primary" disabled={loading}>
-                  <Save size={16} /> {loading ? 'Saving...' : (editingId ? 'Update' : 'Create')}
+              <div className="inv-form-actions">
+                <button type="submit" className="inv-btn inv-btn-primary" disabled={loading}>
+                  <Save size={14} /> {loading ? 'Saving...' : (editingId ? 'Update' : 'Create')}
                 </button>
-                <button type="button" className="btn-secondary" onClick={() => { setShowSupplierForm(false); resetSupplierForm(); }}>
+                <button type="button" className="inv-btn inv-btn-secondary"
+                  onClick={() => { setShowSupplierForm(false); resetSupplierForm(); }}>
                   Cancel
                 </button>
               </div>
@@ -1631,172 +1569,130 @@ const InventoryManagement = ({ data, refreshData }) => {
           </div>
         </div>
       </div>
-    );
-  };
+    </ModalPortal>
+  );
 
   // ============================================
-  // RENDER PURCHASE ORDER FORM MODAL
+  // PURCHASE ORDER FORM MODAL
   // ============================================
-  const renderPurchaseFormModal = () => {
-    return (
-      <div className="inventory-modal-overlay" onClick={() => { setShowPurchaseForm(false); resetPoForm(); }}>
-        <div className="inventory-modal-content form-modal" onClick={e => e.stopPropagation()}>
-          <div className="inventory-modal-header" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
-            <div className="inventory-modal-header-left">
-              <ShoppingCart size={24} color="#ffffff" />
-              <h3 style={{ color: '#ffffff' }}>New Purchase Order</h3>
+  const renderPurchaseFormModal = () => (
+    <ModalPortal>
+      <div className="inv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowPurchaseForm(false); resetPoForm(); } }}>
+        <div className="inv-modal inv-modal-lg" onClick={e => e.stopPropagation()}>
+          <div className="inv-modal-header" style={{ background: 'linear-gradient(135deg, #f59e0b, #d97706)' }}>
+            <div className="inv-modal-header-left">
+              <div className="inv-modal-icon"><ShoppingCart size={18} /></div>
+              <div>
+                <h3>New Purchase Order</h3>
+                <p className="inv-modal-sub">Create a PO for a supplier</p>
+              </div>
             </div>
-            <button className="inventory-modal-close" onClick={() => { setShowPurchaseForm(false); resetPoForm(); }}>
-              <X size={24} color="#ffffff" />
+            <button className="inv-modal-close" onClick={() => { setShowPurchaseForm(false); resetPoForm(); }}>
+              <X size={18} />
             </button>
           </div>
-          <div className="inventory-modal-body">
+          <div className="inv-modal-body">
             <form onSubmit={handlePOSubmit}>
-              <div className="form-row">
-                <div className="form-group">
-                  <label><Truck size={14} /> Supplier <span className="required">*</span></label>
-                  <select
-                    value={poForm.supplierId}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>Supplier <span className="inv-required">*</span></label>
+                  <select value={poForm.supplierId} required
                     onChange={e => setPoForm({ ...poForm, supplierId: e.target.value })}
-                    required
-                    className="form-select"
-                  >
+                    className="inv-form-select">
                     <option value="">Select Supplier</option>
-                    {suppliers.map(s => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
+                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
                   </select>
                 </div>
-                <div className="form-group">
-                  <label><Calendar size={14} /> Order Date <span className="required">*</span></label>
-                  <input
-                    type="date"
-                    value={poForm.orderDate}
+                <div className="inv-form-group">
+                  <label>Order Date <span className="inv-required">*</span></label>
+                  <input type="date" value={poForm.orderDate} required
                     onChange={e => setPoForm({ ...poForm, orderDate: e.target.value })}
-                    required
-                    className="form-input"
-                  />
+                    className="inv-form-input" />
                 </div>
               </div>
 
-              <div className="form-row">
-                <div className="form-group">
-                  <label><Calendar size={14} /> Expected Delivery</label>
-                  <input
-                    type="date"
-                    value={poForm.expectedDelivery}
+              <div className="inv-form-row">
+                <div className="inv-form-group">
+                  <label>Expected Delivery</label>
+                  <input type="date" value={poForm.expectedDelivery}
                     onChange={e => setPoForm({ ...poForm, expectedDelivery: e.target.value })}
-                    className="form-input"
-                  />
+                    className="inv-form-input" />
                 </div>
-                <div className="form-group">
-                  <label><Percent size={14} /> VAT Rate (%)</label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    value={poForm.vatRate}
+                <div className="inv-form-group">
+                  <label>VAT Rate (%)</label>
+                  <input type="number" step="0.1" value={poForm.vatRate}
                     onChange={e => setPoForm({ ...poForm, vatRate: parseFloat(e.target.value) || 0 })}
-                    placeholder="0"
-                    className="form-input"
-                  />
+                    placeholder="0" className="inv-form-input" />
                 </div>
               </div>
 
-              <div className="form-group">
-                <label><FileText size={14} /> Notes</label>
-                <input
-                  type="text"
-                  value={poForm.notes}
+              <div className="inv-form-group">
+                <label>Notes</label>
+                <input type="text" value={poForm.notes}
                   onChange={e => setPoForm({ ...poForm, notes: e.target.value })}
-                  placeholder="Additional notes"
-                  className="form-input"
-                />
+                  placeholder="Additional notes" className="inv-form-input" />
               </div>
 
-              <div className="po-items-section">
-                <h4>Order Items</h4>
-                <div className="po-item-form">
-                  <div className="form-row">
-                    <div className="form-group">
-                      <label>Material</label>
-                      <select
-                        value={poItemForm.materialId}
-                        onChange={e => setPoItemForm({ ...poItemForm, materialId: e.target.value })}
-                        className="form-select"
-                      >
-                        <option value="">Select Material</option>
-                        {materials.map(m => (
-                          <option key={m.id} value={m.id}>{m.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="form-group">
-                      <label>Quantity</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={poItemForm.quantity}
-                        onChange={e => setPoItemForm({ ...poItemForm, quantity: e.target.value })}
-                        placeholder="0"
-                        className="form-input"
-                      />
-                    </div>
-                    <div className="form-group">
-                      <label>Unit Price</label>
-                      <input
-                        type="number"
-                        step="0.001"
-                        value={poItemForm.unitPrice}
-                        onChange={e => setPoItemForm({ ...poItemForm, unitPrice: e.target.value })}
-                        placeholder="0.000"
-                        className="form-input"
-                      />
-                    </div>
-                    <button type="button" className="btn-primary" onClick={handleAddPOItem}>
-                      <Plus size={14} /> Add
-                    </button>
-                  </div>
+              <div className="inv-po-section">
+                <h4 className="inv-po-title">Order Items</h4>
+                <div className="inv-po-item-form">
+                  <select value={poItemForm.materialId}
+                    onChange={e => setPoItemForm({ ...poItemForm, materialId: e.target.value })}
+                    className="inv-form-select">
+                    <option value="">Select Material</option>
+                    {materials.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                  <input type="number" step="0.01" value={poItemForm.quantity}
+                    onChange={e => setPoItemForm({ ...poItemForm, quantity: e.target.value })}
+                    placeholder="Qty" className="inv-form-input" />
+                  <input type="number" step="0.001" value={poItemForm.unitPrice}
+                    onChange={e => setPoItemForm({ ...poItemForm, unitPrice: e.target.value })}
+                    placeholder="Price" className="inv-form-input" />
+                  <button type="button" className="inv-btn inv-btn-primary" onClick={handleAddPOItem}>
+                    <Plus size={13} /> Add
+                  </button>
                 </div>
 
-                <div className="po-items-list">
-                  {poForm.items.map((item, index) => (
-                    <div key={index} className="po-item-row">
-                      <span className="item-name">{item.materialName}</span>
-                      <span className="item-details">{item.quantity} × {Utils.formatCurrencyShort(item.unitPrice)}</span>
-                      <span className="item-total">{Utils.formatCurrency(item.total)}</span>
-                      <button className="btn-icon danger" onClick={() => handleRemovePOItem(index)}>
-                        <X size={14} />
+                <div className="inv-po-items">
+                  {poForm.items.length === 0 ? (
+                    <div className="inv-empty-mini">No items added yet</div>
+                  ) : poForm.items.map((item, i) => (
+                    <div key={i} className="inv-po-item">
+                      <span className="inv-po-name">{item.materialName}</span>
+                      <span className="inv-po-details">{item.quantity} × {Utils.formatCurrencyShort(item.unitPrice)}</span>
+                      <span className="inv-po-total">{Utils.formatCurrency(item.total)}</span>
+                      <button className="inv-icon-btn inv-icon-danger" onClick={() => handleRemovePOItem(i)}>
+                        <X size={12} />
                       </button>
                     </div>
                   ))}
-                  {poForm.items.length === 0 && (
-                    <div className="empty-state-small">No items added yet</div>
-                  )}
                 </div>
 
                 {poForm.items.length > 0 && (
-                  <div className="po-summary">
-                    <div className="summary-item">
+                  <div className="inv-po-summary">
+                    <div className="inv-po-summary-row">
                       <span>Subtotal:</span>
-                      <span>{Utils.formatCurrency(poForm.items.reduce((sum, i) => sum + i.total, 0))}</span>
+                      <span>{Utils.formatCurrency(poForm.items.reduce((s, i) => s + i.total, 0))}</span>
                     </div>
-                    <div className="summary-item">
+                    <div className="inv-po-summary-row">
                       <span>VAT ({poForm.vatRate}%):</span>
-                      <span>{Utils.formatCurrency(poForm.items.reduce((sum, i) => sum + i.total, 0) * (poForm.vatRate / 100))}</span>
+                      <span>{Utils.formatCurrency(poForm.items.reduce((s, i) => s + i.total, 0) * (poForm.vatRate / 100))}</span>
                     </div>
-                    <div className="summary-item total">
-                      <span><strong>Total:</strong></span>
-                      <span><strong>{Utils.formatCurrency(poForm.items.reduce((sum, i) => sum + i.total, 0) * (1 + poForm.vatRate / 100))}</strong></span>
+                    <div className="inv-po-summary-row total">
+                      <span>Total:</span>
+                      <strong>{Utils.formatCurrency(poForm.items.reduce((s, i) => s + i.total, 0) * (1 + poForm.vatRate / 100))}</strong>
                     </div>
                   </div>
                 )}
               </div>
 
-              <div className="form-actions">
-                <button type="submit" className="btn-primary" disabled={loading || poForm.items.length === 0}>
-                  <Save size={16} /> {loading ? 'Creating...' : 'Create PO'}
+              <div className="inv-form-actions">
+                <button type="submit" className="inv-btn inv-btn-primary"
+                  disabled={loading || poForm.items.length === 0}>
+                  <Save size={14} /> {loading ? 'Creating...' : 'Create PO'}
                 </button>
-                <button type="button" className="btn-secondary" onClick={() => { setShowPurchaseForm(false); resetPoForm(); }}>
+                <button type="button" className="inv-btn inv-btn-secondary"
+                  onClick={() => { setShowPurchaseForm(false); resetPoForm(); }}>
                   Cancel
                 </button>
               </div>
@@ -1804,172 +1700,208 @@ const InventoryManagement = ({ data, refreshData }) => {
           </div>
         </div>
       </div>
-    );
-  };
+    </ModalPortal>
+  );
 
   // ============================================
-  // RENDER STOCK ADJUSTMENT MODAL
+  // STOCK ADJUST MODAL
   // ============================================
   const renderStockAdjustModal = () => {
     if (!selectedItem) return null;
-
     return (
-      <div className="inventory-modal-overlay" onClick={() => { setShowAdjustStock(false); resetStockForm(); }}>
-        <div className="inventory-modal-content form-modal" onClick={e => e.stopPropagation()}>
-          <div className="inventory-modal-header" style={{ background: 'linear-gradient(135deg, #ef4444, #dc2626)' }}>
-            <div className="inventory-modal-header-left">
-              <RefreshCw size={24} color="#ffffff" />
-              <h3 style={{ color: '#ffffff' }}>Adjust Stock - {selectedItem.name}</h3>
+      <ModalPortal>
+        <div className="inv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowAdjustStock(false); resetStockForm(); } }}>
+          <div className="inv-modal" onClick={e => e.stopPropagation()}>
+            <div className="inv-modal-header" style={{ background: 'linear-gradient(135deg, #ef4444, #b91c1c)' }}>
+              <div className="inv-modal-header-left">
+                <div className="inv-modal-icon"><RefreshCw size={18} /></div>
+                <div>
+                  <h3>Adjust Stock</h3>
+                  <p className="inv-modal-sub">{selectedItem.name}</p>
+                </div>
+              </div>
+              <button className="inv-modal-close" onClick={() => { setShowAdjustStock(false); resetStockForm(); }}>
+                <X size={18} />
+              </button>
             </div>
-            <button className="inventory-modal-close" onClick={() => { setShowAdjustStock(false); resetStockForm(); }}>
-              <X size={24} color="#ffffff" />
-            </button>
-          </div>
-          <div className="inventory-modal-body">
-            <form onSubmit={handleAdjustStock}>
-              <div className="form-group">
-                <label>Current Quantity: <strong>{selectedItem.quantity}</strong> {selectedItem.unit}</label>
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label>Quantity Change <span className="required">*</span></label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={stockForm.quantity}
-                    onChange={e => setStockForm({ ...stockForm, quantity: e.target.value })}
-                    required
-                    placeholder="Enter +/- quantity"
-                    className="form-input"
-                  />
-                  <span className="form-hint">Use positive for addition, negative for removal</span>
+            <div className="inv-modal-body">
+              <form onSubmit={handleAdjustStock}>
+                <div className="inv-form-group">
+                  <label>Current Quantity</label>
+                  <input type="text" value={`${selectedItem.quantity} ${selectedItem.unit || ''}`}
+                    disabled className="inv-form-input" />
                 </div>
-                <div className="form-group">
-                  <label>Movement Type</label>
-                  <select
-                    value={stockForm.movementType}
-                    onChange={e => setStockForm({ ...stockForm, movementType: e.target.value })}
-                    className="form-select"
-                  >
-                    <option value="adjustment">Adjustment</option>
-                    <option value="purchase">Purchase</option>
-                    <option value="sale">Sale</option>
-                    <option value="wastage">Wastage</option>
-                    <option value="return">Return</option>
-                  </select>
+
+                <div className="inv-form-row">
+                  <div className="inv-form-group">
+                    <label>Quantity Change <span className="inv-required">*</span></label>
+                    <input type="number" step="0.01" value={stockForm.quantity} required
+                      onChange={e => setStockForm({ ...stockForm, quantity: e.target.value })}
+                      placeholder="+/- quantity" className="inv-form-input" />
+                    <span className="inv-form-hint">Positive for addition, negative for removal</span>
+                  </div>
+                  <div className="inv-form-group">
+                    <label>Movement Type</label>
+                    <select value={stockForm.movementType}
+                      onChange={e => setStockForm({ ...stockForm, movementType: e.target.value })}
+                      className="inv-form-select">
+                      <option value="adjustment">Adjustment</option>
+                      <option value="purchase">Purchase</option>
+                      <option value="sale">Sale</option>
+                      <option value="wastage">Wastage</option>
+                      <option value="return">Return</option>
+                    </select>
+                  </div>
                 </div>
-              </div>
 
-              <div className="form-group">
-                <label><FileText size={14} /> Notes</label>
-                <input
-                  type="text"
-                  value={stockForm.notes}
-                  onChange={e => setStockForm({ ...stockForm, notes: e.target.value })}
-                  placeholder="Reason for adjustment"
-                  className="form-input"
-                />
-              </div>
+                <div className="inv-form-group">
+                  <label>Notes</label>
+                  <input type="text" value={stockForm.notes}
+                    onChange={e => setStockForm({ ...stockForm, notes: e.target.value })}
+                    placeholder="Reason" className="inv-form-input" />
+                </div>
 
-              <div className="form-actions">
-                <button type="submit" className="btn-primary" disabled={loading}>
-                  <Save size={16} /> {loading ? 'Adjusting...' : 'Adjust Stock'}
-                </button>
-                <button type="button" className="btn-secondary" onClick={() => { setShowAdjustStock(false); resetStockForm(); }}>
-                  Cancel
-                </button>
-              </div>
-            </form>
+                <div className="inv-form-actions">
+                  <button type="submit" className="inv-btn inv-btn-primary" disabled={loading}>
+                    <Save size={14} /> {loading ? 'Adjusting...' : 'Adjust Stock'}
+                  </button>
+                  <button type="button" className="inv-btn inv-btn-secondary"
+                    onClick={() => { setShowAdjustStock(false); resetStockForm(); }}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
-      </div>
+      </ModalPortal>
     );
   };
 
   // ============================================
-  // RENDER DETAIL MODAL
+  // DETAIL MODAL
   // ============================================
   const renderDetailModal = () => {
     if (!selectedItem) return null;
-
     return (
-      <div className="inventory-modal-overlay" onClick={() => setShowDetailModal(false)}>
-        <div className="inventory-modal-content detail-modal" onClick={e => e.stopPropagation()}>
-          <div className="inventory-modal-header" style={{ background: 'linear-gradient(135deg, #1a2332, #2a3a4a)' }}>
-            <div className="inventory-modal-header-left">
-              <Package size={24} color="#ffffff" />
-              <h3 style={{ color: '#ffffff' }}>Material Details</h3>
+      <ModalPortal>
+        <div className="inv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowDetailModal(false); }}>
+          <div className="inv-modal inv-modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="inv-modal-header" style={{ background: 'linear-gradient(135deg, #0b1a12, #1f3a2c)' }}>
+              <div className="inv-modal-header-left">
+                <div className="inv-modal-icon"><Package size={18} /></div>
+                <div>
+                  <h3>{selectedItem.poNumber ? `PO ${selectedItem.poNumber}` : selectedItem.name}</h3>
+                  <p className="inv-modal-sub">{selectedItem.poNumber ? selectedItem.supplierName : 'Material details'}</p>
+                </div>
+              </div>
+              <button className="inv-modal-close" onClick={() => setShowDetailModal(false)}>
+                <X size={18} />
+              </button>
             </div>
-            <button className="inventory-modal-close" onClick={() => setShowDetailModal(false)}>
-              <X size={24} color="#ffffff" />
-            </button>
-          </div>
-          <div className="inventory-modal-body">
-            <div className="detail-grid">
-              <div className="detail-section">
-                <h4><FileText size={14} /> Basic Information</h4>
-                <div className="detail-row"><span className="label">Name:</span><span className="value">{selectedItem.name}</span></div>
-                <div className="detail-row"><span className="label">SKU:</span><span className="value">{selectedItem.sku || 'N/A'}</span></div>
-                <div className="detail-row"><span className="label">Category:</span><span className="value">{categories.find(c => c.id === selectedItem.categoryId)?.name || 'N/A'}</span></div>
-                <div className="detail-row"><span className="label">Status:</span><span className="value">{getStatusBadge(selectedItem.status)}</span></div>
-              </div>
-              <div className="detail-section">
-                <h4><DollarSign size={14} /> Stock Information</h4>
-                <div className="detail-row"><span className="label">Quantity:</span><span className="value">{selectedItem.quantity}</span></div>
-                <div className="detail-row"><span className="label">Unit:</span><span className="value">{selectedItem.unit}</span></div>
-                <div className="detail-row"><span className="label">Unit Price:</span><span className="value amount">{Utils.formatCurrency(selectedItem.unitPrice)}</span></div>
-                <div className="detail-row"><span className="label">Stock Value:</span><span className="value amount">{Utils.formatCurrency((selectedItem.quantity || 0) * (selectedItem.unitPrice || 0))}</span></div>
-              </div>
-              <div className="detail-section full-width">
-                <h4><Settings size={14} /> Additional Information</h4>
-                <div className="detail-row"><span className="label">Location:</span><span className="value">{selectedItem.location || 'N/A'}</span></div>
-                <div className="detail-row"><span className="label">Warehouse:</span><span className="value">{selectedItem.warehouse || 'N/A'}</span></div>
-                <div className="detail-row"><span className="label">Supplier:</span><span className="value">{suppliers.find(s => s.id === selectedItem.supplierId)?.name || 'N/A'}</span></div>
-                <div className="detail-row"><span className="label">Description:</span><span className="value">{selectedItem.description || 'N/A'}</span></div>
-              </div>
+            <div className="inv-modal-body">
+              {selectedItem.poNumber ? (
+                <div className="inv-detail-grid">
+                  <div className="inv-detail-section">
+                    <h4>Order Info</h4>
+                    <div className="inv-detail-row"><span>Supplier:</span><strong>{selectedItem.supplierName}</strong></div>
+                    <div className="inv-detail-row"><span>Order Date:</span><strong>{Utils.formatDate(selectedItem.orderDate)}</strong></div>
+                    <div className="inv-detail-row"><span>Status:</span>{getStatusBadge(selectedItem.status)}</div>
+                    <div className="inv-detail-row"><span>Total:</span><strong className="inv-td-green">{Utils.formatCurrency(selectedItem.totalAmount)}</strong></div>
+                  </div>
+                  <div className="inv-detail-section full-width">
+                    <h4>Items</h4>
+                    {selectedItem.items?.map((item, i) => (
+                      <div key={i} className="inv-detail-row">
+                        <span>{item.materialName}</span>
+                        <strong>{item.quantity} × {Utils.formatCurrencyShort(item.unitPrice)} = {Utils.formatCurrency(item.total)}</strong>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="inv-detail-grid">
+                  <div className="inv-detail-section">
+                    <h4>Basic Information</h4>
+                    <div className="inv-detail-row"><span>Name:</span><strong>{selectedItem.name}</strong></div>
+                    <div className="inv-detail-row"><span>SKU:</span><strong>{selectedItem.sku || 'N/A'}</strong></div>
+                    <div className="inv-detail-row"><span>Category:</span><strong>{categories.find(c => c.id === selectedItem.categoryId)?.name || 'N/A'}</strong></div>
+                    <div className="inv-detail-row"><span>Status:</span>{getStatusBadge(selectedItem.status)}</div>
+                  </div>
+                  <div className="inv-detail-section">
+                    <h4>Stock Info</h4>
+                    <div className="inv-detail-row"><span>Quantity:</span><strong>{selectedItem.quantity}</strong></div>
+                    <div className="inv-detail-row"><span>Unit:</span><strong>{selectedItem.unit}</strong></div>
+                    <div className="inv-detail-row"><span>Unit Price:</span><strong>{Utils.formatCurrency(selectedItem.unitPrice)}</strong></div>
+                    <div className="inv-detail-row"><span>Stock Value:</span><strong className="inv-td-green">{Utils.formatCurrency((selectedItem.quantity || 0) * (selectedItem.unitPrice || 0))}</strong></div>
+                  </div>
+                  <div className="inv-detail-section full-width">
+                    <h4>Additional Information</h4>
+                    <div className="inv-detail-row"><span>Location:</span><strong>{selectedItem.location || 'N/A'}</strong></div>
+                    <div className="inv-detail-row"><span>Warehouse:</span><strong>{selectedItem.warehouse || 'N/A'}</strong></div>
+                    <div className="inv-detail-row"><span>Supplier:</span><strong>{suppliers.find(s => s.id === selectedItem.supplierId)?.name || 'N/A'}</strong></div>
+                    <div className="inv-detail-row"><span>Description:</span><strong>{selectedItem.description || 'N/A'}</strong></div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>
-      </div>
+      </ModalPortal>
     );
   };
 
   // ============================================
-  // RENDER COST OPTIMIZER
+  // COST OPTIMIZER MODAL
   // ============================================
   const renderCostOptimizer = () => {
     if (!showCostOptimizer || !optimizationResults) return null;
-
     return (
-      <div className="cost-optimizer-modal">
-        <div className="cost-optimizer-content">
-          <div className="cost-optimizer-header">
-            <h3>💰 Cost Optimization Opportunities</h3>
-            <button onClick={() => setShowCostOptimizer(false)}><X size={20} /></button>
-          </div>
-          <div className="cost-optimizer-body">
-            {optimizationResults.map((opt, index) => (
-              <div key={index} className="optimization-item">
-                <div className="opt-category">{opt.category}</div>
-                <div className="opt-details">
-                  <span className="opt-current">{opt.item}: {Utils.formatCurrency(opt.currentPrice)}</span>
-                  <span className="opt-arrow">→</span>
-                  <span className="opt-alternative">{opt.alternative}: {Utils.formatCurrency(opt.potentialPrice)}</span>
-                  <span className="opt-savings">Save {Utils.formatCurrency(opt.savings)} per unit</span>
+      <ModalPortal>
+        <div className="inv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowCostOptimizer(false); }}>
+          <div className="inv-modal" onClick={e => e.stopPropagation()}>
+            <div className="inv-modal-header" style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+              <div className="inv-modal-header-left">
+                <div className="inv-modal-icon"><TrendingUp size={18} /></div>
+                <div>
+                  <h3>Cost Optimization Opportunities</h3>
+                  <p className="inv-modal-sub">{optimizationResults.length} potential savings</p>
                 </div>
               </div>
-            ))}
-            <button className="btn-primary" onClick={() => {
-              setSuccess('✅ Cost optimization suggestions applied!');
-              setTimeout(() => setSuccess(''), 3000);
-              setShowCostOptimizer(false);
-            }}>
-              <Save size={16} /> Apply Optimizations
-            </button>
+              <button className="inv-modal-close" onClick={() => setShowCostOptimizer(false)}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="inv-modal-body">
+              {optimizationResults.map((opt, i) => (
+                <div key={i} className="inv-optimization-item">
+                  <div className="inv-opt-category">{opt.category}</div>
+                  <div className="inv-opt-details">
+                    <span className="inv-opt-current">{opt.item}: {Utils.formatCurrency(opt.currentPrice)}</span>
+                    <span className="inv-opt-arrow">→</span>
+                    <span className="inv-opt-alt">{opt.alternative}: {Utils.formatCurrency(opt.potentialPrice)}</span>
+                  </div>
+                  <div className="inv-opt-savings">
+                    Save {Utils.formatCurrency(opt.savings)} per unit
+                  </div>
+                </div>
+              ))}
+              <div className="inv-form-actions">
+                <button className="inv-btn inv-btn-primary" onClick={() => {
+                  setSuccess('Cost optimization suggestions applied!');
+                  setTimeout(() => setSuccess(''), 3000);
+                  setShowCostOptimizer(false);
+                }}>
+                  <Save size={14} /> Apply Optimizations
+                </button>
+                <button className="inv-btn inv-btn-secondary" onClick={() => setShowCostOptimizer(false)}>
+                  Close
+                </button>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      </ModalPortal>
     );
   };
 
@@ -1977,87 +1909,72 @@ const InventoryManagement = ({ data, refreshData }) => {
   // MAIN RENDER
   // ============================================
   return (
-    <div className="inventory-management-modern">
+    <div className={`inv-root ${mounted ? 'is-mounted' : ''}`}>
+      <div className="inv-ambient">
+        <div className="inv-orb inv-orb-1" />
+        <div className="inv-orb inv-orb-2" />
+        <div className="inv-orb inv-orb-3" />
+      </div>
+
       {/* Header */}
-      <div className="dashboard-header-modern">
-        <div className="header-left">
-          <div className="header-icon-wrapper">
-            <Package size={28} />
-            <span className="header-badge">Inventory</span>
+      <div className="inv-header">
+        <div className="inv-header-left">
+          <div className="inv-header-icon">
+            <Package size={22} />
+            <span className="inv-header-badge"><Sparkles size={10} /> INVENTORY</span>
           </div>
           <div>
             <h2>Inventory Management</h2>
-            <p className="header-subtitle">Track materials, stock levels, and suppliers</p>
+            <p className="inv-header-subtitle">
+              {materials.length} materials · {suppliers.length} suppliers · {purchaseOrders.length} orders
+            </p>
           </div>
         </div>
-        <div className="header-right">
-          <button className="btn-refresh-modern" onClick={loadData}>
-            <RefreshCw size={16} /> Refresh
+        <div className="inv-header-right">
+          <button className="inv-btn inv-btn-ghost" onClick={loadData}>
+            <RefreshCw size={14} /> Refresh
           </button>
         </div>
       </div>
 
-      {/* Stats */}
-      {renderStats()}
-
-      {/* Automation Widgets */}
-      {renderAutomationWidgets()}
-
-      {/* Cost Optimizer */}
-      {renderCostOptimizer()}
-
-      {/* Messages */}
-      {error && (
-        <div className="error-message">
-          <AlertCircle size={16} /> {error}
-        </div>
-      )}
-      {success && (
-        <div className="success-message">
-          <CheckCircle size={16} /> {success}
-        </div>
-      )}
-
-      {/* View Tabs */}
-      <div className="view-tabs-modern">
-        <button
-          className={`tab-btn ${viewMode === 'materials' ? 'active' : ''}`}
-          onClick={() => setViewMode('materials')}
-        >
-          <Package size={16} /> Materials
-        </button>
-        <button
-          className={`tab-btn ${viewMode === 'suppliers' ? 'active' : ''}`}
-          onClick={() => setViewMode('suppliers')}
-        >
-          <Truck size={16} /> Suppliers
-        </button>
-        <button
-          className={`tab-btn ${viewMode === 'orders' ? 'active' : ''}`}
-          onClick={() => setViewMode('orders')}
-        >
-          <ShoppingCart size={16} /> Purchase Orders
-        </button>
-        <button
-          className={`tab-btn ${viewMode === 'movements' ? 'active' : ''}`}
-          onClick={() => setViewMode('movements')}
-        >
-          <RefreshCw size={16} /> Stock Movements
-        </button>
+      {/* Tabs */}
+      <div className="inv-tabs">
+        {[
+          { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+          { id: 'materials', label: 'Materials', icon: Package, badge: materials.length },
+          { id: 'suppliers', label: 'Suppliers', icon: Truck, badge: suppliers.length },
+          { id: 'orders', label: 'Purchase Orders', icon: ShoppingCart, badge: purchaseOrders.length },
+          { id: 'movements', label: 'Stock Movements', icon: RefreshCw }
+        ].map(t => {
+          const Icon = t.icon;
+          return (
+            <button key={t.id} className={`inv-tab ${viewMode === t.id ? 'active' : ''}`}
+              onClick={() => setViewMode(t.id)}>
+              <Icon size={15} />
+              <span>{t.label}</span>
+              {t.badge !== undefined && <span className="inv-tab-badge">{t.badge}</span>}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Content */}
-      {loading ? (
-        <div className="loading-state">
-          {/* <div className="loading-spinner"></div>
-          <span>Loading...</span> */}
+      {/* Messages */}
+      {error && <div className="inv-message error"><AlertCircle size={15} /> {error}</div>}
+      {success && <div className="inv-message success"><CheckCircle size={15} /> {success}</div>}
+
+      {/* View */}
+      {loading && viewMode !== 'overview' && viewMode !== 'materials' ? (
+        <div className="inv-loading">
+          <div className="inv-loading-spinner" />
+          <span>Loading...</span>
         </div>
       ) : (
         <>
-          {viewMode === 'materials' && renderMaterialsList()}
-          {viewMode === 'suppliers' && renderSuppliersList()}
-          {viewMode === 'orders' && renderPurchaseOrders()}
-          {viewMode === 'movements' && renderStockMovements()}
+          {viewMode === 'overview' && renderOverviewTab()}
+          {viewMode === 'materials' && renderMaterialsTab()}
+          {viewMode === 'suppliers' && renderSuppliersTab()}
+          {viewMode === 'orders' && renderOrdersTab()}
+          {viewMode === 'movements' && renderMovementsTab()}
         </>
       )}
 
@@ -2067,6 +1984,7 @@ const InventoryManagement = ({ data, refreshData }) => {
       {showPurchaseForm && renderPurchaseFormModal()}
       {showAdjustStock && renderStockAdjustModal()}
       {showDetailModal && renderDetailModal()}
+      {renderCostOptimizer()}
     </div>
   );
 };

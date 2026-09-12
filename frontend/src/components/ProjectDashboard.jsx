@@ -1,172 +1,180 @@
 // src/components/ProjectDashboard.jsx
-
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
-  Plus,
-  Search,
-  Edit,
-  Trash2,
-  Eye,
-  Calendar,
-  TrendingUp,
-  TrendingDown,
-  AlertCircle,
-  CheckCircle,
-  Clock,
-  Users,
-  DollarSign,
-  Building2,
-  ChevronDown,
-  ChevronUp,
-  X,
-  Save,
-  RefreshCw,
-  Printer,
-  Download,
-  Activity,
-  Briefcase,
-  Phone,
-  Mail,
-  User,
-  FolderKanban,
-  Wallet,
-  Shield,
-  ArrowUpRight,
-  ArrowDownRight,
-  FileText,
-  Filter,
-  Info,
-  Gauge,
-  Target,
-  Award,
-  Zap,
-  Timer,
-  Layers,
-  Circle,
-  CircleDot,
-  PlayCircle,
-  PauseCircle,
-  BarChart3,
-  PieChart,
-  Clock10,
-  ListChecks,
-  BadgeCheck,
-  BadgeInfo,
-  BadgeAlert,
-  BadgeX,
-  Sparkle,
-  Bolt,
-  GanttChart,
-  SquareKanban,
-  ClipboardList,
-  Boxes,
-  LayoutGrid,
-  LayoutList,
-  PanelTop,
-  PanelLeft,
-  PanelRight,
-  PanelBottom,
-  LayoutTemplate,
-  Table2,
-  SquareStack,
-  Layers2,
-  Layers3,
-  Package,
-  Package2,
-  PackageCheck,
-  PackageX,
-  PackageOpen,
-  Box,
-  BoxSelect,
-  Blocks,
-  Folders,
-  Folder,
-  FolderOpen,
-  FolderPlus,
-  FolderDot,
-  FolderArchive,
-  FolderClock,
-  FolderSearch,
-  FolderSync,
-  FolderTree,
-  FolderInput,
-  FolderOutput,
-  FolderUp,
-  FolderDown,
-  FolderCog,
-  FolderLock,
-  FolderKey,
-  FolderMinus,
-  FolderX,
-  FolderGit,
-  FolderGit2,
-  FolderCheck,
-  FolderHeart,
-  FolderStar,
-  FolderCode,
-  FolderSymlink,
-  FolderFile,
-  FolderShare,
-  Clipboard,
-  ClipboardCheck,
-  ClipboardCopy,
-  ClipboardMinus,
-  ClipboardPaste,
-  ClipboardX,
-  ClipboardEdit,
-  ClipboardType,
-  ClipboardPen,
-  ClipboardSignature,
-  FileBox,
-  FileClock,
-  FileCode,
-  FileCog,
-  FileDiff,
-  FileDigit,
-  FileDown,
-  FileHeart,
-  FileImage,
-  FileInput,
-  FileJson,
-  FileKey,
-  FileLock,
-  FileMinus,
-  FileOutput,
-  FilePen,
-  FilePlus,
-  FileQuestion,
-  FileScan,
-  FileSearch,
-  FileSignature,
-  FileSpreadsheet,
-  FileSymlink,
-  FileTerminal,
-  FileType,
-  FileUp,
-  FileUser,
-  FileVideo,
-  FileVolume,
-  FileWarning,
-  FileX,
-  FileBadge,
-  FileChartColumn,
-  FileChartLine,
-  FileChartPie,
-  FileCheck2,
-  XCircle,
-  CircleAlert as AlertCircleIcon
+  Plus, Search, Edit, Trash2, Eye, Calendar,
+  TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock,
+  Users, DollarSign, Building2, ChevronDown, ChevronUp, X, Save,
+  RefreshCw, Printer, Download, Activity, Briefcase, Phone, Mail, User,
+  FolderKanban, ArrowUpRight, FileText, Info, Gauge, Target,
+  PlayCircle, PauseCircle, XCircle, BarChart3, Wallet, Shield,
+  Layers, Circle, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  Flame, LineChart as LineChartIcon, PieChart as PieChartIcon,
+  TrendingUp as TrendingUpIcon, Landmark, ClipboardList
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import Utils from '../utils/Utils';
-
 import './ProjectDashboard.css';
 import letterheadHeader from '../assets/letterhead-header.png';
 import letterheadFooter from '../assets/letterhead-footer.png';
 import background from '../assets/background.png';
-
 import { CONFIG } from '../config/constants';
+
 const API_BASE_URL = CONFIG.API_BASE || 'http://localhost:5000/api';
 
+// ============================================
+// MODAL PORTAL — escapes every stacking context
+// ============================================
+const ModalPortal = ({ children }) => {
+  if (typeof document === 'undefined') return null;
+  return createPortal(children, document.body);
+};
+
+// ============================================
+// ANIMATED NUMBER
+// ============================================
+const AnimatedNumber = ({ value, decimals = 0, prefix = '', suffix = '', duration = 700 }) => {
+  const [display, setDisplay] = useState(Number(value) || 0);
+  const prevRef = useRef(Number(value) || 0);
+  const frameRef = useRef(null);
+
+  useEffect(() => {
+    const start = prevRef.current || 0;
+    const end = Number(value) || 0;
+    const diff = end - start;
+    const startTime = performance.now();
+    if (diff === 0) { setDisplay(end); return; }
+
+    const tick = (now) => {
+      const progress = Math.min((now - startTime) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(start + diff * eased);
+      if (progress < 1) frameRef.current = requestAnimationFrame(tick);
+      else prevRef.current = end;
+    };
+    frameRef.current = requestAnimationFrame(tick);
+    return () => frameRef.current && cancelAnimationFrame(frameRef.current);
+  }, [value, duration]);
+
+  const formatted = Number(display).toLocaleString('en-US', {
+    minimumFractionDigits: decimals, maximumFractionDigits: decimals
+  });
+  return <>{prefix}{formatted}{suffix}</>;
+};
+
+// ============================================
+// DONUT GAUGE
+// ============================================
+const CircularGauge = ({ value = 0, max = 100, size = 120, stroke = 10, color = '#009846', label }) => {
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const pct = Math.max(0, Math.min(1, value / max));
+  const dash = circumference * pct;
+  const gap = circumference - dash;
+  return (
+    <div className="pd-gauge" style={{ width: size, height: size }}>
+      <svg width={size} height={size}>
+        <circle cx={size/2} cy={size/2} r={radius} fill="none"
+          stroke="rgba(148,163,184,0.15)" strokeWidth={stroke} />
+        <circle cx={size/2} cy={size/2} r={radius} fill="none"
+          stroke={color} strokeWidth={stroke} strokeLinecap="round"
+          strokeDasharray={`${dash} ${gap}`}
+          transform={`rotate(-90 ${size/2} ${size/2})`}
+          style={{ transition: 'stroke-dasharray 0.9s cubic-bezier(0.16,1,0.3,1)' }} />
+      </svg>
+      <div className="pd-gauge-center">
+        <span className="pd-gauge-value">{Math.round(pct * 100)}%</span>
+        {label && <span className="pd-gauge-label">{label}</span>}
+      </div>
+    </div>
+  );
+};
+
+// ============================================
+// SMOOTH CURVE
+// ============================================
+const SparkCurve = ({ data = [], color = '#009846', height = 120 }) => {
+  if (!data || data.length === 0) return null;
+  const width = 300;
+  const max = Math.max(...data, 1);
+  const min = Math.min(...data, 0);
+  const range = max - min || 1;
+  const step = width / Math.max(data.length - 1, 1);
+  const points = data.map((v, i) => [i * step, height - ((v - min) / range) * (height - 10) - 5]);
+
+  const path = points.reduce((acc, [x, y], i, arr) => {
+    if (i === 0) return `M ${x},${y}`;
+    const [px, py] = arr[i - 1];
+    const cx = (px + x) / 2;
+    return `${acc} C ${cx},${py} ${cx},${y} ${x},${y}`;
+  }, '');
+  const areaPath = `${path} L ${points[points.length-1][0]},${height} L ${points[0][0]},${height} Z`;
+  const gradId = `pdSparkGrad-${color.replace('#','')}`;
+
+  return (
+    <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+      <defs>
+        <linearGradient id={gradId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.35" />
+          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill={`url(#${gradId})`} />
+      <path d={path} fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" />
+      {points.map(([x, y], i) => (
+        <circle key={i} cx={x} cy={y} r="3.5" fill={color} />
+      ))}
+    </svg>
+  );
+};
+
+// ============================================
+// STACKED BARS
+// ============================================
+const StackedBars = ({ rows = [] }) => (
+  <div className="pd-stacked-bars">
+    {rows.map((row, i) => {
+      const total = row.segments.reduce((s, x) => s + x.value, 0) || 1;
+      return (
+        <div key={i} className="pd-stacked-row">
+          <div className="pd-stacked-label">{row.label}</div>
+          <div className="pd-stacked-track">
+            {row.segments.map((seg, j) => (
+              <div key={j} className="pd-stacked-segment"
+                style={{ width: `${(seg.value/total)*100}%`, background: seg.color }} />
+            ))}
+          </div>
+          <div className="pd-stacked-value">{row.total ?? total}</div>
+        </div>
+      );
+    })}
+  </div>
+);
+
+// ============================================
+// VERTICAL BARS
+// ============================================
+const VerticalBars = ({ data = [] }) => {
+  const max = Math.max(...data.map(d => d.value), 1);
+  return (
+    <div className="pd-vbars">
+      {data.map((d, i) => (
+        <div key={i} className="pd-vbar-column">
+          <div className="pd-vbar-value">{d.value}</div>
+          <div className="pd-vbar-track">
+            <div className="pd-vbar-fill"
+              style={{ height: `${(d.value/max)*100}%`, background: d.color }} />
+          </div>
+          <div className="pd-vbar-label">{d.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// ============================================
+// MAIN
+// ============================================
 const ProjectDashboard = ({ data, refreshData }) => {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -182,284 +190,317 @@ const ProjectDashboard = ({ data, refreshData }) => {
   const [expandedProjects, setExpandedProjects] = useState({});
   const [hoveredCard, setHoveredCard] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
-  const [isOpening, setIsOpening] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
-  // Form state
+  // Tabs — 'dashboard' | 'projects'
+  const [activeTab, setActiveTab] = useState('dashboard');
+
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(9);
+
   const [formData, setFormData] = useState({
-    name: '',
-    description: '',
-    client: '',
-    clientContact: '',
-    clientPhone: '',
-    clientEmail: '',
-    siteId: '',
-    budget: '',
-    startDate: '',
-    endDate: '',
-    status: 'planning',
-    priority: 'medium',
-    projectManager: '',
-    teamLead: '',
-    notes: '',
-    riskLevel: 'low'
+    name: '', description: '', client: '', clientContact: '',
+    clientPhone: '', clientEmail: '', siteId: '', budget: '',
+    startDate: '', endDate: '', status: 'planning', priority: 'medium',
+    projectManager: '', teamLead: '', notes: '', riskLevel: 'low'
   });
 
-  // Load projects
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  // ============================================
+  // LOAD
+  // ============================================
   const loadProjects = useCallback(async () => {
-    setLoading(true);
-    setError('');
+    setLoading(true); setError('');
     try {
       const response = await fetch(`${API_BASE_URL}/projects`, {
         headers: { 'Accept': 'application/json' }
       });
       if (!response.ok) throw new Error('Failed to load projects');
       const result = await response.json();
-      setProjects(result);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
+      setProjects(Array.isArray(result) ? result : []);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
   }, []);
 
-  useEffect(() => {
-    loadProjects();
-  }, [loadProjects]);
+  useEffect(() => { loadProjects(); }, [loadProjects]);
 
-  // Filter projects
+  // ============================================
+  // FILTERS
+  // ============================================
   const filteredProjects = useMemo(() => {
     let filtered = projects;
-    
     if (searchTerm) {
-      const search = searchTerm.toLowerCase();
-      filtered = filtered.filter(p => 
-        p.name.toLowerCase().includes(search) ||
-        p.code?.toLowerCase().includes(search) ||
-        (p.client && p.client.toLowerCase().includes(search))
+      const s = searchTerm.toLowerCase();
+      filtered = filtered.filter(p =>
+        p.name?.toLowerCase().includes(s) ||
+        p.code?.toLowerCase().includes(s) ||
+        (p.client && p.client.toLowerCase().includes(s))
       );
     }
-    
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(p => p.status === statusFilter);
-    }
-    
-    if (priorityFilter !== 'all') {
-      filtered = filtered.filter(p => p.priority === priorityFilter);
-    }
-    
+    if (statusFilter !== 'all') filtered = filtered.filter(p => p.status === statusFilter);
+    if (priorityFilter !== 'all') filtered = filtered.filter(p => p.priority === priorityFilter);
     return filtered;
   }, [projects, searchTerm, statusFilter, priorityFilter]);
 
-  // Project statistics
+  // ============================================
+  // PAGINATION
+  // ============================================
+  const totalPages = Math.max(1, Math.ceil(filteredProjects.length / itemsPerPage));
+  const paginatedProjects = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredProjects.slice(start, start + itemsPerPage);
+  }, [filteredProjects, currentPage, itemsPerPage]);
+
+  useEffect(() => { setCurrentPage(1); }, [searchTerm, statusFilter, priorityFilter, itemsPerPage, activeTab]);
+  useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
+
+  const goToPage = (page) => {
+    setCurrentPage(Math.max(1, Math.min(page, totalPages)));
+  };
+  const getPageNumbers = () => {
+    const pages = [];
+    const maxVisible = 5;
+    let start = Math.max(1, currentPage - 2);
+    let end = Math.min(totalPages, start + maxVisible - 1);
+    if (end - start < maxVisible - 1) start = Math.max(1, end - maxVisible + 1);
+    for (let i = start; i <= end; i++) pages.push(i);
+    return pages;
+  };
+
+  // ============================================
+  // STATS
+  // ============================================
   const stats = useMemo(() => {
     const total = projects.length;
     const active = projects.filter(p => p.status === 'active' || p.status === 'planning').length;
     const completed = projects.filter(p => p.status === 'completed').length;
     const cancelled = projects.filter(p => p.status === 'cancelled').length;
     const onHold = projects.filter(p => p.status === 'on_hold').length;
-    const overdue = projects.filter(p => p.status !== 'completed' && p.endDate && p.endDate < Utils.today()).length;
+    const overdue = projects.filter(p =>
+      p.status !== 'completed' && p.endDate && p.endDate < Utils.today()
+    ).length;
     const totalBudget = projects.reduce((sum, p) => sum + (p.budget || 0), 0);
     const totalActual = projects.reduce((sum, p) => sum + (p.actualCost || 0), 0);
     const totalRevenue = projects.reduce((sum, p) => sum + (p.revenue || 0), 0);
     const totalProfit = projects.reduce((sum, p) => sum + ((p.revenue || 0) - (p.actualCost || 0)), 0);
-    const avgProgress = projects.length > 0 ? projects.reduce((sum, p) => sum + (p.progress || 0), 0) / projects.length : 0;
-    
-    return { 
-      total, 
-      active, 
-      completed, 
-      cancelled,
-      onHold,
-      overdue, 
-      totalBudget, 
-      totalActual, 
-      totalRevenue,
-      totalProfit,
-      avgProgress,
+    const avgProgress = total > 0
+      ? projects.reduce((sum, p) => sum + (p.progress || 0), 0) / total : 0;
+    const completionRate = total > 0 ? (completed / total) * 100 : 0;
+    const budgetUtilization = totalBudget > 0 ? (totalActual / totalBudget) * 100 : 0;
+
+    return {
+      total, active, completed, cancelled, onHold, overdue,
+      totalBudget, totalActual, totalRevenue, totalProfit,
+      avgProgress, completionRate, budgetUtilization,
       isProfit: totalProfit >= 0
     };
   }, [projects]);
 
-  // Handle form submit
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setError('');
-    setSuccess('');
-
-    try {
-      const url = editingId 
-        ? `${API_BASE_URL}/projects/${editingId}`
-        : `${API_BASE_URL}/projects`;
-      const method = editingId ? 'PUT' : 'POST';
-
-      const response = await fetch(url, {
-        method: method,
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(formData)
+  // ============================================
+  // CHART DATA
+  // ============================================
+  const chartData = useMemo(() => {
+    const statusBreakdown = ['planning', 'active', 'on_hold', 'completed', 'cancelled']
+      .map(st => {
+        const count = projects.filter(p => p.status === st).length;
+        return {
+          key: st,
+          label: st.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase()),
+          value: count,
+          color: st === 'active' ? '#009846'
+            : st === 'completed' ? '#22c55e'
+            : st === 'on_hold' ? '#3b82f6'
+            : st === 'cancelled' ? '#dc2626'
+            : '#f59e0b'
+        };
       });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to save project');
-      }
-
-      const result = await response.json();
-      setSuccess(editingId ? 'Project updated successfully!' : 'Project created successfully!');
-      await loadProjects();
-      resetForm();
-      setShowForm(false);
-      setTimeout(() => setSuccess(''), 5000);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Reset form
-  const resetForm = () => {
-    setFormData({
-      name: '',
-      description: '',
-      client: '',
-      clientContact: '',
-      clientPhone: '',
-      clientEmail: '',
-      siteId: '',
-      budget: '',
-      startDate: '',
-      endDate: '',
-      status: 'planning',
-      priority: 'medium',
-      projectManager: '',
-      teamLead: '',
-      notes: '',
-      riskLevel: 'low'
-    });
-    setEditingId(null);
-  };
-
-  // Handle edit
-  const handleEdit = (project) => {
-    setEditingId(project.id);
-    setFormData({
-      name: project.name || '',
-      description: project.description || '',
-      client: project.client || '',
-      clientContact: project.clientContact || '',
-      clientPhone: project.clientPhone || '',
-      clientEmail: project.clientEmail || '',
-      siteId: project.siteId || '',
-      budget: project.budget || '',
-      startDate: project.startDate || '',
-      endDate: project.endDate || '',
-      status: project.status || 'planning',
-      priority: project.priority || 'medium',
-      projectManager: project.projectManager || '',
-      teamLead: project.teamLead || '',
-      notes: project.notes || '',
-      riskLevel: project.riskLevel || 'low'
-    });
-    setShowForm(true);
-  };
-
-  // Handle delete
-  const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this project?')) return;
-    
-    try {
-      const response = await fetch(`${API_BASE_URL}/projects/${id}`, {
-        method: 'DELETE',
-        headers: { 'Accept': 'application/json' }
-      });
-      
-      if (!response.ok) throw new Error('Failed to delete project');
-      
-      setSuccess('Project deleted successfully!');
-      await loadProjects();
-      setTimeout(() => setSuccess(''), 5000);
-    } catch (err) {
-      setError(err.message);
-    }
-  };
-
-  // Toggle expand
-  const toggleExpand = (id) => {
-    setExpandedProjects(prev => ({
-      ...prev,
-      [id]: !prev[id]
+    const prioritySpread = ['low', 'medium', 'high', 'critical'].map(pr => ({
+      label: pr.charAt(0).toUpperCase() + pr.slice(1),
+      value: projects.filter(p => p.priority === pr).length,
+      color: pr === 'critical' ? 'linear-gradient(180deg,#dc2626,#b91c1c)'
+        : pr === 'high' ? 'linear-gradient(180deg,#f97316,#ea580c)'
+        : pr === 'medium' ? 'linear-gradient(180deg,#f59e0b,#d97706)'
+        : 'linear-gradient(180deg,#3b82f6,#2563eb)'
     }));
-  };
 
-  // Handle hover for tooltips
-  const handleCardHover = (cardId, event) => {
-    setHoveredCard(cardId);
-    setTooltipPosition({
-      x: event.clientX + 15,
-      y: event.clientY - 10
-    });
-  };
+    const progressBuckets = [
+      { label: '0-25%', value: projects.filter(p => (p.progress || 0) < 25).length },
+      { label: '25-50%', value: projects.filter(p => (p.progress || 0) >= 25 && (p.progress || 0) < 50).length },
+      { label: '50-75%', value: projects.filter(p => (p.progress || 0) >= 50 && (p.progress || 0) < 75).length },
+      { label: '75-100%', value: projects.filter(p => (p.progress || 0) >= 75).length }
+    ];
 
-  const handleCardLeave = () => {
-    setHoveredCard(null);
-  };
+    const financials = [
+      {
+        label: 'Budget',
+        total: Math.round(stats.totalBudget),
+        segments: [{ label: 'Budget', value: stats.totalBudget, color: '#f59e0b' }]
+      },
+      {
+        label: 'Actual Cost',
+        total: Math.round(stats.totalActual),
+        segments: [{ label: 'Actual', value: stats.totalActual, color: '#dc2626' }]
+      },
+      {
+        label: 'Revenue',
+        total: Math.round(stats.totalRevenue),
+        segments: [{ label: 'Revenue', value: stats.totalRevenue, color: '#009846' }]
+      },
+      {
+        label: 'Profit',
+        total: Math.round(Math.abs(stats.totalProfit)),
+        segments: [{
+          label: 'Profit',
+          value: Math.abs(stats.totalProfit),
+          color: stats.totalProfit >= 0 ? '#009846' : '#dc2626'
+        }]
+      }
+    ];
 
-  // Get status config
+    const topRevenue = [...projects]
+      .sort((a, b) => (b.revenue || 0) - (a.revenue || 0))
+      .slice(0, 7)
+      .map(p => p.revenue || 0);
+
+    return { statusBreakdown, prioritySpread, progressBuckets, financials, topRevenue };
+  }, [projects, stats]);
+
+  // ============================================
+  // CONFIG HELPERS
+  // ============================================
   const getStatusConfig = (status) => {
     const configs = {
       planning: { color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)', label: 'Planning', icon: Clock },
-      active: { color: '#22c55e', bg: 'rgba(34, 197, 94, 0.12)', label: 'Active', icon: PlayCircle },
-      on_hold: { color: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.12)', label: 'On Hold', icon: PauseCircle },
-      completed: { color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.12)', label: 'Completed', icon: CheckCircle },
-      cancelled: { color: '#ef4444', bg: 'rgba(239, 68, 68, 0.12)', label: 'Cancelled', icon: XCircle }
+      active: { color: '#009846', bg: 'rgba(0, 152, 70, 0.12)', label: 'Active', icon: PlayCircle },
+      on_hold: { color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.12)', label: 'On Hold', icon: PauseCircle },
+      completed: { color: '#22c55e', bg: 'rgba(34, 197, 94, 0.12)', label: 'Completed', icon: CheckCircle },
+      cancelled: { color: '#dc2626', bg: 'rgba(220, 38, 38, 0.12)', label: 'Cancelled', icon: XCircle }
     };
     return configs[status] || configs.planning;
   };
 
-  // Get priority config
   const getPriorityConfig = (priority) => {
     const configs = {
       low: { color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.12)', label: 'Low' },
       medium: { color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)', label: 'Medium' },
       high: { color: '#f97316', bg: 'rgba(249, 115, 22, 0.12)', label: 'High' },
-      critical: { color: '#ef4444', bg: 'rgba(239, 68, 68, 0.12)', label: 'Critical' }
+      critical: { color: '#dc2626', bg: 'rgba(220, 38, 38, 0.12)', label: 'Critical' }
     };
     return configs[priority] || configs.medium;
   };
 
-  // Get health config
   const getHealthConfig = (health) => {
     const configs = {
-      on_track: { color: '#22c55e', icon: CheckCircle, label: 'On Track' },
+      on_track: { color: '#009846', icon: CheckCircle, label: 'On Track' },
       at_risk: { color: '#f59e0b', icon: AlertCircle, label: 'At Risk' },
       behind: { color: '#f97316', icon: Circle, label: 'Behind' },
-      critical: { color: '#ef4444', icon: XCircle, label: 'Critical' },
-      overdue: { color: '#ef4444', icon: AlertCircle, label: 'Overdue' },
-      completed: { color: '#3b82f6', icon: CheckCircle, label: 'Completed' }
+      critical: { color: '#dc2626', icon: XCircle, label: 'Critical' },
+      overdue: { color: '#dc2626', icon: AlertCircle, label: 'Overdue' },
+      completed: { color: '#22c55e', icon: CheckCircle, label: 'Completed' }
     };
     return configs[health] || configs.on_track;
   };
 
-  // Get card gradient based on status
   const getCardGradient = (status) => {
     const gradients = {
-      planning: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-      active: 'linear-gradient(135deg, #22c55e 0%, #16a34a 100%)',
-      on_hold: 'linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%)',
-      completed: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-      cancelled: 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'
+      planning: 'linear-gradient(135deg, #f59e0b, #d97706)',
+      active: 'linear-gradient(135deg, #009846, #007a38)',
+      on_hold: 'linear-gradient(135deg, #3b82f6, #1d4ed8)',
+      completed: 'linear-gradient(135deg, #22c55e, #16a34a)',
+      cancelled: 'linear-gradient(135deg, #dc2626, #b91c1c)'
     };
     return gradients[status] || gradients.planning;
   };
 
-  // Export dashboard report (Excel)
+  // ============================================
+  // CRUD
+  // ============================================
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true); setError(''); setSuccess('');
+    try {
+      const url = editingId ? `${API_BASE_URL}/projects/${editingId}` : `${API_BASE_URL}/projects`;
+      const method = editingId ? 'PUT' : 'POST';
+      const response = await fetch(url, {
+        method,
+        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify(formData)
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        throw new Error(err.error || 'Failed to save project');
+      }
+      setSuccess(editingId ? 'Project updated' : 'Project created');
+      await loadProjects();
+      resetForm();
+      setShowForm(false);
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err) { setError(err.message); }
+    finally { setLoading(false); }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      name: '', description: '', client: '', clientContact: '',
+      clientPhone: '', clientEmail: '', siteId: '', budget: '',
+      startDate: '', endDate: '', status: 'planning', priority: 'medium',
+      projectManager: '', teamLead: '', notes: '', riskLevel: 'low'
+    });
+    setEditingId(null);
+  };
+
+  const handleEdit = (project) => {
+    setEditingId(project.id);
+    setFormData({
+      name: project.name || '', description: project.description || '',
+      client: project.client || '', clientContact: project.clientContact || '',
+      clientPhone: project.clientPhone || '', clientEmail: project.clientEmail || '',
+      siteId: project.siteId || '', budget: project.budget || '',
+      startDate: project.startDate || '', endDate: project.endDate || '',
+      status: project.status || 'planning', priority: project.priority || 'medium',
+      projectManager: project.projectManager || '', teamLead: project.teamLead || '',
+      notes: project.notes || '', riskLevel: project.riskLevel || 'low'
+    });
+    setShowForm(true);
+  };
+
+  const handleDelete = async (id) => {
+    if (!window.confirm('Delete this project? This cannot be undone.')) return;
+    try {
+      const response = await fetch(`${API_BASE_URL}/projects/${id}`, {
+        method: 'DELETE', headers: { 'Accept': 'application/json' }
+      });
+      if (!response.ok) throw new Error('Failed to delete project');
+      setSuccess('Project deleted');
+      await loadProjects();
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err) { setError(err.message); }
+  };
+
+  const toggleExpand = (id) => setExpandedProjects(prev => ({ ...prev, [id]: !prev[id] }));
+
+  const handleCardHover = (cardId, event) => {
+    setHoveredCard(cardId);
+    setTooltipPosition({ x: event.clientX + 15, y: event.clientY - 10 });
+  };
+  const handleCardLeave = () => setHoveredCard(null);
+
+  const clearFilters = () => {
+    setSearchTerm(''); setStatusFilter('all'); setPriorityFilter('all');
+  };
+  const hasActiveFilters = searchTerm.trim() !== '' || statusFilter !== 'all' || priorityFilter !== 'all';
+
+  // ============================================
+  // EXPORT
+  // ============================================
   const exportDashboardReport = () => {
     const wb = XLSX.utils.book_new();
-    
     const summaryData = [
       [`${CONFIG.COMPANY_NAME || 'Haji Younas Contracting'} - PROJECT DASHBOARD REPORT`],
       ['Generated:', new Date().toLocaleString()],
@@ -476,13 +517,9 @@ const ProjectDashboard = ({ data, refreshData }) => {
       ['Total Actual Cost', stats.totalActual],
       ['Total Revenue', stats.totalRevenue],
       ['Total Profit', stats.totalProfit],
-      ['Average Progress', `${stats.avgProgress.toFixed(1)}%`],
-      []
+      ['Average Progress', `${stats.avgProgress.toFixed(1)}%`]
     ];
-
-    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
-
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryData), 'Summary');
     const projectData = projects.map(p => ({
       'Code': p.code || `PRJ-${String(p.id).padStart(4, '0')}`,
       'Name': p.name,
@@ -500,35 +537,24 @@ const ProjectDashboard = ({ data, refreshData }) => {
       'Team Lead': p.teamLead || 'N/A',
       'Risk Level': p.riskLevel || 'N/A'
     }));
-    const wsProjects = XLSX.utils.json_to_sheet(projectData);
-    XLSX.utils.book_append_sheet(wb, wsProjects, 'Projects');
-
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(projectData), 'Projects');
     XLSX.writeFile(wb, `project_dashboard_report_${Utils.today()}.xlsx`);
   };
 
   // ============================================
-  // GENERATE REPORT HTML - A4 Professional Format
+  // PRINT REPORT
   // ============================================
   const generateReportHTML = () => {
     const companyName = data?.companyName || CONFIG.COMPANY_NAME || 'Haji Younas Contracting';
-    const companyAddress = data?.companyAddress || 'Flat/Shop 21, Bldg A0365, Road 55, Block 210, Muharraq';
-    const companyPhone = data?.companyPhone || '+973 37099957';
-    const companyEmail = data?.companyEmail || 'hajiyounas.contracting@gmail.com';
-    const companyCr = data?.companyCr || '141997-1';
-
-    const primary = '#1a3c6e';
-    const secondary = '#c9a84c';
-    const light = '#e8edf3';
-    const muted = '#6a6a8a';
-    const border = '#d4d9e0';
-    const text = '#1a1a2e';
-
+    const primary = '#0b1a12';
+    const secondary = '#009846';
+    const light = '#e8f5ee';
+    const muted = '#5b7267';
+    const border = '#c8d6ce';
+    const text = '#0b1a12';
     const statusLabels = {
-      planning: '📋 Planning',
-      active: '🔄 Active',
-      on_hold: '⏸️ On Hold',
-      completed: '✅ Completed',
-      cancelled: '❌ Cancelled'
+      planning: 'Planning', active: 'Active', on_hold: 'On Hold',
+      completed: 'Completed', cancelled: 'Cancelled'
     };
 
     return `
@@ -538,490 +564,104 @@ const ProjectDashboard = ({ data, refreshData }) => {
   <meta charset="UTF-8">
   <title>Project Dashboard Report</title>
   <style>
-    * {
-      margin: 0 !important;
-      padding: 0 !important;
-      border: 0 !important;
-      box-sizing: border-box !important;
-    }
-    
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
-      width: 100% !important;
-      height: 100% !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      background: #ffffff !important;
-      font-family: 'Times New Roman', Arial, serif !important;
-      color: ${text} !important;
+      width: 100%; height: 100%;
+      background: #fff;
+      font-family: 'Times New Roman', Arial, serif;
+      color: ${text};
     }
-    
-    .report-container {
-      width: 100% !important;
-      max-width: 100% !important;
-      margin: 0 !important;
-      padding: 0 !important;
-      background: #ffffff !important;
-      display: flex !important;
-      flex-direction: column !important;
-      min-height: 100vh !important;
-      position: relative !important;
-    }
-    
-    .report-background {
-      position: fixed !important;
-      top: 0 !important;
-      left: 0 !important;
-      width: 100% !important;
-      height: 100% !important;
-      z-index: 0 !important;
-      pointer-events: none !important;
-      display: flex !important;
-      flex-direction: column !important;
-      justify-content: center !important;
-      align-items: center !important;
-      opacity: 0.06 !important;
-    }
-    
-    .report-background img {
-      width: 70% !important;
-      max-width: 600px !important;
-      height: auto !important;
-      display: block !important;
-    }
-    
-    .report-content-wrapper {
-      position: relative !important;
-      z-index: 1 !important;
-      display: flex !important;
-      flex-direction: column !important;
-      min-height: 100vh !important;
-      width: 100% !important;
-    }
-    
-    .report-header-section {
-      flex-shrink: 0 !important;
-      width: 100% !important;
-      background: #ffffff !important;
-    }
-    
-    .report-header-img {
-      width: 100% !important;
-      max-width: 100% !important;
-      display: block !important;
-      margin: 0 !important;
-      padding: 0 !important;
-    }
-    
-    .report-header-img img {
-      width: 100% !important;
-      height: auto !important;
-      display: block !important;
-      margin: 0 !important;
-      padding: 0 !important;
-    }
-    
-    .report-content {
-      flex: 1 !important;
-      width: 100% !important;
-      padding: 20px 40px 30px 40px !important;
-      background: transparent !important;
-    }
-    
-    .report-title {
-      text-align: center !important;
-      font-size: 20px !important;
-      font-weight: 800 !important;
-      color: ${primary} !important;
-      letter-spacing: 2px !important;
-      margin: 0 0 10px 0 !important;
-      padding: 10px 0 !important;
-      border-bottom: 3px solid ${secondary} !important;
-      text-transform: uppercase !important;
-    }
-    
-    .report-period {
-      text-align: center !important;
-      font-size: 14px !important;
-      color: ${muted} !important;
-      margin: 0 0 16px 0 !important;
-      font-weight: 500 !important;
-    }
-    
-    .report-section {
-      margin: 16px 0 !important;
-    }
-    
-    .report-section-title {
-      font-size: 14px !important;
-      font-weight: 700 !important;
-      color: ${primary} !important;
-      margin: 0 0 10px 0 !important;
-      padding: 6px 12px !important;
-      background: ${light} !important;
-      border-left: 4px solid ${secondary} !important;
-      text-transform: uppercase !important;
-      letter-spacing: 0.5px !important;
-    }
-    
-    .stats-grid {
-      display: grid !important;
-      grid-template-columns: repeat(4, 1fr) !important;
-      gap: 12px !important;
-      margin: 0 0 16px 0 !important;
-    }
-    
-    .stat-box {
-      padding: 12px 16px !important;
-      border: 1px solid ${border} !important;
-      border-radius: 4px !important;
-      background: #fafafa !important;
-    }
-    
-    .stat-box .label {
-      font-size: 10px !important;
-      color: ${muted} !important;
-      text-transform: uppercase !important;
-      font-weight: 600 !important;
-      letter-spacing: 0.3px !important;
-    }
-    
-    .stat-box .value {
-      font-size: 18px !important;
-      font-weight: 700 !important;
-      color: ${primary} !important;
-      margin-top: 4px !important;
-    }
-    
-    .stat-box .value.positive {
-      color: #009846 !important;
-    }
-    
-    .stat-box .value.negative {
-      color: #dc2626 !important;
-    }
-    
-    .report-table {
-      width: 100% !important;
-      border-collapse: collapse !important;
-      margin: 10px 0 !important;
-      font-size: 11px !important;
-    }
-    
-    .report-table thead {
-      background: ${primary} !important;
-    }
-    
-    .report-table th {
-      color: #ffffff !important;
-      padding: 6px 8px !important;
-      text-align: center !important;
-      font-size: 9px !important;
-      text-transform: uppercase !important;
-      font-weight: 700 !important;
-      letter-spacing: 0.5px !important;
-      white-space: nowrap !important;
-    }
-    
-    .report-table td {
-      padding: 5px 8px !important;
-      border-bottom: 1px solid ${border} !important;
-      text-align: center !important;
-      font-size: 10px !important;
-    }
-    
-    .report-table td:first-child {
-      text-align: left !important;
-      font-weight: 600 !important;
-    }
-    
-    .report-table .positive {
-      color: #009846 !important;
-    }
-    
-    .report-table .negative {
-      color: #dc2626 !important;
-    }
-    
-    .report-summary {
-      margin: 16px 0 !important;
-      padding: 12px 20px !important;
-      background: ${light} !important;
-      border: 2px solid ${secondary} !important;
-      display: grid !important;
-      grid-template-columns: repeat(2, 1fr) !important;
-      gap: 8px !important;
-    }
-    
-    .report-summary .row {
-      display: flex !important;
-      justify-content: space-between !important;
-      padding: 4px 0 !important;
-      font-size: 13px !important;
-    }
-    
-    .report-summary .row .lbl {
-      color: ${muted} !important;
-    }
-    
-    .report-summary .row .val {
-      font-weight: 600 !important;
-    }
-    
-    .report-summary .grand-total {
-      border-top: 2px solid ${secondary} !important;
-      padding-top: 8px !important;
-      margin-top: 4px !important;
-      grid-column: 1 / -1 !important;
-    }
-    
-    .report-summary .grand-total .lbl {
-      font-size: 16px !important;
-      font-weight: 700 !important;
-      color: ${primary} !important;
-    }
-    
-    .report-summary .grand-total .val {
-      font-size: 18px !important;
-      font-weight: 800 !important;
-      color: ${primary} !important;
-    }
-    
-    .report-footer-section {
-      flex-shrink: 0 !important;
-      width: 100% !important;
-      margin-top: auto !important;
-      background: #ffffff !important;
-    }
-    
-    .report-footer-img {
-      width: 100% !important;
-      max-width: 100% !important;
-      display: block !important;
-      margin: 0 !important;
-      padding: 0 !important;
-    }
-    
-    .report-footer-img img {
-      width: 100% !important;
-      height: auto !important;
-      display: block !important;
-      margin: 0 !important;
-      padding: 0 !important;
-    }
-    
-    .badge-status {
-      display: inline-block !important;
-      padding: 2px 10px !important;
-      border-radius: 12px !important;
-      font-size: 9px !important;
-      font-weight: 600 !important;
-    }
-    
-    .badge-planning { background: rgba(245, 158, 11, 0.15) !important; color: #d97706 !important; }
-    .badge-active { background: rgba(34, 197, 94, 0.15) !important; color: #16a34a !important; }
-    .badge-on_hold { background: rgba(139, 92, 246, 0.15) !important; color: #7c3aed !important; }
-    .badge-completed { background: rgba(59, 130, 246, 0.15) !important; color: #2563eb !important; }
-    .badge-cancelled { background: rgba(239, 68, 68, 0.15) !important; color: #dc2626 !important; }
-    
+    .report-container { width: 100%; display: flex; flex-direction: column; min-height: 100vh; position: relative; }
+    .report-background { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      display: flex; justify-content: center; align-items: center; opacity: 0.06; }
+    .report-background img { width: 70%; max-width: 600px; }
+    .report-content-wrapper { position: relative; z-index: 1; display: flex; flex-direction: column;
+      min-height: 100vh; width: 100%; }
+    .report-header-img img, .report-footer-img img { width: 100%; height: auto; display: block; }
+    .report-content { flex: 1; padding: 20px 40px 30px; }
+    .report-title { text-align: center; font-size: 20px; font-weight: 800; color: ${primary};
+      letter-spacing: 2px; padding: 10px 0; border-bottom: 3px solid ${secondary};
+      text-transform: uppercase; margin-bottom: 10px; }
+    .report-period { text-align: center; font-size: 14px; color: ${muted}; margin-bottom: 16px; }
+    .report-section { margin: 16px 0; }
+    .report-section-title { font-size: 14px; font-weight: 700; color: ${primary};
+      padding: 6px 12px; background: ${light}; border-left: 4px solid ${secondary};
+      text-transform: uppercase; margin-bottom: 10px; }
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+    .stat-box { padding: 12px 16px; border: 1px solid ${border}; border-radius: 4px; background: #fafafa; }
+    .stat-box .label { font-size: 10px; color: ${muted}; text-transform: uppercase; font-weight: 600; }
+    .stat-box .value { font-size: 18px; font-weight: 700; color: ${primary}; margin-top: 4px; }
+    .stat-box .value.positive { color: #009846; }
+    .stat-box .value.negative { color: #dc2626; }
+    .report-table { width: 100%; border-collapse: collapse; margin: 10px 0; font-size: 11px; }
+    .report-table thead { background: ${primary}; }
+    .report-table th { color: #fff; padding: 6px 8px; text-align: center; font-size: 9px;
+      text-transform: uppercase; font-weight: 700; }
+    .report-table td { padding: 5px 8px; border-bottom: 1px solid ${border};
+      text-align: center; font-size: 10px; }
+    .report-table td:first-child { text-align: left; font-weight: 600; }
+    .report-table .positive { color: #009846; }
+    .report-table .negative { color: #dc2626; }
     @media print {
-      @page {
-        margin: 0 !important;
-        padding: 0 !important;
-        size: A4 landscape !important;
-      }
-      
-      html, body {
-        margin: 0 !important;
-        padding: 0 !important;
-        width: 100% !important;
-        height: 100% !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-      
-      .report-container {
-        min-height: 100vh !important;
-        width: 100% !important;
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-      
-      .report-background {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        position: fixed !important;
-      }
-      
-      .stat-box {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
-      
-      .report-table thead {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        background: ${primary} !important;
-      }
-      
-      .report-table th {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        background: ${primary} !important;
-      }
-      
-      .report-summary {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-      }
+      @page { margin: 0; size: A4 landscape; }
+      html, body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .report-table thead, .report-table th, .stat-box { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     }
-    
-    @media screen {
-      .report-container {
-        max-width: 100% !important;
-        margin: 0 auto !important;
-        box-shadow: 0 4px 30px rgba(0,0,0,0.12) !important;
-        border: 1px solid ${border} !important;
-      }
-    }
-    
+    @media screen { .report-container { max-width: 100%; margin: 0 auto;
+      box-shadow: 0 4px 30px rgba(0,0,0,0.12); border: 1px solid ${border}; } }
     @media screen and (max-width: 768px) {
-      .report-content {
-        padding: 12px 16px !important;
-      }
-      
-      .stats-grid {
-        grid-template-columns: repeat(2, 1fr) !important;
-      }
-      
-      .report-summary {
-        grid-template-columns: 1fr !important;
-      }
-      
-      .report-table {
-        font-size: 9px !important;
-      }
+      .report-content { padding: 12px 16px; }
+      .stats-grid { grid-template-columns: repeat(2, 1fr); }
+      .report-table { font-size: 9px; }
     }
   </style>
 </head>
 <body>
   <div class="report-container">
-    <div class="report-background">
-      <img src='${background}' alt="Background" />
-    </div>
-
+    <div class="report-background"><img src='${background}' alt="Background" /></div>
     <div class="report-content-wrapper">
-      <div class="report-header-section">
-        <div class="report-header-img">
-          <img src="${letterheadHeader}" alt="Letterhead" />
-        </div>
-      </div>
-
+      <div class="report-header-img"><img src="${letterheadHeader}" alt="Letterhead" /></div>
       <div class="report-content">
         <div class="report-title">Project Dashboard Report</div>
         <div class="report-period">
-          Generated: ${new Date().toLocaleString()} &nbsp;|&nbsp; Total Projects: ${stats.total}
-          ${statusFilter !== 'all' ? `&nbsp;|&nbsp; Filter: ${getStatusConfig(statusFilter).label}` : ''}
+          Generated: ${new Date().toLocaleString()} | Total Projects: ${stats.total}
         </div>
-
         <div class="report-section">
           <div class="report-section-title">Project Summary</div>
           <div class="stats-grid">
-            <div class="stat-box">
-              <div class="label">Total Projects</div>
-              <div class="value">${stats.total}</div>
-            </div>
-            <div class="stat-box">
-              <div class="label">Active</div>
-              <div class="value">${stats.active}</div>
-            </div>
-            <div class="stat-box">
-              <div class="label">Completed</div>
-              <div class="value">${stats.completed}</div>
-            </div>
-            <div class="stat-box">
-              <div class="label">Overdue</div>
-              <div class="value ${stats.overdue > 0 ? 'negative' : ''}">${stats.overdue}</div>
-            </div>
+            <div class="stat-box"><div class="label">Total Projects</div><div class="value">${stats.total}</div></div>
+            <div class="stat-box"><div class="label">Active</div><div class="value">${stats.active}</div></div>
+            <div class="stat-box"><div class="label">Completed</div><div class="value">${stats.completed}</div></div>
+            <div class="stat-box"><div class="label">Overdue</div><div class="value ${stats.overdue > 0 ? 'negative' : ''}">${stats.overdue}</div></div>
           </div>
         </div>
-
         <div class="report-section">
           <div class="report-section-title">Financial Summary</div>
           <div class="stats-grid">
-            <div class="stat-box">
-              <div class="label">Total Budget</div>
-              <div class="value">${Utils.formatCurrency(stats.totalBudget)}</div>
-            </div>
-            <div class="stat-box">
-              <div class="label">Total Actual Cost</div>
-              <div class="value">${Utils.formatCurrency(stats.totalActual)}</div>
-            </div>
-            <div class="stat-box">
-              <div class="label">Total Revenue</div>
-              <div class="value positive">${Utils.formatCurrency(stats.totalRevenue)}</div>
-            </div>
-            <div class="stat-box">
-              <div class="label">Total Profit</div>
-              <div class="value ${stats.isProfit ? 'positive' : 'negative'}">${Utils.formatCurrency(stats.totalProfit)}</div>
-            </div>
+            <div class="stat-box"><div class="label">Total Budget</div><div class="value">${Utils.formatCurrency(stats.totalBudget)}</div></div>
+            <div class="stat-box"><div class="label">Total Actual Cost</div><div class="value">${Utils.formatCurrency(stats.totalActual)}</div></div>
+            <div class="stat-box"><div class="label">Total Revenue</div><div class="value positive">${Utils.formatCurrency(stats.totalRevenue)}</div></div>
+            <div class="stat-box"><div class="label">Total Profit</div><div class="value ${stats.isProfit ? 'positive' : 'negative'}">${Utils.formatCurrency(stats.totalProfit)}</div></div>
           </div>
         </div>
-
-        <div class="report-section">
-          <div class="report-section-title">Project Status Distribution</div>
-          <div class="report-summary">
-            <div class="row">
-              <span class="lbl">📋 Planning</span>
-              <span class="val">${projects.filter(p => p.status === 'planning').length}</span>
-            </div>
-            <div class="row">
-              <span class="lbl">🔄 Active</span>
-              <span class="val">${projects.filter(p => p.status === 'active').length}</span>
-            </div>
-            <div class="row">
-              <span class="lbl">⏸️ On Hold</span>
-              <span class="val">${projects.filter(p => p.status === 'on_hold').length}</span>
-            </div>
-            <div class="row">
-              <span class="lbl">✅ Completed</span>
-              <span class="val">${projects.filter(p => p.status === 'completed').length}</span>
-            </div>
-            <div class="row">
-              <span class="lbl">❌ Cancelled</span>
-              <span class="val">${projects.filter(p => p.status === 'cancelled').length}</span>
-            </div>
-            <div class="row grand-total">
-              <span class="lbl">Average Progress</span>
-              <span class="val">${stats.avgProgress.toFixed(1)}%</span>
-            </div>
-          </div>
-        </div>
-
         ${filteredProjects.length > 0 ? `
           <div class="report-section">
             <div class="report-section-title">Project List</div>
             <table class="report-table">
               <thead>
                 <tr>
-                  <th>#</th>
-                  <th>Code</th>
-                  <th>Project Name</th>
-                  <th>Client</th>
-                  <th>Status</th>
-                  <th>Priority</th>
-                  <th>Budget</th>
-                  <th>Profit</th>
-                  <th>Progress</th>
+                  <th>#</th><th>Code</th><th>Project Name</th><th>Client</th>
+                  <th>Status</th><th>Priority</th><th>Budget</th><th>Profit</th><th>Progress</th>
                 </tr>
               </thead>
               <tbody>
-                ${filteredProjects.slice(0, 20).map((project, index) => `
+                ${filteredProjects.slice(0, 30).map((project, index) => `
                   <tr>
                     <td>${index + 1}</td>
                     <td>${project.code || `PRJ-${String(project.id).padStart(4, '0')}`}</td>
                     <td>${project.name}</td>
                     <td>${project.client || 'N/A'}</td>
-                    <td><span class="badge-status badge-${project.status}">${statusLabels[project.status] || project.status}</span></td>
+                    <td>${statusLabels[project.status] || project.status}</td>
                     <td>${getPriorityConfig(project.priority).label}</td>
                     <td>${Utils.formatCurrencyShort(project.budget || 0)}</td>
                     <td class="${(project.revenue || 0) - (project.actualCost || 0) >= 0 ? 'positive' : 'negative'}">
@@ -1032,138 +672,396 @@ const ProjectDashboard = ({ data, refreshData }) => {
                 `).join('')}
               </tbody>
             </table>
-            ${filteredProjects.length > 20 ? `<p style="text-align:center;font-size:11px;color:${muted};margin-top:8px;">Showing 20 of ${filteredProjects.length} projects</p>` : ''}
           </div>
         ` : ''}
       </div>
-
-      <div class="report-footer-section">
-        <div class="report-footer-img">
-          <img src="${letterheadFooter}" alt="Footer" />
-        </div>
-      </div>
+      <div class="report-footer-img"><img src="${letterheadFooter}" alt="Footer" /></div>
     </div>
   </div>
-  <script>
-    window.onload = function() {
-      setTimeout(function() {
-        window.print();
-      }, 500);
-    };
-  <\/script>
+  <script>window.onload = function() { setTimeout(function() { window.print(); }, 500); };<\/script>
 </body>
 </html>
     `;
   };
 
-  // ============================================
-  // PRINT REPORT FUNCTION
-  // ============================================
   const handlePrintReport = () => {
     const printWindow = window.open('', '_blank', 'width=1100,height=800');
-    if (!printWindow) {
-      alert('Please allow popups to print');
-      return;
-    }
-    const printHTML = generateReportHTML();
-    printWindow.document.write(printHTML);
+    if (!printWindow) { alert('Please allow popups to print'); return; }
+    printWindow.document.write(generateReportHTML());
     printWindow.document.close();
     printWindow.focus();
   };
 
-  // Card details for tooltips
+  // ============================================
+  // CARD TOOLTIPS
+  // ============================================
   const cardDetails = {
-    total: {
-      title: 'Total Projects',
-      details: [
-        { label: 'Total Projects', value: stats.total },
-        { label: 'Active Projects', value: stats.active },
-        { label: 'Completed', value: stats.completed },
-        { label: 'On Hold', value: stats.onHold },
-        { label: 'Cancelled', value: stats.cancelled }
-      ]
-    },
-    active: {
-      title: 'Active Projects',
-      details: [
-        { label: 'Active Projects', value: stats.active },
-        { label: 'Planning', value: projects.filter(p => p.status === 'planning').length },
-        { label: 'On Hold', value: stats.onHold },
-        { label: 'Average Progress', value: `${stats.avgProgress.toFixed(1)}%` }
-      ]
-    },
-    completed: {
-      title: 'Completed Projects',
-      details: [
-        { label: 'Completed', value: stats.completed },
-        { label: 'Total Revenue', value: Utils.formatCurrency(stats.totalRevenue) },
-        { label: 'Total Profit', value: Utils.formatCurrency(stats.totalProfit) },
-        { label: 'Completion Rate', value: stats.total > 0 ? `${((stats.completed / stats.total) * 100).toFixed(1)}%` : '0%' }
-      ]
-    },
-    overdue: {
-      title: 'Overdue Projects',
-      details: [
-        { label: 'Overdue Projects', value: stats.overdue },
-        { label: 'Active Projects', value: stats.active },
-        { label: 'On Hold', value: stats.onHold },
-        { label: 'Critical', value: projects.filter(p => p.priority === 'critical' && p.status !== 'completed').length }
-      ]
-    },
-    budget: {
-      title: 'Total Budget',
-      details: [
-        { label: 'Total Budget', value: Utils.formatCurrency(stats.totalBudget) },
-        { label: 'Total Actual Cost', value: Utils.formatCurrency(stats.totalActual) },
-        { label: 'Variance', value: Utils.formatCurrency(stats.totalBudget - stats.totalActual) },
-        { label: 'Budget Utilization', value: stats.totalBudget > 0 ? `${((stats.totalActual / stats.totalBudget) * 100).toFixed(1)}%` : '0%' }
-      ]
-    },
-    revenue: {
-      title: 'Total Revenue',
-      details: [
-        { label: 'Total Revenue', value: Utils.formatCurrency(stats.totalRevenue) },
-        { label: 'Total Profit', value: Utils.formatCurrency(stats.totalProfit) },
-        { label: 'Profit Margin', value: stats.totalRevenue > 0 ? `${((stats.totalProfit / stats.totalRevenue) * 100).toFixed(1)}%` : '0%' },
-        { label: 'Completed Projects', value: stats.completed }
-      ]
-    }
+    total: { title: 'Total Projects', details: [
+      { label: 'Total', value: stats.total },
+      { label: 'Active', value: stats.active },
+      { label: 'Completed', value: stats.completed },
+      { label: 'On Hold', value: stats.onHold }
+    ]},
+    active: { title: 'Active Projects', details: [
+      { label: 'Active', value: stats.active },
+      { label: 'Planning', value: projects.filter(p => p.status === 'planning').length },
+      { label: 'On Hold', value: stats.onHold },
+      { label: 'Avg Progress', value: `${stats.avgProgress.toFixed(1)}%` }
+    ]},
+    completed: { title: 'Completed Projects', details: [
+      { label: 'Completed', value: stats.completed },
+      { label: 'Completion Rate', value: `${stats.completionRate.toFixed(1)}%` },
+      { label: 'Total Revenue', value: Utils.formatCurrency(stats.totalRevenue) },
+      { label: 'Total Profit', value: Utils.formatCurrency(stats.totalProfit) }
+    ]},
+    overdue: { title: 'Overdue Projects', details: [
+      { label: 'Overdue', value: stats.overdue },
+      { label: 'Active', value: stats.active },
+      { label: 'On Hold', value: stats.onHold },
+      { label: 'Critical Priority', value: projects.filter(p => p.priority === 'critical' && p.status !== 'completed').length }
+    ]},
+    budget: { title: 'Total Budget', details: [
+      { label: 'Budget', value: Utils.formatCurrency(stats.totalBudget) },
+      { label: 'Actual Cost', value: Utils.formatCurrency(stats.totalActual) },
+      { label: 'Variance', value: Utils.formatCurrency(stats.totalBudget - stats.totalActual) },
+      { label: 'Utilization', value: `${stats.budgetUtilization.toFixed(1)}%` }
+    ]},
+    revenue: { title: 'Total Revenue', details: [
+      { label: 'Revenue', value: Utils.formatCurrency(stats.totalRevenue) },
+      { label: 'Profit', value: Utils.formatCurrency(stats.totalProfit) },
+      { label: 'Profit Margin', value: stats.totalRevenue > 0 ? `${((stats.totalProfit / stats.totalRevenue) * 100).toFixed(1)}%` : '0%' },
+      { label: 'Completed', value: stats.completed }
+    ]}
   };
 
   // ============================================
-  // MODAL OPEN FUNCTIONS WITH PROPER EVENT HANDLING
+  // STATS CARDS
   // ============================================
-  const openCreateModal = (e) => {
-    if (e) e.stopPropagation();
-    if (isOpening) return;
-    setIsOpening(true);
-    resetForm();
-    setShowForm(true);
-    setTimeout(() => setIsOpening(false), 300);
+  const statItems = [
+    { id: 'total', icon: Briefcase, label: 'Total Projects', value: stats.total,
+      meta: `${stats.completionRate.toFixed(0)}% completion rate`,
+      color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.12)',
+      accent: 'linear-gradient(90deg,#3b82f6,#60a5fa)', trend: 'neutral' },
+    { id: 'active', icon: Activity, label: 'Active Projects', value: stats.active,
+      meta: `${stats.avgProgress.toFixed(0)}% avg progress`,
+      color: '#009846', bg: 'rgba(0, 152, 70, 0.12)',
+      accent: 'linear-gradient(90deg,#009846,#00b856)', trend: 'up' },
+    { id: 'completed', icon: CheckCircle, label: 'Completed', value: stats.completed,
+      meta: `${stats.total > 0 ? ((stats.completed / stats.total) * 100).toFixed(0) : 0}% of projects`,
+      color: '#22c55e', bg: 'rgba(34, 197, 94, 0.12)',
+      accent: 'linear-gradient(90deg,#22c55e,#16a34a)', trend: 'up' },
+    { id: 'overdue', icon: AlertCircle, label: 'Overdue', value: stats.overdue,
+      meta: stats.overdue > 0 ? 'Needs attention' : 'All on schedule',
+      color: '#dc2626', bg: 'rgba(220, 38, 38, 0.12)',
+      accent: 'linear-gradient(90deg,#dc2626,#ef4444)',
+      trend: stats.overdue > 0 ? 'down' : 'neutral' },
+    { id: 'budget', icon: DollarSign, label: 'Total Budget',
+      value: Utils.formatCurrencyShort(stats.totalBudget),
+      meta: `${stats.budgetUtilization.toFixed(0)}% utilized`,
+      color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)',
+      accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)', trend: 'neutral' },
+    { id: 'revenue', icon: TrendingUp, label: 'Total Revenue',
+      value: Utils.formatCurrencyShort(stats.totalRevenue),
+      meta: stats.isProfit ? 'Profitable' : 'In loss',
+      color: '#009846', bg: 'rgba(0, 152, 70, 0.12)',
+      accent: 'linear-gradient(90deg,#009846,#00b856)',
+      trend: stats.isProfit ? 'up' : 'down' }
+  ];
+
+  const renderStats = () => (
+    <div className="pd-stats-grid">
+      {statItems.map(item => {
+        const Icon = item.icon;
+        return (
+          <div key={item.id} className="pd-stat-card"
+            onMouseEnter={(e) => handleCardHover(item.id, e)}
+            onMouseLeave={handleCardLeave}
+            onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
+          >
+            <div className="pd-stat-accent" style={{ background: item.accent }} />
+            <div className="pd-stat-icon" style={{ background: item.bg, color: item.color }}>
+              <Icon size={20} />
+            </div>
+            <div className="pd-stat-content">
+              <span className="pd-stat-label">{item.label}</span>
+              <span className="pd-stat-value">{item.value}</span>
+              <span className="pd-stat-meta">{item.meta}</span>
+            </div>
+            <div className={`pd-stat-trend ${item.trend}`}>
+              {item.trend === 'up' && <TrendingUp size={16} />}
+              {item.trend === 'down' && <TrendingDown size={16} />}
+              {item.trend === 'neutral' && <Activity size={16} />}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  const renderTooltip = () => {
+    if (!hoveredCard || !cardDetails[hoveredCard]) return null;
+    return (
+      <div className="pd-card-tooltip"
+        style={{ position: 'fixed', left: tooltipPosition.x, top: tooltipPosition.y, zIndex: 9999 }}>
+        <div className="pd-tooltip-header"><strong>{cardDetails[hoveredCard].title}</strong></div>
+        <div className="pd-tooltip-body">
+          {cardDetails[hoveredCard].details.map((d, i) => (
+            <div key={i} className="pd-tooltip-row">
+              <span className="pd-tooltip-label">{d.label}</span>
+              <span className="pd-tooltip-value">{d.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   };
 
-  const openEditModal = (project, e) => {
-    if (e) e.stopPropagation();
-    if (isOpening) return;
-    setIsOpening(true);
-    handleEdit(project);
-    setTimeout(() => setIsOpening(false), 300);
+  // ============================================
+  // TABS
+  // ============================================
+  const renderTabs = () => {
+    const tabs = [
+      { id: 'dashboard', label: 'Dashboard', icon: BarChart3, badge: null },
+      { id: 'projects', label: 'Projects', icon: FolderKanban, badge: filteredProjects.length }
+    ];
+    return (
+      <div className="pd-tabs" role="tablist">
+        {tabs.map(tab => {
+          const Icon = tab.icon;
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              className={`pd-tab ${isActive ? 'active' : ''}`}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              <Icon size={15} />
+              <span>{tab.label}</span>
+              {tab.badge !== null && (
+                <span className="pd-tab-badge">{tab.badge}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    );
   };
 
-  const closeModal = (e) => {
-    if (e) e.stopPropagation();
-    setShowForm(false);
-    resetForm();
+  // ============================================
+  // DASHBOARD TAB CONTENT
+  // ============================================
+  const renderDashboardTab = () => (
+    <div className="pd-tab-panel">
+      {stats.total === 0 && !loading ? (
+        <div className="pd-empty">
+          <div className="pd-empty-icon-wrapper">
+            <BarChart3 size={44} />
+          </div>
+          <h3>No data to display</h3>
+          <p>Create your first project to see dashboard analytics.</p>
+          <button type="button" className="pd-btn-primary"
+            onClick={() => { resetForm(); setShowForm(true); }}>
+            <Plus size={15} /> Create Project
+          </button>
+        </div>
+      ) : (
+        renderDashboard()
+      )}
+    </div>
+  );
+
+  // ============================================
+  // PROJECTS TAB CONTENT
+  // ============================================
+  const renderProjectsTab = () => (
+    <div className="pd-tab-panel">
+      {/* Filters */}
+      <div className="pd-filters">
+        <div className="pd-search-box">
+          <Search size={15} className="pd-search-icon" />
+          <input type="text" placeholder="Search projects..."
+            value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+          {searchTerm && (
+            <button type="button" className="pd-clear-search" onClick={() => setSearchTerm('')}>
+              <X size={13} />
+            </button>
+          )}
+        </div>
+        <div className="pd-filter-group">
+          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="pd-filter-select">
+            <option value="all">All Status</option>
+            <option value="planning">Planning</option>
+            <option value="active">Active</option>
+            <option value="on_hold">On Hold</option>
+            <option value="completed">Completed</option>
+            <option value="cancelled">Cancelled</option>
+          </select>
+          <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)} className="pd-filter-select">
+            <option value="all">All Priority</option>
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+            <option value="critical">Critical</option>
+          </select>
+        </div>
+        {hasActiveFilters && (
+          <button type="button" className="pd-clear-filters" onClick={clearFilters}>
+            <X size={13} /> Clear
+          </button>
+        )}
+        <span className="pd-result-count">
+          Showing {filteredProjects.length} of {projects.length}
+        </span>
+      </div>
+
+      {/* Content */}
+      {loading ? (
+        <div className="pd-loading">
+          <div className="pd-loading-spinner" />
+          <span>Loading projects...</span>
+        </div>
+      ) : filteredProjects.length === 0 ? (
+        <div className="pd-empty">
+          <div className="pd-empty-icon-wrapper">
+            {hasActiveFilters ? <Search size={44} /> : <FolderKanban size={44} />}
+          </div>
+          <h3>{hasActiveFilters ? 'No matching projects' : 'No projects yet'}</h3>
+          <p>{hasActiveFilters ? 'Try adjusting your search or filters.' : 'Create your first project to get started.'}</p>
+          {hasActiveFilters ? (
+            <button type="button" className="pd-btn-secondary" onClick={clearFilters}>
+              <X size={14} /> Clear filters
+            </button>
+          ) : (
+            <button type="button" className="pd-btn-primary"
+              onClick={() => { resetForm(); setShowForm(true); }}>
+              <Plus size={15} /> Create Project
+            </button>
+          )}
+        </div>
+      ) : (
+        <>
+          <div className="pd-grid">
+            {paginatedProjects.map((p, i) => renderProjectCard(p, i))}
+          </div>
+          {renderPagination()}
+        </>
+      )}
+    </div>
+  );
+
+  // ============================================
+  // DASHBOARD CHARTS
+  // ============================================
+  const renderDashboard = () => {
+    return (
+      <div className="pd-dashboard-charts">
+        {/* Row 1 */}
+        <div className="pd-chart-grid pd-chart-grid-2">
+          <div className="pd-chart-card">
+            <div className="pd-chart-header">
+              <div>
+                <h3><LineChartIcon size={15} /> Top Revenue Projects</h3>
+                <span>Highest earning projects</span>
+              </div>
+              <span className="pd-chart-badge">{projects.length} total</span>
+            </div>
+            <div className="pd-chart-body">
+              <SparkCurve data={chartData.topRevenue} color="#009846" height={120} />
+            </div>
+            <div className="pd-chart-footer">
+              {chartData.topRevenue.map((_, i) => <span key={i}>P{i+1}</span>)}
+            </div>
+          </div>
+
+          <div className="pd-chart-card">
+            <div className="pd-chart-header">
+              <div>
+                <h3><Gauge size={15} /> Key Metrics</h3>
+                <span>Overall health</span>
+              </div>
+            </div>
+            <div className="pd-gauges-row">
+              <CircularGauge value={stats.avgProgress} size={110} color="#009846" label="AVG PROGRESS" />
+              <CircularGauge value={stats.completionRate} size={110} color="#22c55e" label="COMPLETION" />
+              <CircularGauge value={Math.min(stats.budgetUtilization, 100)} size={110}
+                color={stats.budgetUtilization > 100 ? '#dc2626' : '#3b82f6'} label="BUDGET USE" />
+            </div>
+          </div>
+        </div>
+
+        {/* Row 2 */}
+        <div className="pd-chart-grid pd-chart-grid-2">
+          <div className="pd-chart-card">
+            <div className="pd-chart-header">
+              <div>
+                <h3><BarChart3 size={15} /> Projects by Status</h3>
+                <span>Current distribution</span>
+              </div>
+            </div>
+            <div className="pd-chart-body pd-chart-body-pad">
+              <StackedBars rows={chartData.statusBreakdown.map(s => ({
+                label: s.label, total: s.value,
+                segments: [{ label: s.label, value: s.value, color: s.color }]
+              }))} />
+            </div>
+          </div>
+
+          <div className="pd-chart-card">
+            <div className="pd-chart-header">
+              <div>
+                <h3><Flame size={15} /> Projects by Priority</h3>
+                <span>Distribution</span>
+              </div>
+            </div>
+            <div className="pd-chart-body">
+              <VerticalBars data={chartData.prioritySpread} />
+            </div>
+          </div>
+        </div>
+
+        {/* Row 3 — Progress buckets + Financials */}
+        <div className="pd-chart-grid pd-chart-grid-2">
+          <div className="pd-chart-card">
+            <div className="pd-chart-header">
+              <div>
+                <h3><Target size={15} /> Progress Distribution</h3>
+                <span>How far along are the projects?</span>
+              </div>
+            </div>
+            <div className="pd-chart-body">
+              <VerticalBars data={chartData.progressBuckets.map((b, i) => ({
+                ...b,
+                color: i === 0 ? 'linear-gradient(180deg,#dc2626,#b91c1c)'
+                  : i === 1 ? 'linear-gradient(180deg,#f59e0b,#d97706)'
+                  : i === 2 ? 'linear-gradient(180deg,#3b82f6,#2563eb)'
+                  : 'linear-gradient(180deg,#009846,#007a38)'
+              }))} />
+            </div>
+          </div>
+
+          <div className="pd-chart-card">
+            <div className="pd-chart-header">
+              <div>
+                <h3><Landmark size={15} /> Financial Overview</h3>
+                <span>Budget vs Revenue</span>
+              </div>
+            </div>
+            <div className="pd-chart-body pd-chart-body-pad">
+              <StackedBars rows={chartData.financials} />
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
-  const closeDetailModal = (e) => {
-    if (e) e.stopPropagation();
-    setShowDetailModal(false);
-    setSelectedProject(null);
-  };
-
-  // Render project card
-  const renderProjectCard = (project) => {
+  // ============================================
+  // PROJECT CARD
+  // ============================================
+  const renderProjectCard = (project, index) => {
     const isExpanded = expandedProjects[project.id];
     const progress = project.progress || 0;
     const profit = (project.revenue || 0) - (project.actualCost || 0);
@@ -1176,734 +1074,564 @@ const ProjectDashboard = ({ data, refreshData }) => {
     const HealthIcon = healthConfig.icon;
 
     return (
-      <div 
-        key={project.id} 
-        className="project-card-modern"
-        onMouseEnter={() => setHoveredCard(project.id)}
-        onMouseLeave={() => setHoveredCard(null)}
+      <div
+        key={project.id}
+        className="pd-project-card"
+        style={{ animationDelay: `${Math.min(index * 60, 480)}ms` }}
       >
-        <div className="project-card-gradient" style={{ background: gradient }}></div>
-        <div className="project-card-content">
-          <div className="project-card-header">
-            <div className="project-title-section">
-              <span className="project-code">{project.code || `PRJ-${String(project.id).padStart(4, '0')}`}</span>
-              <h3 className="project-name">{project.name}</h3>
-              {project.client && (
-                <div className="project-client">
-                  <User size={14} />
-                  <span>{project.client}</span>
-                </div>
-              )}
-            </div>
-            <div className="project-badges">
-              <span className="badge status-badge" style={{ background: statusConfig.bg, color: statusConfig.color }}>
-                <StatusIcon size={14} className="badge-icon" />
-                {statusConfig.label}
-              </span>
-              <span className="badge priority-badge" style={{ background: priorityConfig.bg, color: priorityConfig.color }}>
-                {priorityConfig.label}
-              </span>
-            </div>
-          </div>
-
-          <div className="project-card-body">
-            <div className="project-progress-section">
-              <div className="progress-header">
-                <span className="progress-label">Progress</span>
-                <span className="progress-value">{progress.toFixed(0)}%</span>
-              </div>
-              <div className="progress-bar-modern">
-                <div 
-                  className="progress-fill-modern" 
-                  style={{ 
-                    width: `${Math.min(progress, 100)}%`,
-                    background: progress >= 75 ? 'linear-gradient(90deg, #22c55e, #16a34a)' : 
-                               progress >= 50 ? 'linear-gradient(90deg, #f59e0b, #d97706)' : 
-                               'linear-gradient(90deg, #ef4444, #dc2626)'
-                  }}
-                />
-              </div>
-            </div>
-
-            <div className="project-stats-grid">
-              <div className="stat-item">
-                <span className="stat-label">Budget</span>
-                <span className="stat-value">{Utils.formatCurrencyShort(project.budget || 0)}</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-label">Actual</span>
-                <span className="stat-value">{Utils.formatCurrencyShort(project.actualCost || 0)}</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-label">Revenue</span>
-                <span className="stat-value">{Utils.formatCurrencyShort(project.revenue || 0)}</span>
-              </div>
-              <div className="stat-item">
-                <span className="stat-label">Profit</span>
-                <span className={`stat-value ${isProfit ? 'profit' : 'loss'}`}>
-                  {Utils.formatCurrencyShort(profit)}
-                </span>
-              </div>
-            </div>
-
-            <div className="project-meta">
-              <div className="meta-item">
-                <Calendar size={14} />
-                <span>
-                  {project.startDate ? Utils.formatDate(project.startDate) : 'N/A'} 
-                  {project.endDate && ` → ${Utils.formatDate(project.endDate)}`}
-                </span>
-              </div>
-              {project.siteName && (
-                <div className="meta-item">
-                  <Building2 size={14} />
-                  <span>{project.siteName}</span>
-                </div>
-              )}
-              <div className="meta-item health-status" style={{ color: healthConfig.color }}>
-                <HealthIcon size={14} /> {healthConfig.label}
-              </div>
-            </div>
-
-            {project.description && (
-              <div className="project-description">{project.description}</div>
+        <div className="pd-project-accent" style={{ background: gradient }} />
+        <div className="pd-project-header">
+          <div className="pd-project-title-section">
+            <span className="pd-project-code">{project.code || `PRJ-${String(project.id).padStart(4, '0')}`}</span>
+            <h3 className="pd-project-name">{project.name}</h3>
+            {project.client && (
+              <div className="pd-project-client"><User size={12} /><span>{project.client}</span></div>
             )}
           </div>
+          <div className="pd-project-badges">
+            <span className="pd-badge" style={{ background: statusConfig.bg, color: statusConfig.color }}>
+              <StatusIcon size={12} /> {statusConfig.label}
+            </span>
+            <span className="pd-badge" style={{ background: priorityConfig.bg, color: priorityConfig.color }}>
+              {priorityConfig.label}
+            </span>
+          </div>
+        </div>
 
-          <div className="project-card-footer">
-            <div className="project-actions">
-              <button className="btn-icon" onClick={(e) => {
-                e.stopPropagation();
-                setSelectedProject(project);
-                setShowDetailModal(true);
-              }} title="View Details">
-                <Eye size={16} />
-              </button>
-              <button className="btn-icon" onClick={(e) => openEditModal(project, e)} title="Edit">
-                <Edit size={16} />
-              </button>
-              <button className="btn-icon danger" onClick={(e) => {
-                e.stopPropagation();
-                handleDelete(project.id);
-              }} title="Delete">
-                <Trash2 size={16} />
-              </button>
-              <button className="btn-icon expand-btn" onClick={(e) => {
-                e.stopPropagation();
-                toggleExpand(project.id);
-              }} title="Expand">
-                {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-              </button>
+        <div className="pd-project-body">
+          {/* Progress */}
+          <div className="pd-progress-section">
+            <div className="pd-progress-header">
+              <span className="pd-progress-label">Progress</span>
+              <span className="pd-progress-value">{progress.toFixed(0)}%</span>
             </div>
-            <div className="project-team">
-              {project.projectManager && (
-                <span><User size={12} /> PM: {project.projectManager}</span>
-              )}
-              {project.teamLead && (
-                <span><Users size={12} /> Lead: {project.teamLead}</span>
-              )}
+            <div className="pd-progress-bar">
+              <div
+                className="pd-progress-fill"
+                style={{
+                  width: `${Math.min(progress, 100)}%`,
+                  background: progress >= 75
+                    ? 'linear-gradient(90deg,#009846,#00b856)'
+                    : progress >= 50
+                      ? 'linear-gradient(90deg,#f59e0b,#d97706)'
+                      : 'linear-gradient(90deg,#dc2626,#ef4444)'
+                }}
+              />
             </div>
           </div>
 
-          {isExpanded && (
-            <div className="project-expanded-details">
-              <div className="detail-section">
-                <h4>Client Details</h4>
-                <div className="detail-grid">
-                  {project.clientContact && (
-                    <div className="detail-item">
-                      <span className="label">Contact:</span>
-                      <span>{project.clientContact}</span>
-                    </div>
-                  )}
-                  {project.clientPhone && (
-                    <div className="detail-item">
-                      <span className="label">Phone:</span>
-                      <span>{project.clientPhone}</span>
-                    </div>
-                  )}
-                  {project.clientEmail && (
-                    <div className="detail-item">
-                      <span className="label">Email:</span>
-                      <span>{project.clientEmail}</span>
-                    </div>
-                  )}
+          {/* Financials */}
+          <div className="pd-financial-grid">
+            <div className="pd-fin-item">
+              <span className="pd-fin-label">Budget</span>
+              <span className="pd-fin-value pd-fin-budget">{Utils.formatCurrencyShort(project.budget || 0)}</span>
+            </div>
+            <div className="pd-fin-item">
+              <span className="pd-fin-label">Actual</span>
+              <span className="pd-fin-value pd-fin-actual">{Utils.formatCurrencyShort(project.actualCost || 0)}</span>
+            </div>
+            <div className="pd-fin-item">
+              <span className="pd-fin-label">Revenue</span>
+              <span className="pd-fin-value pd-fin-revenue">{Utils.formatCurrencyShort(project.revenue || 0)}</span>
+            </div>
+            <div className="pd-fin-item">
+              <span className="pd-fin-label">Profit</span>
+              <span className={`pd-fin-value ${isProfit ? 'pd-fin-profit' : 'pd-fin-loss'}`}>
+                {Utils.formatCurrencyShort(profit)}
+              </span>
+            </div>
+          </div>
+
+          {/* Meta */}
+          <div className="pd-project-meta">
+            <div className="pd-meta-item">
+              <Calendar size={12} />
+              <span>
+                {project.startDate ? Utils.formatDate(project.startDate) : 'N/A'}
+                {project.endDate && ` → ${Utils.formatDate(project.endDate)}`}
+              </span>
+            </div>
+            {project.siteName && (
+              <div className="pd-meta-item"><Building2 size={12} /><span>{project.siteName}</span></div>
+            )}
+            <div className="pd-meta-item" style={{ color: healthConfig.color }}>
+              <HealthIcon size={12} /> {healthConfig.label}
+            </div>
+          </div>
+
+          {project.description && (
+            <div className="pd-project-description">{project.description}</div>
+          )}
+        </div>
+
+        <div className="pd-project-footer">
+          <div className="pd-project-team">
+            {project.projectManager && <span><User size={11} /> {project.projectManager}</span>}
+            {project.teamLead && <span><Users size={11} /> {project.teamLead}</span>}
+          </div>
+          <div className="pd-project-actions">
+            <button className="pd-icon-btn" onClick={(e) => {
+              e.stopPropagation();
+              setSelectedProject(project);
+              setShowDetailModal(true);
+            }} title="View"><Eye size={14} /></button>
+            <button className="pd-icon-btn pd-icon-edit" onClick={(e) => {
+              e.stopPropagation();
+              handleEdit(project);
+            }} title="Edit"><Edit size={14} /></button>
+            <button className="pd-icon-btn pd-icon-danger" onClick={(e) => {
+              e.stopPropagation();
+              handleDelete(project.id);
+            }} title="Delete"><Trash2 size={14} /></button>
+            <button className="pd-icon-btn pd-icon-expand" onClick={(e) => {
+              e.stopPropagation();
+              toggleExpand(project.id);
+            }} title="Expand">
+              {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+          </div>
+        </div>
+
+        {isExpanded && (
+          <div className="pd-expanded">
+            <div className="pd-expanded-grid">
+              {project.clientContact && (
+                <div className="pd-expanded-item">
+                  <User size={12} />
+                  <div>
+                    <span className="pd-expanded-label">Contact</span>
+                    <span className="pd-expanded-value">{project.clientContact}</span>
+                  </div>
                 </div>
-              </div>
+              )}
+              {project.clientPhone && (
+                <div className="pd-expanded-item">
+                  <Phone size={12} />
+                  <div>
+                    <span className="pd-expanded-label">Phone</span>
+                    <span className="pd-expanded-value">{project.clientPhone}</span>
+                  </div>
+                </div>
+              )}
+              {project.clientEmail && (
+                <div className="pd-expanded-item">
+                  <Mail size={12} />
+                  <div>
+                    <span className="pd-expanded-label">Email</span>
+                    <span className="pd-expanded-value">{project.clientEmail}</span>
+                  </div>
+                </div>
+              )}
               {project.notes && (
-                <div className="detail-section">
-                  <h4>Notes</h4>
-                  <p className="notes-text">{project.notes}</p>
+                <div className="pd-expanded-item pd-expanded-full">
+                  <FileText size={12} />
+                  <div>
+                    <span className="pd-expanded-label">Notes</span>
+                    <span className="pd-expanded-value">{project.notes}</span>
+                  </div>
                 </div>
               )}
             </div>
-          )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ============================================
+  // PAGINATION
+  // ============================================
+  const renderPagination = () => {
+    if (filteredProjects.length === 0) return null;
+    const startItem = (currentPage - 1) * itemsPerPage + 1;
+    const endItem = Math.min(currentPage * itemsPerPage, filteredProjects.length);
+    return (
+      <div className="pd-pagination">
+        <div className="pd-pagination-info">
+          Showing <strong>{startItem}</strong> – <strong>{endItem}</strong> of <strong>{filteredProjects.length}</strong> projects
+        </div>
+        <div className="pd-pagination-controls">
+          <div className="pd-pagination-items">
+            <span>Show:</span>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => setItemsPerPage(Number(e.target.value))}
+              className="pd-pagination-select"
+            >
+              <option value={6}>6</option>
+              <option value={9}>9</option>
+              <option value={12}>12</option>
+              <option value={18}>18</option>
+              <option value={24}>24</option>
+              <option value={48}>48</option>
+            </select>
+          </div>
+          <div className="pd-pagination-buttons">
+            <button className="pd-page-btn" onClick={() => goToPage(1)} disabled={currentPage === 1}>
+              <ChevronsLeft size={15} />
+            </button>
+            <button className="pd-page-btn" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1}>
+              <ChevronLeft size={15} />
+            </button>
+            {getPageNumbers().map(page => (
+              <button key={page}
+                className={`pd-page-btn ${page === currentPage ? 'active' : ''}`}
+                onClick={() => goToPage(page)}>{page}</button>
+            ))}
+            <button className="pd-page-btn" onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}>
+              <ChevronRight size={15} />
+            </button>
+            <button className="pd-page-btn" onClick={() => goToPage(totalPages)} disabled={currentPage === totalPages}>
+              <ChevronsRight size={15} />
+            </button>
+          </div>
         </div>
       </div>
     );
   };
 
-  return (
-    <div className="project-dashboard-modern">
-      {/* Header */}
-      <div className="dashboard-header-modern">
-        <div className="header-left">
-          <div className="header-icon-wrapper">
-            <FolderKanban size={28} />
-            <span className="header-badge">Projects</span>
-          </div>
-          <div>
-            <h2>Project Management</h2>
-            <p className="header-subtitle">Track and manage all your construction projects</p>
-          </div>
-        </div>
-        <div className="header-right">
-          <button className="btn-print-modern" onClick={handlePrintReport}>
-            <Printer size={16} />
-            Print Report
-          </button>
-          <button className="btn-export-modern" onClick={exportDashboardReport}>
-            <Download size={16} />
-            Export
-          </button>
-          <button className="btn-refresh-modern" onClick={loadProjects}>
-            <RefreshCw size={16} />
-            Refresh
-          </button>
-          <button 
-            className="btn-primary-modern" 
-            onClick={openCreateModal}
-          >
-            <Plus size={18} />
-            New Project
-          </button>
-        </div>
-      </div>
-
-      {/* Stats Cards with Tooltips */}
-      <div className="stats-grid-modern">
-        <div 
-          className="stat-card-modern total"
-          onMouseEnter={(e) => handleCardHover('total', e)}
-          onMouseLeave={handleCardLeave}
-          onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-        >
-          <div className="stat-icon-wrapper" style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#3b82f6' }}>
-            <Briefcase size={22} />
-          </div>
-          <div className="stat-content">
-            <span className="stat-label">Total Projects</span>
-            <span className="stat-value">{stats.total}</span>
-          </div>
-          <div className="stat-trend">
-            <TrendingUp size={16} />
-          </div>
-        </div>
-
-        <div 
-          className="stat-card-modern active"
-          onMouseEnter={(e) => handleCardHover('active', e)}
-          onMouseLeave={handleCardLeave}
-          onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-        >
-          <div className="stat-icon-wrapper" style={{ background: 'rgba(34, 197, 94, 0.12)', color: '#22c55e' }}>
-            <Activity size={22} />
-          </div>
-          <div className="stat-content">
-            <span className="stat-label">Active</span>
-            <span className="stat-value">{stats.active}</span>
-          </div>
-          <div className="stat-progress">
-            <div className="progress-bar" style={{ width: stats.total > 0 ? `${(stats.active / stats.total) * 100}%` : '0%' }}></div>
-          </div>
-        </div>
-
-        <div 
-          className="stat-card-modern completed"
-          onMouseEnter={(e) => handleCardHover('completed', e)}
-          onMouseLeave={handleCardLeave}
-          onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-        >
-          <div className="stat-icon-wrapper" style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#3b82f6' }}>
-            <CheckCircle size={22} />
-          </div>
-          <div className="stat-content">
-            <span className="stat-label">Completed</span>
-            <span className="stat-value">{stats.completed}</span>
-          </div>
-        </div>
-
-        <div 
-          className="stat-card-modern overdue"
-          onMouseEnter={(e) => handleCardHover('overdue', e)}
-          onMouseLeave={handleCardLeave}
-          onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-        >
-          <div className="stat-icon-wrapper" style={{ background: 'rgba(239, 68, 68, 0.12)', color: '#ef4444' }}>
-            <AlertCircle size={22} />
-          </div>
-          <div className="stat-content">
-            <span className="stat-label">Overdue</span>
-            <span className="stat-value">{stats.overdue}</span>
-          </div>
-        </div>
-
-        <div 
-          className="stat-card-modern budget"
-          onMouseEnter={(e) => handleCardHover('budget', e)}
-          onMouseLeave={handleCardLeave}
-          onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-        >
-          <div className="stat-icon-wrapper" style={{ background: 'rgba(245, 158, 11, 0.12)', color: '#f59e0b' }}>
-            <DollarSign size={22} />
-          </div>
-          <div className="stat-content">
-            <span className="stat-label">Total Budget</span>
-            <span className="stat-value">{Utils.formatCurrencyShort(stats.totalBudget)}</span>
-          </div>
-        </div>
-
-        <div 
-          className="stat-card-modern revenue"
-          onMouseEnter={(e) => handleCardHover('revenue', e)}
-          onMouseLeave={handleCardLeave}
-          onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}
-        >
-          <div className="stat-icon-wrapper" style={{ background: 'rgba(0, 152, 70, 0.12)', color: '#009846' }}>
-            <TrendingUp size={22} />
-          </div>
-          <div className="stat-content">
-            <span className="stat-label">Total Revenue</span>
-            <span className="stat-value">{Utils.formatCurrencyShort(stats.totalRevenue)}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Tooltip */}
-      {hoveredCard && cardDetails[hoveredCard] && (
-        <div 
-          className="card-tooltip"
-          style={{
-            position: 'fixed',
-            left: tooltipPosition.x,
-            top: tooltipPosition.y,
-            zIndex: 9999
-          }}
-        >
-          <div className="tooltip-header">
-            <strong>{cardDetails[hoveredCard].title}</strong>
-          </div>
-          <div className="tooltip-body">
-            {cardDetails[hoveredCard].details.map((detail, idx) => (
-              <div key={idx} className="tooltip-row">
-                <span className="tooltip-label">{detail.label}</span>
-                <span className="tooltip-value">{detail.value}</span>
+  // ============================================
+  // FORM MODAL
+  // ============================================
+  const renderFormModal = () => (
+    <ModalPortal>
+      <div className="pd-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowForm(false); resetForm(); } }}>
+        <div className="pd-modal-content" onClick={e => e.stopPropagation()}>
+          <div className="pd-modal-header pd-modal-header-green">
+            <div className="pd-modal-header-left">
+              <div className="pd-modal-header-icon"><FolderKanban size={18} /></div>
+              <div>
+                <h3>{editingId ? 'Edit Project' : 'New Project'}</h3>
+                <p className="pd-modal-subtitle">{editingId ? 'Update project details' : 'Create a new project'}</p>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Filters */}
-      <div className="filters-section-modern">
-        <div className="search-box-modern">
-          <Search size={18} className="search-icon" />
-          <input
-            type="text"
-            placeholder="Search projects..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-          {searchTerm && (
-            <button className="clear-search" onClick={() => setSearchTerm('')}>
-              <X size={16} />
+            </div>
+            <button type="button" className="pd-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
+              <X size={18} />
             </button>
-          )}
-        </div>
-        <div className="filter-group-modern">
-          <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
-            <option value="all">All Status</option>
-            <option value="planning">Planning</option>
-            <option value="active">Active</option>
-            <option value="on_hold">On Hold</option>
-            <option value="completed">Completed</option>
-            <option value="cancelled">Cancelled</option>
-          </select>
-          <select value={priorityFilter} onChange={(e) => setPriorityFilter(e.target.value)}>
-            <option value="all">All Priority</option>
-            <option value="low">Low</option>
-            <option value="medium">Medium</option>
-            <option value="high">High</option>
-            <option value="critical">Critical</option>
-          </select>
+          </div>
+          <div className="pd-modal-body">
+            <form onSubmit={handleSubmit}>
+              <div className="pd-form-row">
+                <div className="pd-form-group">
+                  <label>Project Name <span className="pd-required">*</span></label>
+                  <input type="text" value={formData.name}
+                    onChange={e => setFormData({ ...formData, name: e.target.value })}
+                    required placeholder="Enter project name" className="pd-form-input" autoFocus />
+                </div>
+                <div className="pd-form-group">
+                  <label>Client</label>
+                  <input type="text" value={formData.client}
+                    onChange={e => setFormData({ ...formData, client: e.target.value })}
+                    placeholder="Client name" className="pd-form-input" />
+                </div>
+              </div>
+              <div className="pd-form-group">
+                <label>Description</label>
+                <textarea value={formData.description}
+                  onChange={e => setFormData({ ...formData, description: e.target.value })}
+                  placeholder="Project description" rows="2" className="pd-form-textarea" />
+              </div>
+              <div className="pd-form-row">
+                <div className="pd-form-group">
+                  <label>Site</label>
+                  <select value={formData.siteId}
+                    onChange={e => setFormData({ ...formData, siteId: e.target.value })}
+                    className="pd-form-select">
+                    <option value="">Select Site</option>
+                    {data?.sites?.map(site => (
+                      <option key={site.id} value={site.id}>{site.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="pd-form-group">
+                  <label>Budget (BD)</label>
+                  <input type="number" step="0.001" value={formData.budget}
+                    onChange={e => setFormData({ ...formData, budget: e.target.value })}
+                    placeholder="0.000" className="pd-form-input" />
+                </div>
+              </div>
+              <div className="pd-form-row">
+                <div className="pd-form-group">
+                  <label>Start Date</label>
+                  <input type="date" value={formData.startDate}
+                    onChange={e => setFormData({ ...formData, startDate: e.target.value })}
+                    className="pd-form-input" />
+                </div>
+                <div className="pd-form-group">
+                  <label>End Date</label>
+                  <input type="date" value={formData.endDate}
+                    onChange={e => setFormData({ ...formData, endDate: e.target.value })}
+                    className="pd-form-input" />
+                </div>
+              </div>
+              <div className="pd-form-row">
+                <div className="pd-form-group">
+                  <label>Status</label>
+                  <select value={formData.status}
+                    onChange={e => setFormData({ ...formData, status: e.target.value })}
+                    className="pd-form-select">
+                    <option value="planning">Planning</option>
+                    <option value="active">Active</option>
+                    <option value="on_hold">On Hold</option>
+                    <option value="completed">Completed</option>
+                    <option value="cancelled">Cancelled</option>
+                  </select>
+                </div>
+                <div className="pd-form-group">
+                  <label>Priority</label>
+                  <select value={formData.priority}
+                    onChange={e => setFormData({ ...formData, priority: e.target.value })}
+                    className="pd-form-select">
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </div>
+              </div>
+              <div className="pd-form-row">
+                <div className="pd-form-group">
+                  <label>Project Manager</label>
+                  <input type="text" value={formData.projectManager}
+                    onChange={e => setFormData({ ...formData, projectManager: e.target.value })}
+                    placeholder="Project manager" className="pd-form-input" />
+                </div>
+                <div className="pd-form-group">
+                  <label>Team Lead</label>
+                  <input type="text" value={formData.teamLead}
+                    onChange={e => setFormData({ ...formData, teamLead: e.target.value })}
+                    placeholder="Team lead" className="pd-form-input" />
+                </div>
+              </div>
+              <div className="pd-form-row">
+                <div className="pd-form-group">
+                  <label>Risk Level</label>
+                  <select value={formData.riskLevel}
+                    onChange={e => setFormData({ ...formData, riskLevel: e.target.value })}
+                    className="pd-form-select">
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="critical">Critical</option>
+                  </select>
+                </div>
+                <div className="pd-form-group">
+                  <label>Notes</label>
+                  <input type="text" value={formData.notes}
+                    onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                    placeholder="Additional notes" className="pd-form-input" />
+                </div>
+              </div>
+              <div className="pd-form-actions">
+                <button type="submit" className="pd-btn-primary" disabled={loading}>
+                  <Save size={15} /> {loading ? 'Saving...' : (editingId ? 'Update Project' : 'Create Project')}
+                </button>
+                <button type="button" className="pd-btn-secondary" onClick={() => { setShowForm(false); resetForm(); }}>
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
+    </ModalPortal>
+  );
 
-      {/* Messages */}
-      {error && <div className="error-message-modern"><AlertCircle size={16} /> {error}</div>}
-      {success && <div className="success-message-modern"><CheckCircle size={16} /> {success}</div>}
+  // ============================================
+  // DETAIL MODAL
+  // ============================================
+  const renderDetailModal = () => {
+    if (!selectedProject) return null;
+    const p = selectedProject;
+    const profit = (p.revenue || 0) - (p.actualCost || 0);
+    const statusConfig = getStatusConfig(p.status);
+    const priorityConfig = getPriorityConfig(p.priority);
+    const healthConfig = getHealthConfig(p.healthStatus);
+    const StatusIcon = statusConfig.icon;
+    const HealthIcon = healthConfig.icon;
+    const gradient = getCardGradient(p.status);
 
-      {/* Project List */}
-      {loading ? (
-        <div className="loading-state-modern">
-          <div className="loading-spinner-modern"></div>
-          <span>Loading projects...</span>
-        </div>
-      ) : filteredProjects.length === 0 ? (
-        <div className="empty-state-modern">
-          <div className="empty-icon-wrapper">
-            <FolderKanban size={64} />
-          </div>
-          <h3>No Projects Found</h3>
-          <p>Create your first project to get started with project management.</p>
-          <button 
-            className="btn-primary-modern" 
-            onClick={openCreateModal}
-          >
-            <Plus size={18} /> Create Project
-          </button>
-        </div>
-      ) : (
-        <div className="projects-grid-modern">
-          {filteredProjects.map(renderProjectCard)}
-        </div>
-      )}
-
-      {/* Create/Edit Form Modal - FIXED */}
-      {showForm && (
-        <div 
-          className="modal-overlay-modern" 
-          onClick={(e) => {
-            // Only close if clicking the overlay itself, not its children
-            if (e.target === e.currentTarget) {
-              closeModal(e);
-            }
-          }}
-        >
-          <div 
-            className="modal-content-modern project-form" 
-            onClick={(e) => e.stopPropagation()} // Prevent clicks inside from bubbling
-          >
-            <div className="modal-header-modern" style={{ background: 'linear-gradient(135deg, #009846, #007a38)' }}>
-              <div className="modal-header-left">
-                <FolderKanban size={24} color="#fff" />
-                <h3 style={{ color: '#fff' }}>{editingId ? 'Edit Project' : 'New Project'}</h3>
-              </div>
-              <button 
-                className="modal-close-modern" 
-                onClick={closeModal}
-              >
-                <X size={20} color="#fff" />
-              </button>
-            </div>
-            <div className="modal-body-modern">
-              <form onSubmit={handleSubmit}>
-                <div className="form-row-modern">
-                  <div className="form-group-modern">
-                    <label>Project Name <span className="required">*</span></label>
-                    <input
-                      type="text"
-                      value={formData.name}
-                      onChange={e => setFormData({ ...formData, name: e.target.value })}
-                      required
-                      placeholder="Enter project name"
-                      className="form-input"
-                    />
-                  </div>
-                  <div className="form-group-modern">
-                    <label>Client</label>
-                    <input
-                      type="text"
-                      value={formData.client}
-                      onChange={e => setFormData({ ...formData, client: e.target.value })}
-                      placeholder="Client name"
-                      className="form-input"
-                    />
-                  </div>
-                </div>
-
-                <div className="form-row-modern">
-                  <div className="form-group-modern">
-                    <label>Description</label>
-                    <textarea
-                      value={formData.description}
-                      onChange={e => setFormData({ ...formData, description: e.target.value })}
-                      placeholder="Project description"
-                      rows="2"
-                      className="form-textarea"
-                    />
-                  </div>
-                </div>
-
-                <div className="form-row-modern">
-                  <div className="form-group-modern">
-                    <label>Site</label>
-                    <select
-                      value={formData.siteId}
-                      onChange={e => setFormData({ ...formData, siteId: e.target.value })}
-                      className="form-select"
-                    >
-                      <option value="">Select Site</option>
-                      {data?.sites?.map(site => (
-                        <option key={site.id} value={site.id}>{site.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="form-group-modern">
-                    <label>Budget (BD)</label>
-                    <input
-                      type="number"
-                      step="0.001"
-                      value={formData.budget}
-                      onChange={e => setFormData({ ...formData, budget: e.target.value })}
-                      placeholder="0.000"
-                      className="form-input"
-                    />
-                  </div>
-                </div>
-
-                <div className="form-row-modern">
-                  <div className="form-group-modern">
-                    <label>Start Date</label>
-                    <input
-                      type="date"
-                      value={formData.startDate}
-                      onChange={e => setFormData({ ...formData, startDate: e.target.value })}
-                      className="form-input"
-                    />
-                  </div>
-                  <div className="form-group-modern">
-                    <label>End Date</label>
-                    <input
-                      type="date"
-                      value={formData.endDate}
-                      onChange={e => setFormData({ ...formData, endDate: e.target.value })}
-                      className="form-input"
-                    />
-                  </div>
-                </div>
-
-                <div className="form-row-modern">
-                  <div className="form-group-modern">
-                    <label>Status</label>
-                    <select
-                      value={formData.status}
-                      onChange={e => setFormData({ ...formData, status: e.target.value })}
-                      className="form-select"
-                    >
-                      <option value="planning">Planning</option>
-                      <option value="active">Active</option>
-                      <option value="on_hold">On Hold</option>
-                      <option value="completed">Completed</option>
-                      <option value="cancelled">Cancelled</option>
-                    </select>
-                  </div>
-                  <div className="form-group-modern">
-                    <label>Priority</label>
-                    <select
-                      value={formData.priority}
-                      onChange={e => setFormData({ ...formData, priority: e.target.value })}
-                      className="form-select"
-                    >
-                      <option value="low">Low</option>
-                      <option value="medium">Medium</option>
-                      <option value="high">High</option>
-                      <option value="critical">Critical</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="form-row-modern">
-                  <div className="form-group-modern">
-                    <label>Project Manager</label>
-                    <input
-                      type="text"
-                      value={formData.projectManager}
-                      onChange={e => setFormData({ ...formData, projectManager: e.target.value })}
-                      placeholder="Project manager name"
-                      className="form-input"
-                    />
-                  </div>
-                  <div className="form-group-modern">
-                    <label>Team Lead</label>
-                    <input
-                      type="text"
-                      value={formData.teamLead}
-                      onChange={e => setFormData({ ...formData, teamLead: e.target.value })}
-                      placeholder="Team lead name"
-                      className="form-input"
-                    />
-                  </div>
-                </div>
-
-                <div className="form-row-modern">
-                  <div className="form-group-modern">
-                    <label>Risk Level</label>
-                    <select
-                      value={formData.riskLevel}
-                      onChange={e => setFormData({ ...formData, riskLevel: e.target.value })}
-                      className="form-select"
-                    >
-                      <option value="low">Low</option>
-                      <option value="medium">Medium</option>
-                      <option value="high">High</option>
-                      <option value="critical">Critical</option>
-                    </select>
-                  </div>
-                  <div className="form-group-modern">
-                    <label>Notes</label>
-                    <input
-                      type="text"
-                      value={formData.notes}
-                      onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                      placeholder="Additional notes"
-                      className="form-input"
-                    />
-                  </div>
-                </div>
-
-                <div className="form-actions-modern">
-                  <button type="submit" className="btn-primary-modern" disabled={loading}>
-                    <Save size={16} /> {loading ? 'Saving...' : (editingId ? 'Update Project' : 'Create Project')}
-                  </button>
-                  <button type="button" className="btn-secondary-modern" onClick={closeModal}>
-                    Cancel
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Detail Modal - FIXED */}
-      {selectedProject && showDetailModal && (
-        <div 
-          className="modal-overlay-modern" 
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              closeDetailModal(e);
-            }
-          }}
-        >
-          <div 
-            className="modal-content-modern project-detail" 
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="modal-header-modern" style={{ 
-              background: `linear-gradient(135deg, ${getCardGradient(selectedProject.status)})`,
-              padding: '24px 28px'
-            }}>
-              <div className="modal-header-left">
+    return (
+      <ModalPortal>
+        <div className="pd-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowDetailModal(false); setSelectedProject(null); } }}>
+          <div className="pd-modal-content pd-detail-modal" onClick={e => e.stopPropagation()}>
+            <div className="pd-modal-header" style={{ background: gradient }}>
+              <div className="pd-modal-header-left">
                 <div>
-                  <h3 style={{ color: '#fff' }}>{selectedProject.name}</h3>
-                  <div className="modal-subtitle" style={{ color: 'rgba(255,255,255,0.8)' }}>
-                    {selectedProject.code || `PRJ-${String(selectedProject.id).padStart(4, '0')}`}
-                  </div>
+                  <h3>{p.name}</h3>
+                  <p className="pd-modal-subtitle">
+                    {p.code || `PRJ-${String(p.id).padStart(4, '0')}`}
+                  </p>
                 </div>
               </div>
-              <button 
-                className="modal-close-modern" 
-                onClick={closeDetailModal}
-              >
-                <X size={24} color="#fff" />
+              <button type="button" className="pd-modal-close" onClick={() => { setShowDetailModal(false); setSelectedProject(null); }}>
+                <X size={18} />
               </button>
             </div>
-            <div className="modal-body-modern">
-              <div className="detail-summary-grid">
-                <div className="summary-item">
-                  <span className="label">Status</span>
-                  <span className="badge status-badge" style={{ 
-                    background: getStatusConfig(selectedProject.status).bg, 
-                    color: getStatusConfig(selectedProject.status).color,
-                    padding: '4px 14px',
-                    borderRadius: '20px',
-                    fontWeight: '600',
-                    fontSize: '13px'
-                  }}>
-                    {React.createElement(getStatusConfig(selectedProject.status).icon, { size: 14 })} {getStatusConfig(selectedProject.status).label}
+            <div className="pd-modal-body">
+              {/* Summary */}
+              <div className="pd-detail-summary">
+                <div className="pd-detail-summary-item">
+                  <span className="pd-detail-summary-label">Status</span>
+                  <span className="pd-badge" style={{ background: statusConfig.bg, color: statusConfig.color }}>
+                    <StatusIcon size={12} /> {statusConfig.label}
                   </span>
                 </div>
-                <div className="summary-item">
-                  <span className="label">Priority</span>
-                  <span className="badge priority-badge" style={{ 
-                    background: getPriorityConfig(selectedProject.priority).bg, 
-                    color: getPriorityConfig(selectedProject.priority).color,
-                    padding: '4px 14px',
-                    borderRadius: '20px',
-                    fontWeight: '600',
-                    fontSize: '13px'
-                  }}>
-                    {getPriorityConfig(selectedProject.priority).label}
+                <div className="pd-detail-summary-item">
+                  <span className="pd-detail-summary-label">Priority</span>
+                  <span className="pd-badge" style={{ background: priorityConfig.bg, color: priorityConfig.color }}>
+                    {priorityConfig.label}
                   </span>
                 </div>
-                <div className="summary-item">
-                  <span className="label">Health</span>
-                  <span style={{ color: getHealthConfig(selectedProject.healthStatus).color, fontWeight: '600' }}>
-                    {React.createElement(getHealthConfig(selectedProject.healthStatus).icon, { size: 14 })} {getHealthConfig(selectedProject.healthStatus).label}
+                <div className="pd-detail-summary-item">
+                  <span className="pd-detail-summary-label">Health</span>
+                  <span style={{ color: healthConfig.color, fontWeight: 700, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                    <HealthIcon size={13} /> {healthConfig.label}
                   </span>
                 </div>
-                <div className="summary-item">
-                  <span className="label">Progress</span>
-                  <span style={{ fontWeight: '700', color: '#1a2332' }}>
-                    {selectedProject.progress?.toFixed(0) || 0}%
-                  </span>
+                <div className="pd-detail-summary-item">
+                  <span className="pd-detail-summary-label">Progress</span>
+                  <span style={{ fontWeight: 800 }}>{p.progress?.toFixed(0) || 0}%</span>
                 </div>
               </div>
 
-              <div className="detail-financials">
-                <h4>Financial Summary</h4>
-                <div className="financial-grid">
-                  <div className="fin-item" style={{ borderLeft: '4px solid #f59e0b' }}>
-                    <span className="label">Budget</span>
-                    <span className="value">{Utils.formatCurrency(selectedProject.budget || 0)}</span>
+              {/* Financials */}
+              <div className="pd-detail-section">
+                <h4 className="pd-detail-section-title"><DollarSign size={13} /> Financial Summary</h4>
+                <div className="pd-detail-fin-grid">
+                  <div className="pd-detail-fin-item" style={{ borderLeft: '4px solid #f59e0b' }}>
+                    <span className="pd-detail-fin-label">Budget</span>
+                    <span className="pd-detail-fin-value">{Utils.formatCurrency(p.budget || 0)}</span>
                   </div>
-                  <div className="fin-item" style={{ borderLeft: '4px solid #ef4444' }}>
-                    <span className="label">Actual Cost</span>
-                    <span className="value">{Utils.formatCurrency(selectedProject.actualCost || 0)}</span>
+                  <div className="pd-detail-fin-item" style={{ borderLeft: '4px solid #dc2626' }}>
+                    <span className="pd-detail-fin-label">Actual Cost</span>
+                    <span className="pd-detail-fin-value">{Utils.formatCurrency(p.actualCost || 0)}</span>
                   </div>
-                  <div className="fin-item" style={{ borderLeft: '4px solid #3b82f6' }}>
-                    <span className="label">Revenue</span>
-                    <span className="value">{Utils.formatCurrency(selectedProject.revenue || 0)}</span>
+                  <div className="pd-detail-fin-item" style={{ borderLeft: '4px solid #3b82f6' }}>
+                    <span className="pd-detail-fin-label">Revenue</span>
+                    <span className="pd-detail-fin-value">{Utils.formatCurrency(p.revenue || 0)}</span>
                   </div>
-                  <div className="fin-item" style={{ borderLeft: `4px solid ${(selectedProject.revenue || 0) - (selectedProject.actualCost || 0) >= 0 ? '#22c55e' : '#ef4444'}` }}>
-                    <span className="label">Profit</span>
-                    <span className={`value ${(selectedProject.revenue || 0) - (selectedProject.actualCost || 0) >= 0 ? 'profit' : 'loss'}`}>
-                      {Utils.formatCurrency((selectedProject.revenue || 0) - (selectedProject.actualCost || 0))}
+                  <div className="pd-detail-fin-item" style={{ borderLeft: `4px solid ${profit >= 0 ? '#009846' : '#dc2626'}` }}>
+                    <span className="pd-detail-fin-label">Profit</span>
+                    <span className={`pd-detail-fin-value ${profit >= 0 ? 'pd-text-green' : 'pd-text-red'}`}>
+                      {Utils.formatCurrency(profit)}
                     </span>
                   </div>
                 </div>
               </div>
 
-              {selectedProject.client && (
-                <div className="detail-client">
-                  <h4>Client Information</h4>
-                  <div className="client-grid">
-                    <div className="client-item"><User size={14} /> <strong>Name:</strong> {selectedProject.client}</div>
-                    {selectedProject.clientContact && <div className="client-item"><User size={14} /> <strong>Contact:</strong> {selectedProject.clientContact}</div>}
-                    {selectedProject.clientPhone && <div className="client-item"><Phone size={14} /> <strong>Phone:</strong> {selectedProject.clientPhone}</div>}
-                    {selectedProject.clientEmail && <div className="client-item"><Mail size={14} /> <strong>Email:</strong> {selectedProject.clientEmail}</div>}
+              {/* Client */}
+              {p.client && (
+                <div className="pd-detail-section">
+                  <h4 className="pd-detail-section-title"><User size={13} /> Client Information</h4>
+                  <div className="pd-detail-grid">
+                    <div className="pd-detail-item">
+                      <span className="pd-detail-item-label">Name</span>
+                      <span className="pd-detail-item-value">{p.client}</span>
+                    </div>
+                    {p.clientContact && (
+                      <div className="pd-detail-item">
+                        <span className="pd-detail-item-label">Contact</span>
+                        <span className="pd-detail-item-value">{p.clientContact}</span>
+                      </div>
+                    )}
+                    {p.clientPhone && (
+                      <div className="pd-detail-item">
+                        <span className="pd-detail-item-label">Phone</span>
+                        <span className="pd-detail-item-value">{p.clientPhone}</span>
+                      </div>
+                    )}
+                    {p.clientEmail && (
+                      <div className="pd-detail-item">
+                        <span className="pd-detail-item-label">Email</span>
+                        <span className="pd-detail-item-value">{p.clientEmail}</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
 
-              {selectedProject.description && (
-                <div className="detail-description">
-                  <h4>Description</h4>
-                  <p>{selectedProject.description}</p>
+              {/* Description */}
+              {p.description && (
+                <div className="pd-detail-section">
+                  <h4 className="pd-detail-section-title"><FileText size={13} /> Description</h4>
+                  <p className="pd-detail-text">{p.description}</p>
                 </div>
               )}
 
-              {selectedProject.notes && (
-                <div className="detail-notes">
-                  <h4>Notes</h4>
-                  <p>{selectedProject.notes}</p>
+              {/* Notes */}
+              {p.notes && (
+                <div className="pd-detail-section">
+                  <h4 className="pd-detail-section-title"><FileText size={13} /> Notes</h4>
+                  <p className="pd-detail-text">{p.notes}</p>
                 </div>
               )}
             </div>
           </div>
         </div>
-      )}
+      </ModalPortal>
+    );
+  };
+
+  // ============================================
+  // MAIN RENDER
+  // ============================================
+  return (
+    <div className={`pd-root ${mounted ? 'is-mounted' : ''}`}>
+      {/* Ambient orbs */}
+      <div className="pd-ambient">
+        <div className="pd-ambient-orb pd-ambient-1" />
+        <div className="pd-ambient-orb pd-ambient-2" />
+        <div className="pd-ambient-orb pd-ambient-3" />
+      </div>
+
+      {/* Header */}
+      <div className="pd-header">
+        <div className="pd-header-left">
+          <div className="pd-header-icon-wrapper">
+            <FolderKanban size={22} />
+          </div>
+          <div>
+            <h2>Project Management</h2>
+            <p className="pd-header-subtitle">
+              {stats.total} projects · {stats.active} active · {stats.completed} completed
+            </p>
+          </div>
+        </div>
+        <div className="pd-header-right">
+          <button type="button" className="pd-btn-ghost" onClick={handlePrintReport}>
+            <Printer size={14} /> Print
+          </button>
+          <button type="button" className="pd-btn-ghost" onClick={exportDashboardReport}>
+            <Download size={14} /> Export
+          </button>
+          <button type="button" className="pd-btn-ghost" onClick={loadProjects}>
+            <RefreshCw size={14} /> Refresh
+          </button>
+          <button type="button" className="pd-btn-primary"
+            onClick={() => { resetForm(); setShowForm(true); }}>
+            <Plus size={15} /> New Project
+          </button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      {renderTabs()}
+
+      {/* Stats (always visible) */}
+      {renderStats()}
+      {renderTooltip()}
+
+      {/* Banners */}
+      {error && <div className="pd-banner pd-banner-error"><AlertCircle size={15} /> {error}</div>}
+      {success && <div className="pd-banner pd-banner-success"><CheckCircle size={15} /> {success}</div>}
+
+      {/* Tab content */}
+      {activeTab === 'dashboard' ? renderDashboardTab() : renderProjectsTab()}
+
+      {/* Modals */}
+      {showForm && renderFormModal()}
+      {showDetailModal && renderDetailModal()}
     </div>
   );
 };
