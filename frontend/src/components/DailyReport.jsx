@@ -99,7 +99,6 @@ const DailyReportComponent = ({ data, selectedDate }) => {
     startDate: Utils.today(),
     endDate: Utils.today()
   });
-  // Custom range inputs (only applied when Apply button clicked)
   const [customStart, setCustomStart] = useState(Utils.today());
   const [customEnd, setCustomEnd] = useState(Utils.today());
   const [showCustomPanel, setShowCustomPanel] = useState(false);
@@ -108,6 +107,10 @@ const DailyReportComponent = ({ data, selectedDate }) => {
   const [hoveredCard, setHoveredCard] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [mounted, setMounted] = useState(false);
+
+  // ⭐ Expanded days + loss/profit day filter
+  const [expandedDays, setExpandedDays] = useState({});
+  const [dailySiteFilter, setDailySiteFilter] = useState('all'); // all | profit | loss
 
   // Pagination
   const [dailyPage, setDailyPage] = useState(1);
@@ -121,6 +124,9 @@ const DailyReportComponent = ({ data, selectedDate }) => {
     const id = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(id);
   }, []);
+
+  const toggleDayExpand = (date) =>
+    setExpandedDays(prev => ({ ...prev, [date]: !prev[date] }));
 
   // ============================================
   // DATE RANGE CALCULATIONS
@@ -174,7 +180,7 @@ const DailyReportComponent = ({ data, selectedDate }) => {
   }, [reportDate]);
 
   // ============================================
-  // FILTERED DATA
+  // FILTERED DATA (with per-site breakdown per day)
   // ============================================
   const filteredData = useMemo(() => {
     const range = getDateRange(dateRange.type, dateRange.startDate, dateRange.endDate);
@@ -204,12 +210,60 @@ const DailyReportComponent = ({ data, selectedDate }) => {
         return sum;
       }, 0);
 
+      // ⭐ Group this day's entries by site
+      const bySite = {};
+      dayEntries.forEach(e => {
+        const key = e.siteId || '__unassigned__';
+        if (!bySite[key]) {
+          bySite[key] = {
+            siteId: e.siteId || null,
+            siteName: e.siteName || null,
+            revenue: 0,
+            labour: 0,
+            overhead: 0,
+            oneTime: 0,
+            profit: 0,
+            entryCount: 0,
+            workers: new Set(),
+          };
+        }
+        const bucket = bySite[key];
+        bucket.revenue += Number(e.kamai || 0);
+        bucket.labour += Number(e.labour || 0);
+        bucket.overhead += Number(e.overhead || 0);
+        bucket.oneTime += Number(e.oneTime || 0);
+        bucket.entryCount += 1;
+        if (e.workerId) bucket.workers.add(e.workerId);
+      });
+
+      // Resolve site names + compute profit/loss status
+      const daySites = Object.values(bySite).map(b => {
+        const site = b.siteId ? (data.sites || []).find(s => s.id === b.siteId) : null;
+        const siteName = b.siteName || site?.name || 'Unassigned';
+        const siteProfit = b.revenue - b.labour - b.overhead - b.oneTime;
+        return {
+          siteId: b.siteId,
+          siteName,
+          revenue: b.revenue,
+          labour: b.labour,
+          overhead: b.overhead,
+          oneTime: b.oneTime,
+          profit: siteProfit,
+          entryCount: b.entryCount,
+          workerCount: b.workers.size,
+          status: siteProfit > 0 ? 'profit' : siteProfit < 0 ? 'loss' : 'break_even',
+        };
+      }).sort((a, b) => b.profit - a.profit);
+
       return {
         date, revenue, labour, overhead, oneTime, profit,
         workersPresent, totalHours,
         entryCount: dayEntries.length,
         entries: dayEntries,
-        attendance: dayAttendance
+        attendance: dayAttendance,
+        daySites,
+        lossSiteCount: daySites.filter(s => s.status === 'loss').length,
+        profitSiteCount: daySites.filter(s => s.status === 'profit').length,
       };
     });
 
@@ -244,7 +298,6 @@ const DailyReportComponent = ({ data, selectedDate }) => {
       }, 0);
       const daysPresent = workerAttendance.filter(a => a.present).length;
       const totalWage = Utils.calculateDailyWage(totalHours, worker.dailyRate);
-
       return { ...worker, totalHours, daysPresent, totalWage, attendance: workerAttendance };
     });
 
@@ -255,7 +308,6 @@ const DailyReportComponent = ({ data, selectedDate }) => {
       const overhead = Utils.calculateTotal(siteEntries, 'overhead');
       const oneTime = Utils.calculateTotal(siteEntries, 'oneTime');
       const profit = revenue - labour - overhead - oneTime;
-
       return { ...site, revenue, labour, overhead, oneTime, profit, entryCount: siteEntries.length, entries: siteEntries };
     });
 
@@ -314,7 +366,7 @@ const DailyReportComponent = ({ data, selectedDate }) => {
     );
   };
 
-  useEffect(() => { setDailyPage(1); }, [dailyPer, dateRange, viewMode]);
+  useEffect(() => { setDailyPage(1); }, [dailyPer, dateRange, viewMode, dailySiteFilter]);
   useEffect(() => { setSitePage(1); }, [sitePer, dateRange, viewMode]);
   useEffect(() => { setWorkerPage(1); }, [workerPer, dateRange, viewMode]);
 
@@ -510,6 +562,25 @@ const DailyReportComponent = ({ data, selectedDate }) => {
       ]);
     });
     rows.push([]);
+    rows.push(['=== DAILY × SITE BREAKDOWN ===']);
+    rows.push(['Date', 'Site', 'Entries', 'Workers', 'Revenue', 'Labour', 'Overhead', 'One-Time', 'Profit', 'Result']);
+    filteredData.dailyAggregates.forEach(day => {
+      day.daySites.forEach(s => {
+        rows.push([
+          day.date,
+          s.siteName,
+          s.entryCount,
+          s.workerCount,
+          s.revenue.toFixed(3),
+          s.labour.toFixed(3),
+          s.overhead.toFixed(3),
+          s.oneTime.toFixed(3),
+          s.profit.toFixed(3),
+          s.status === 'loss' ? 'LOSS' : s.status === 'profit' ? 'PROFIT' : 'BREAK-EVEN'
+        ]);
+      });
+    });
+    rows.push([]);
     rows.push(['=== TOTALS ===']);
     rows.push(['Total Revenue', filteredData.totals.revenue.toFixed(3)]);
     rows.push(['Total Labour', filteredData.totals.labour.toFixed(3)]);
@@ -530,7 +601,7 @@ const DailyReportComponent = ({ data, selectedDate }) => {
   };
 
   // ============================================
-  // PRINT REPORT
+  // PRINT REPORT (with Site × Day breakdown)
   // ============================================
   const generateProfessionalReportHTML = () => {
     const companyName = CONFIG.COMPANY_NAME || 'Haji Younas Contracting';
@@ -541,6 +612,43 @@ const DailyReportComponent = ({ data, selectedDate }) => {
     const text = '#1a1a2e';
 
     const { dailyAggregates, totals, workerSummary, siteSummary } = filteredData;
+
+    // Build the day-by-site section
+    const daySiteSection = dailyAggregates
+      .filter(d => d.daySites.length > 0)
+      .map(day => `
+        <div style="margin-top:14px;">
+          <div style="background:${light}; padding:6px 12px; border-left:3px solid ${primary}; font-size:13px; font-weight:700; color:${primary}; margin-bottom:6px;">
+            ${Utils.formatDate(day.date)} — ${day.daySites.length} site(s) · Total Profit: ${Utils.formatCurrencyShort(day.profit)}
+          </div>
+          <table class="report-table">
+            <thead><tr>
+              <th>Site</th>
+              <th class="text-right">Entries</th>
+              <th class="text-right">Workers</th>
+              <th class="text-right">Revenue</th>
+              <th class="text-right">Labour</th>
+              <th class="text-right">Overhead</th>
+              <th class="text-right">One-Time</th>
+              <th class="text-right">Profit</th>
+              <th class="text-center">Result</th>
+            </tr></thead>
+            <tbody>
+              ${day.daySites.map(s => `<tr>
+                <td>${s.siteName}</td>
+                <td class="text-right">${s.entryCount}</td>
+                <td class="text-right">${s.workerCount}</td>
+                <td class="text-right positive">${Utils.formatCurrencyShort(s.revenue)}</td>
+                <td class="text-right">${Utils.formatCurrencyShort(s.labour)}</td>
+                <td class="text-right">${Utils.formatCurrencyShort(s.overhead)}</td>
+                <td class="text-right">${Utils.formatCurrencyShort(s.oneTime)}</td>
+                <td class="text-right ${s.profit >= 0 ? 'positive' : 'negative'}"><strong>${Utils.formatCurrencyShort(s.profit)}</strong></td>
+                <td class="text-center ${s.profit >= 0 ? 'positive' : 'negative'}"><strong>${s.status === 'loss' ? 'LOSS' : s.status === 'profit' ? 'PROFIT' : 'B/E'}</strong></td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
+      `).join('');
 
     return `<!DOCTYPE html>
 <html>
@@ -562,7 +670,7 @@ const DailyReportComponent = ({ data, selectedDate }) => {
     .report-meta { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid ${border}; margin-bottom: 20px; flex-wrap: wrap; gap: 8px; }
     .report-meta span { font-size: 13px; color: ${muted}; }
     .report-meta strong { color: ${primary}; }
-    .section { margin-bottom: 28px; }
+    .section { margin-bottom: 28px; page-break-inside: avoid; }
     .section h2 { font-size: 18px; color: ${primary}; padding-bottom: 8px; border-bottom: 2px solid ${border}; margin-bottom: 14px; }
     .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
     .stat-card { background: ${light}; padding: 14px 16px; border-radius: 6px; border: 1px solid ${border}; text-align: center; }
@@ -616,7 +724,7 @@ const DailyReportComponent = ({ data, selectedDate }) => {
           </div>
         </div>
         <div class="section">
-          <h2>📈 Daily Breakdown</h2>
+          <h2>📈 Daily Summary</h2>
           <table class="report-table">
             <thead><tr>
               <th>#</th><th>Date</th><th class="text-right">Entries</th>
@@ -652,7 +760,11 @@ const DailyReportComponent = ({ data, selectedDate }) => {
           </table>
         </div>
         <div class="section">
-          <h2>🏗️ Site Performance</h2>
+          <h2>🏗️ Daily × Site Breakdown (Profit / Loss per Site per Day)</h2>
+          ${daySiteSection || '<div class="no-data">No site-by-day data for this period</div>'}
+        </div>
+        <div class="section">
+          <h2>🏗️ Site Performance (Period Total)</h2>
           <table class="report-table">
             <thead><tr>
               <th>#</th><th>Site</th><th class="text-right">Entries</th>
@@ -1013,12 +1125,50 @@ const DailyReportComponent = ({ data, selectedDate }) => {
   );
 
   // ============================================
-  // DAILY TAB
+  // DAILY TAB (with expandable site-by-site rows)
   // ============================================
   const renderDailyTab = () => {
-    const pag = paginate(filteredData.dailyAggregates, dailyPage, dailyPer);
+    const daysToRender = filteredData.dailyAggregates
+      .filter(day => {
+        if (dailySiteFilter === 'loss') return day.lossSiteCount > 0;
+        if (dailySiteFilter === 'profit') return day.profitSiteCount > 0;
+        return true;
+      })
+      .sort((a, b) => dailySiteFilter === 'loss' ? a.profit - b.profit : 0);
+
+    const pag = paginate(daysToRender, dailyPage, dailyPer);
+
     return (
       <div className="dr-view">
+        {/* Filter bar */}
+        <div className="dr-day-filter-bar">
+          <span className="dr-day-filter-label">
+            <Filter size={13} /> Show:
+          </span>
+          <button
+            className={`dr-day-chip ${dailySiteFilter === 'all' ? 'active' : ''}`}
+            onClick={() => { setDailySiteFilter('all'); setDailyPage(1); }}
+          >
+            All Days <span className="dr-chip-count">{filteredData.dailyAggregates.length}</span>
+          </button>
+          <button
+            className={`dr-day-chip loss ${dailySiteFilter === 'loss' ? 'active' : ''}`}
+            onClick={() => { setDailySiteFilter('loss'); setDailyPage(1); }}
+          >
+            <ArrowDownRight size={12} /> Days with Loss <span className="dr-chip-count">
+              {filteredData.dailyAggregates.filter(d => d.lossSiteCount > 0).length}
+            </span>
+          </button>
+          <button
+            className={`dr-day-chip profit ${dailySiteFilter === 'profit' ? 'active' : ''}`}
+            onClick={() => { setDailySiteFilter('profit'); setDailyPage(1); }}
+          >
+            <ArrowUpRight size={12} /> Days with Profit <span className="dr-chip-count">
+              {filteredData.dailyAggregates.filter(d => d.profitSiteCount > 0).length}
+            </span>
+          </button>
+        </div>
+
         <div className="dr-card">
           <div className="dr-card-header-top">
             <div className="dr-card-title">
@@ -1027,56 +1177,181 @@ const DailyReportComponent = ({ data, selectedDate }) => {
               </span>
               <div>
                 <h4>Daily Breakdown</h4>
-                <span>{filteredData.dailyAggregates.length} days in period</span>
+                <span>
+                  {daysToRender.length} days · click a row to see site-by-site detail
+                </span>
               </div>
             </div>
           </div>
 
           <div className="dr-table-wrap">
-            <table className="dr-table">
+            <table className="dr-table dr-table-expandable">
               <thead>
                 <tr>
-                  <th>#</th>
+                  <th style={{ width: 32 }}></th>
                   <th>Date</th>
+                  <th className="right">Sites</th>
                   <th className="right">Entries</th>
                   <th className="right">Revenue</th>
                   <th className="right">Labour</th>
                   <th className="right">Overhead</th>
                   <th className="right">One-Time</th>
                   <th className="right">Profit</th>
-                  <th className="center">Workers</th>
-                  <th className="right">Hours</th>
+                  <th className="center">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {pag.items.map((day, i) => {
-                  const realIndex = (pag.page - 1) * dailyPer + i + 1;
+                  const isExpanded = !!expandedDays[day.date];
+                  const hasLoss = day.lossSiteCount > 0;
                   return (
-                    <tr key={i} style={{ animationDelay: `${Math.min(i * 30, 400)}ms` }}>
-                      <td>{realIndex}</td>
-                      <td><strong>{Utils.formatDate(day.date)}</strong></td>
-                      <td className="right">{day.entryCount}</td>
-                      <td className="right dr-td-green">{Utils.formatCurrencyShort(day.revenue)}</td>
-                      <td className="right dr-td-red">{Utils.formatCurrencyShort(day.labour)}</td>
-                      <td className="right dr-td-amber">{Utils.formatCurrencyShort(day.overhead)}</td>
-                      <td className="right dr-td-purple">{Utils.formatCurrencyShort(day.oneTime)}</td>
-                      <td className={`right ${day.profit >= 0 ? 'dr-td-green' : 'dr-td-red'}`}>
-                        <strong>{Utils.formatCurrencyShort(day.profit)}</strong>
-                      </td>
-                      <td className="center">{day.workersPresent}</td>
-                      <td className="right">{day.totalHours.toFixed(1)}h</td>
-                    </tr>
+                    <React.Fragment key={day.date}>
+                      <tr
+                        className={`dr-row-clickable ${isExpanded ? 'expanded' : ''}`}
+                        style={{ animationDelay: `${Math.min(i * 30, 400)}ms` }}
+                        onClick={() => toggleDayExpand(day.date)}
+                      >
+                        <td>
+                          <span className={`dr-expand-caret ${isExpanded ? 'open' : ''}`}>
+                            <ChevronRight size={14} />
+                          </span>
+                        </td>
+                        <td>
+                          <strong>{Utils.formatDate(day.date)}</strong>
+                          <div className="dr-day-sub">
+                            {new Date(day.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short' })}
+                          </div>
+                        </td>
+                        <td className="right">
+                          <span className="dr-site-count-pill">
+                            {day.daySites.length}
+                            {hasLoss && <span className="dr-loss-dot" title={`${day.lossSiteCount} site(s) at a loss`} />}
+                          </span>
+                        </td>
+                        <td className="right">{day.entryCount}</td>
+                        <td className="right dr-td-green">{Utils.formatCurrencyShort(day.revenue)}</td>
+                        <td className="right dr-td-red">{Utils.formatCurrencyShort(day.labour)}</td>
+                        <td className="right dr-td-amber">{Utils.formatCurrencyShort(day.overhead)}</td>
+                        <td className="right dr-td-purple">{Utils.formatCurrencyShort(day.oneTime)}</td>
+                        <td className={`right ${day.profit >= 0 ? 'dr-td-green' : 'dr-td-red'}`}>
+                          <strong>{Utils.formatCurrencyShort(day.profit)}</strong>
+                        </td>
+                        <td className="center">
+                          {hasLoss ? (
+                            <span className="dr-status-badge loss">
+                              <ArrowDownRight size={11} /> {day.lossSiteCount} Loss
+                            </span>
+                          ) : day.profit >= 0 ? (
+                            <span className="dr-status-badge profit">
+                              <ArrowUpRight size={11} /> All Profit
+                            </span>
+                          ) : (
+                            <span className="dr-status-badge neutral">
+                              <Minus size={11} /> Break-even
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+
+                      {isExpanded && (
+                        <tr className="dr-expanded-row">
+                          <td colSpan="10">
+                            <div className="dr-site-breakdown">
+                              <div className="dr-site-breakdown-title">
+                                <Building2 size={13} />
+                                <span>Site breakdown for <strong>{Utils.formatDate(day.date)}</strong></span>
+                                <span className="dr-site-breakdown-count">
+                                  {day.daySites.length} {day.daySites.length === 1 ? 'site' : 'sites'}
+                                </span>
+                              </div>
+
+                              {day.daySites.length === 0 ? (
+                                <div className="dr-empty-mini">No site data for this day</div>
+                              ) : (
+                                <table className="dr-site-table">
+                                  <thead>
+                                    <tr>
+                                      <th>Site</th>
+                                      <th className="right">Entries</th>
+                                      <th className="right">Workers</th>
+                                      <th className="right">Revenue</th>
+                                      <th className="right">Labour</th>
+                                      <th className="right">Overhead</th>
+                                      <th className="right">One-Time</th>
+                                      <th className="right">Profit</th>
+                                      <th className="center">Result</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {day.daySites.map((site, j) => (
+                                      <tr key={j} className={`dr-site-row ${site.status}`}>
+                                        <td>
+                                          <div className="dr-site-name-cell">
+                                            <span
+                                              className={`dr-site-indicator ${site.status}`}
+                                              title={
+                                                site.status === 'profit' ? 'Profitable site'
+                                                : site.status === 'loss' ? 'This site incurred a loss'
+                                                : 'Break-even'
+                                              }
+                                            />
+                                            <strong>{site.siteName}</strong>
+                                          </div>
+                                        </td>
+                                        <td className="right">{site.entryCount}</td>
+                                        <td className="right">{site.workerCount}</td>
+                                        <td className="right dr-td-green">{Utils.formatCurrencyShort(site.revenue)}</td>
+                                        <td className="right dr-td-red">{Utils.formatCurrencyShort(site.labour)}</td>
+                                        <td className="right dr-td-amber">{Utils.formatCurrencyShort(site.overhead)}</td>
+                                        <td className="right dr-td-purple">{Utils.formatCurrencyShort(site.oneTime)}</td>
+                                        <td className={`right ${site.profit >= 0 ? 'dr-td-green' : 'dr-td-red'}`}>
+                                          <strong>{Utils.formatCurrencyShort(site.profit)}</strong>
+                                        </td>
+                                        <td className="center">
+                                          {site.status === 'profit' && (
+                                            <span className="dr-site-status profit">
+                                              <ArrowUpRight size={11} /> PROFIT
+                                            </span>
+                                          )}
+                                          {site.status === 'loss' && (
+                                            <span className="dr-site-status loss">
+                                              <ArrowDownRight size={11} /> LOSS
+                                            </span>
+                                          )}
+                                          {site.status === 'break_even' && (
+                                            <span className="dr-site-status neutral">
+                                              <Minus size={11} /> BREAK-EVEN
+                                            </span>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
                   );
                 })}
-                {filteredData.dailyAggregates.length === 0 && (
-                  <tr><td colSpan="10" className="dr-no-data">No data for this period</td></tr>
+                {daysToRender.length === 0 && (
+                  <tr>
+                    <td colSpan="10" className="dr-no-data">
+                      {dailySiteFilter === 'loss'
+                        ? 'No loss-making days in this period'
+                        : dailySiteFilter === 'profit'
+                          ? 'No profit-making days in this period'
+                          : 'No data for this period'}
+                    </td>
+                  </tr>
                 )}
               </tbody>
-              {filteredData.dailyAggregates.length > 0 && (
+              {daysToRender.length > 0 && (
                 <tfoot>
                   <tr>
-                    <td colSpan="2"><strong>TOTALS</strong></td>
-                    <td className="right"><strong>{filteredData.totals.entryCount}</strong></td>
+                    <td colSpan="4"><strong>TOTALS</strong></td>
                     <td className="right dr-td-green"><strong>{Utils.formatCurrencyShort(filteredData.totals.revenue)}</strong></td>
                     <td className="right dr-td-red"><strong>{Utils.formatCurrencyShort(filteredData.totals.labour)}</strong></td>
                     <td className="right dr-td-amber"><strong>{Utils.formatCurrencyShort(filteredData.totals.overhead)}</strong></td>
@@ -1084,13 +1359,13 @@ const DailyReportComponent = ({ data, selectedDate }) => {
                     <td className={`right ${filteredData.totals.profit >= 0 ? 'dr-td-green' : 'dr-td-red'}`}>
                       <strong>{Utils.formatCurrencyShort(filteredData.totals.profit)}</strong>
                     </td>
-                    <td colSpan="2"></td>
+                    <td></td>
                   </tr>
                 </tfoot>
               )}
             </table>
           </div>
-          {renderPagination(pag.page, pag.total, dailyPer, setDailyPer, setDailyPage, filteredData.dailyAggregates.length, 'days')}
+          {renderPagination(pag.page, pag.total, dailyPer, setDailyPer, setDailyPage, daysToRender.length, 'days')}
         </div>
       </div>
     );

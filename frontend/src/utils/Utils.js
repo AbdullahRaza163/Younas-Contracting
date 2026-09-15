@@ -270,14 +270,16 @@ const Utils = {
   // ============================================
   // CALCULATION FUNCTIONS
   // ============================================
-  calculateHoursWorked: (checkIn, checkOut) => {
+    calculateHoursWorked: (checkIn, checkOut) => {
     if (!checkIn || !checkOut) return 0;
-    const start = new Date(checkIn);
-    const end = new Date(checkOut);
-    if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
-    return Math.round(((end - start) / (1000 * 60 * 60)) * 100) / 100;
+    const start = new Date(checkIn).getTime();
+    const end = new Date(checkOut).getTime();
+    if (isNaN(start) || isNaN(end)) return 0;
+    const diff = end - start;
+    // ⭐ Never return negative — clamp to 0
+    if (diff <= 0) return 0;
+    return Math.round((diff / 3600000) * 100) / 100;
   },
-  
   calculateDailyWage: (hoursWorked, dailyRate) => {
     if (!hoursWorked || !dailyRate) return 0;
     const hourlyRate = dailyRate / 8;

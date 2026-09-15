@@ -353,3 +353,166 @@ body {
     width: 100% !important;
   }
 }
+/* ============================================ */
+/* GLOBAL LOADER OVERLAY — GREEN THEME          */
+/* ============================================ */
+
+.global-loader-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99998;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: gl-fade-in 0.18s ease-out;
+  pointer-events: none;
+}
+
+.global-loader-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.28);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  pointer-events: auto;
+}
+
+.global-loader-card {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 18px;
+  padding: 32px 44px;
+  min-width: 260px;
+  background: #ffffff;
+  border-radius: 18px;
+  box-shadow:
+    0 20px 60px rgba(15, 23, 42, 0.25),
+    0 8px 20px rgba(15, 23, 42, 0.12);
+  animation: gl-pop-in 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: auto;
+}
+
+/* ⭐ GREEN DOTS */
+.global-loader-dots {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.global-loader-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #10b981, #059669);
+  animation: gl-bounce 0.85s ease-in-out infinite;
+}
+
+.global-loader-dot:nth-child(1) { animation-delay: -0.30s; }
+.global-loader-dot:nth-child(2) { animation-delay: -0.15s; }
+.global-loader-dot:nth-child(3) { animation-delay: 0s; }
+
+.global-loader-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #475569;
+  letter-spacing: 0.2px;
+  text-align: center;
+  min-height: 20px;
+}
+
+.global-loader-bar {
+  width: 200px;
+  height: 4px;
+  border-radius: 4px;
+  background: rgba(148, 163, 184, 0.22);
+  overflow: hidden;
+  position: relative;
+}
+
+/* ⭐ GREEN PROGRESS BAR */
+.global-loader-bar-fill {
+  position: absolute;
+  top: 0;
+  left: -40%;
+  width: 40%;
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #10b981, #34d399, #10b981);
+  animation: gl-bar-slide 1.4s ease-in-out infinite;
+}
+
+/* ---------- Animations ---------- */
+@keyframes gl-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes gl-pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.94) translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes gl-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0) scale(1);
+    opacity: 0.55;
+  }
+  30% {
+    transform: translateY(-14px) scale(1.15);
+    opacity: 1;
+  }
+}
+
+@keyframes gl-bar-slide {
+  0%   { left: -40%; }
+  100% { left: 100%; }
+}
+
+/* ---------- Reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .global-loader-dot,
+  .global-loader-bar-fill {
+    animation: none;
+  }
+  .global-loader-dot { opacity: 1; }
+}
+
+/* ---------- Dark mode ---------- */
+@media (prefers-color-scheme: dark) {
+  .global-loader-backdrop {
+    background: rgba(2, 6, 23, 0.55);
+  }
+  .global-loader-card {
+    background: #1e293b;
+    color: #f1f5f9;
+  }
+  .global-loader-label {
+    color: #cbd5e1;
+  }
+  .global-loader-bar {
+    background: rgba(148, 163, 184, 0.18);
+  }
+}
+
+/* ---------- Small screens ---------- */
+@media (max-width: 640px) {
+  .global-loader-card {
+    padding: 26px 32px;
+    min-width: 220px;
+  }
+  .global-loader-label {
+    font-size: 13px;
+  }
+  .global-loader-bar {
+    width: 160px;
+  }
+}

@@ -3,10 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { HardHat, AlertCircle, RefreshCw } from 'lucide-react';
 
-// Global styles
 import './components/globals.css';
 
-// Providers
 import { ThemeProvider } from './context/ThemeContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { LanguageProvider, useLanguage } from './context/LanguageContext';
@@ -16,13 +14,11 @@ import useData from './hooks/useData';
 import Navigation from './components/Navigation';
 import TopBar from './components/TopBar';
 
-// Auth
 import Login from './components/Login';
 import Register from './components/Register';
 import ForgotPassword from './components/ForgotPassword';
 import ProtectedRoute from './components/ProtectedRoute';
 
-// Main components
 import ProjectDashboard from './components/ProjectDashboard';
 import DashboardComponent from './components/Dashboard';
 import EntriesManagerComponent from './components/EntriesManager';
@@ -52,7 +48,27 @@ import PerformanceAnalytics from './components/PerformanceAnalytics';
 import InventoryManagement from './components/InventoryManagement';
 import LoanManagement from './components/LoanManagement';
 import AdvanceManagement from './components/AdvanceManagement';
-// import DailyEntryComponent from './components/DailyEntry'; // ✅ FIX: was missing
+// import DailyEntryComponent from './components/DailyEntry';
+
+// ============================================
+// GLOBAL LOADER — shown while a lazy-loaded tab fetches
+// ============================================
+const GlobalLoader = ({ label = 'Loading…' }) => (
+  <div className="global-loader-overlay" role="status" aria-live="polite">
+    <div className="global-loader-backdrop" />
+    <div className="global-loader-card">
+      <div className="global-loader-dots">
+        <span className="global-loader-dot" />
+        <span className="global-loader-dot" />
+        <span className="global-loader-dot" />
+      </div>
+      <div className="global-loader-label">{label}</div>
+      <div className="global-loader-bar">
+        <div className="global-loader-bar-fill" />
+      </div>
+    </div>
+  </div>
+);
 
 // ============================================
 // TAB → ROUTE + TITLE MAP
@@ -90,7 +106,7 @@ const TAB_META = {
 };
 
 // ============================================
-// MAIN APP CONTENT (PROTECTED)
+// MAIN APP CONTENT
 // ============================================
 function AppContent() {
   const location = useLocation();
@@ -104,37 +120,86 @@ function AppContent() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  const { data, loading, error, loadData, ...actions } = useData();
+  const {
+    data,
+    loading,
+    refreshing,
+    tabLoading,        // ⭐ NEW
+    tabLoadingLabel,   // ⭐ NEW
+    error,
+    loadData,
+    loadEntries,
+    loadExpenses,
+    loadInvoices,
+    loadItems,
+    loadProjects,
+    loadClients,
+    loadEquipment,
+    loadPerformance,
+    loadLeave,
+    loadQuality,
+    loadMonthlyOverhead,
+    loadMonthlySummary,
+    loadCumulativeTracker,
+    ...actions
+  } = useData();
 
-  // ============================================
-  // DERIVE activeTab FROM URL
-  // ============================================
   const urlSegment = location.pathname.split('/').filter(Boolean)[0] || 'dashboard';
   const matchedEntry = Object.entries(TAB_META).find(([, meta]) => meta.path === urlSegment);
   const activeTab = matchedEntry ? matchedEntry[0] : 'dashboard';
 
-  // ============================================
-  // SYNC DOCUMENT TITLE
-  // ============================================
+  // ⭐ Lazy loaders on tab change
+  useEffect(() => {
+    switch (activeTab) {
+      case 'entries':          loadEntries?.(); break;
+      case 'expenses':         loadExpenses?.(); break;
+      case 'invoices':         loadInvoices?.(); break;
+      case 'items':            loadItems?.(); break;
+      case 'projects':         loadProjects?.(); break;
+      case 'clients':          loadClients?.(); break;
+      case 'equipment':        loadEquipment?.(); break;
+      case 'performance':      loadPerformance?.(); break;
+      case 'leave':            loadLeave?.(); break;
+      case 'quality':          loadQuality?.(); break;
+      case 'monthly-overhead': loadMonthlyOverhead?.(); break;
+      case 'monthly-summary':  loadMonthlySummary?.(); break;
+      case 'cumulative':       loadCumulativeTracker?.(); break;
+      case 'budget-forecast':  loadProjects?.(); loadEntries?.(); break;
+      default: break;
+    }
+  }, [
+    activeTab,
+    loadEntries, loadExpenses, loadInvoices, loadItems,
+    loadProjects, loadClients, loadEquipment, loadPerformance,
+    loadLeave, loadQuality, loadMonthlyOverhead, loadMonthlySummary,
+    loadCumulativeTracker,
+  ]);
+
   useEffect(() => {
     const pageTitle = TAB_META[activeTab]?.title || 'Dashboard';
     document.title = `${pageTitle} · ${CONFIG.COMPANY_NAME || 'Haji Younas Contracting'}`;
   }, [activeTab]);
 
-  // ============================================
-  // NAVIGATION HANDLER — pushes real URL
-  // ============================================
   const handleTabChange = (tab) => {
-    const target = TAB_META[tab]?.path || 'dashboard';
-    navigate(`/${target}`);
+    navigate(`/${TAB_META[tab]?.path || 'dashboard'}`);
   };
 
   const toggleNav = () => setIsNavCollapsed(prev => !prev);
 
-  // ============================================
-  // LOADING / ERROR SCREENS
-  // ============================================
-  if (loading) {
+  const hasRealData =
+    !!data &&
+    (
+      (Array.isArray(data.workers) && data.workers.length > 0) ||
+      (Array.isArray(data.sites) && data.sites.length > 0) ||
+      (Array.isArray(data.teams) && data.teams.length > 0) ||
+      (Array.isArray(data.attendance) && data.attendance.length > 0) ||
+      (Array.isArray(data.projects) && data.projects.length > 0) ||
+      (Array.isArray(data.entries) && data.entries.length > 0)
+    );
+
+  const isInitialLoad = loading && !hasRealData;
+
+  if (isInitialLoad) {
     return (
       <div className="app" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="loading-screen">
@@ -147,7 +212,7 @@ function AppContent() {
     );
   }
 
-  if (error) {
+  if (error && !hasRealData) {
     return (
       <div className="app" dir={isRTL ? 'rtl' : 'ltr'}>
         <div className="error-screen">
@@ -187,7 +252,11 @@ function AppContent() {
         {activeTab === 'dashboard' && <DashboardComponent data={data} />}
 
         {activeTab === 'projects' && (
-          <ProjectDashboard data={data} refreshData={actions.refreshData} />
+          <ProjectDashboard
+            data={data}
+            refreshData={actions.refreshData}
+            loadProjects={loadProjects}
+          />
         )}
 
         {activeTab === 'entries' && (
@@ -288,6 +357,7 @@ function AppContent() {
             clockInWorker={actions.clockInWorker}
             clockOutWorker={actions.clockOutWorker}
             refreshData={actions.refreshData}
+            refreshing={refreshing}
           />
         )}
 
@@ -372,6 +442,9 @@ function AppContent() {
           <SettingsComponent data={data} updateData={actions.updateData} />
         )}
       </main>
+
+      {/* ⭐ GLOBAL TAB LOADER — shows while lazy-loading a tab */}
+      {tabLoading && <GlobalLoader label={tabLoadingLabel} />}
     </div>
   );
 }
@@ -386,15 +459,10 @@ function App() {
         <LanguageProvider>
           <Router>
             <Routes>
-              {/* Public routes */}
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
-
-              {/* Root → dashboard */}
               <Route path="/" element={<Navigate to="/dashboard" replace />} />
-
-              {/* Protected app — every tab has its own URL */}
               <Route
                 path="/*"
                 element={

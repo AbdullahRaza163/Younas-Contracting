@@ -1572,3 +1572,185 @@
   .am-date-filter-bar { padding: 10px 12px; }
   .am-date-filter-info { margin-left: 0; width: 100%; justify-content: flex-start; }
 }
+/* ============================================ */
+/* TOAST NOTIFICATIONS                          */
+/* ============================================ */
+
+.am-toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 100000;
+
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  min-width: 280px;
+  max-width: 440px;
+  padding: 14px 16px;
+
+  background: #ffffff;
+  border-radius: 12px;
+  border-left: 4px solid #10b981;
+
+  box-shadow:
+    0 10px 30px rgba(15, 23, 42, 0.18),
+    0 4px 10px rgba(15, 23, 42, 0.08);
+
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: #0f172a;
+
+  cursor: pointer;
+  user-select: none;
+
+  animation: am-toast-in 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: transform, opacity;
+}
+
+/* Stack multiple toasts (each one 8px below the previous) */
+.am-toast + .am-toast {
+  margin-top: 12px;
+}
+
+/* ---------- Success variant ---------- */
+.am-toast-success {
+  border-left-color: #10b981;
+}
+
+.am-toast-success .am-toast-icon {
+  background: rgba(16, 185, 129, 0.14);
+  color: #059669;
+}
+
+/* ---------- Error variant ---------- */
+.am-toast-error {
+  border-left-color: #ef4444;
+}
+
+.am-toast-error .am-toast-icon {
+  background: rgba(239, 68, 68, 0.14);
+  color: #dc2626;
+}
+
+/* ---------- Icon bubble ---------- */
+.am-toast-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+
+  border-radius: 50%;
+
+  background: rgba(16, 185, 129, 0.14);
+  color: #059669;
+}
+
+.am-toast-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ---------- Message ---------- */
+.am-toast-msg {
+  flex: 1;
+  min-width: 0;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+/* ---------- Close button ---------- */
+.am-toast-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 26px;
+  height: 26px;
+  padding: 0;
+
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+
+  color: #94a3b8;
+  cursor: pointer;
+
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+
+.am-toast-close:hover {
+  background: rgba(148, 163, 184, 0.18);
+  color: #475569;
+}
+
+.am-toast-close:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+/* ---------- Entrance animation ---------- */
+@keyframes am-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px) translateX(16px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) translateX(0) scale(1);
+  }
+}
+
+/* ---------- Exit animation (optional — apply .am-toast-out) ---------- */
+.am-toast.am-toast-out {
+  animation: am-toast-out 0.24s cubic-bezier(0.4, 0, 1, 1) forwards;
+}
+
+@keyframes am-toast-out {
+  to {
+    opacity: 0;
+    transform: translateY(-8px) translateX(16px) scale(0.96);
+  }
+}
+
+/* ---------- Responsive ---------- */
+@media (max-width: 640px) {
+  .am-toast {
+    top: 12px;
+    right: 12px;
+    left: 12px;
+    min-width: 0;
+    max-width: none;
+    font-size: 13.5px;
+    padding: 12px 14px;
+  }
+  .am-toast + .am-toast {
+    margin-top: 10px;
+  }
+}
+
+/* ---------- Dark mode (optional) ---------- */
+@media (prefers-color-scheme: dark) {
+  .am-toast {
+    background: #1e293b;
+    color: #f1f5f9;
+    box-shadow:
+      0 10px 30px rgba(0, 0, 0, 0.45),
+      0 4px 10px rgba(0, 0, 0, 0.25);
+  }
+  .am-toast-close {
+    color: #94a3b8;
+  }
+  .am-toast-close:hover {
+    background: rgba(148, 163, 184, 0.2);
+    color: #e2e8f0;
+  }
+}
