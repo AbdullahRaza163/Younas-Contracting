@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import {
   Package, ClipboardList, TrendingUp as TrendingUpIcon, Edit, Trash2,
   PlusCircle, Save, X, Plus, Search, RefreshCw, CheckCircle, AlertCircle,
-  DollarSign, Layers, BarChart3, PieChart as PieChartIcon,
+  Banknote, Layers, BarChart3, PieChart as PieChartIcon,
   Building2, Calendar, Sparkles, Minus,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
   LayoutDashboard, TrendingDown, Info, Loader2, AlertTriangle,
@@ -723,7 +723,7 @@ const BOMComponent = ({ data, updateData, setTabLoading, setTabLoadingLabel }) =
       value: stats.totalMaterials,
       meta: `${stats.totalCategories} categories`,
       color: '#3b82f6', accent: 'linear-gradient(90deg,#3b82f6,#60a5fa)', trend: 'up' },
-    { id: 'value', icon: DollarSign, label: 'Inventory Value',
+    { id: 'value', icon: Banknote, label: 'Inventory Value',
       value: Utils.formatCurrencyShort(stats.totalValue),
       meta: `${materials.length} items`,
       color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },

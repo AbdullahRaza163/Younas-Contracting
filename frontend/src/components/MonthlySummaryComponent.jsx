@@ -4,13 +4,13 @@ import { createPortal } from 'react-dom';
 import {
   TrendingUp, TrendingDown, Calendar, Filter, ChevronDown,
   ChevronLeft, ChevronRight, Search, XCircle, Plus, Save, X,
-  RefreshCw, AlertCircle, Edit, Trash2, DollarSign, BarChart2,
+  RefreshCw, AlertCircle, Edit, Trash2, BarChart2,
   PieChart, Activity, Users, Building2, Truck, Download, Printer,
   Eye, EyeOff, Calculator, LayoutDashboard, FileText, Tag, Clock,
   Award, Crown, Sparkles, ArrowUpRight, ArrowDownRight, CheckCircle,
   Info, BarChart3, Gauge, Zap, ChevronLeft as ChevLeft,
   ChevronsLeft, ChevronsRight, Layers, Flame, Target, Percent,
-  Wallet, Repeat, CircleDollarSign, Minus, Medal
+  Wallet, Repeat, Banknote, Minus, Medal
 } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis,
@@ -300,7 +300,7 @@ const MonthlySummaryComponent = ({ data, refreshData, onDataUpdate }) => {
   // KPI CARDS
   // ============================================
   const kpiItems = [
-    { id: 'revenue', icon: DollarSign, label: 'Total Revenue',
+    { id: 'revenue', icon: Banknote, label: 'Total Revenue',
       value: Utils.formatCurrencyShort(totals.totalRevenue),
       meta: `Avg ${Utils.formatCurrencyShort(totals.avgRevenue)}/mo`,
       color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },

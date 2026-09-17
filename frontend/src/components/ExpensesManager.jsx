@@ -5,13 +5,13 @@ import {
   Edit, Trash2, RefreshCw, TrendingUp, TrendingDown,
   Zap, Landmark, Utensils, Car, Building2, Droplets, Globe,
   Sparkles, Shield, Package, Wrench, Truck, HardHat, Hammer,
-  ShieldCheck, ClipboardList, Pin, DollarSign,
+  ShieldCheck, ClipboardList, Pin,
   Calendar, PieChart as PieChartIcon, BarChart3, Plus,
   Save, X, Filter, ChevronDown, Info, Search, FileText, AlertCircle,
   CheckCircle, LayoutDashboard, Wallet, Receipt, ArrowUpRight,
   ArrowDownRight, Award, Star, Gauge, Timer, Activity,
   Crown, ChevronLeft, ChevronRight, ChevronsLeft,
-  ChevronsRight, Flame, Target, Percent, Minus, CircleDollarSign,
+  ChevronsRight, Flame, Target, Percent, Minus, Banknote,
   Layers, TrendingUp as TrendingUpIcon, LineChart as LineChartIcon,
   RefreshCcw
 } from 'lucide-react';
@@ -1365,7 +1365,7 @@ const ExpensesManagerComponent = ({
       <div className="ex-header">
         <div className="ex-header-left">
           <div className="ex-header-icon-wrapper">
-            <DollarSign size={22} />
+            <Banknote size={22} />
             <span className="ex-header-badge"><Sparkles size={10} /> EXPENSES</span>
           </div>
           <div>

@@ -3,12 +3,12 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Edit, Trash2, FileText, Download, Eye, Printer, X, Save, Plus, Minus,
-  Search, RefreshCw, DollarSign, Calendar, Building2, User, MapPin,
+  Search, RefreshCw, Calendar, Building2, User, MapPin,
   CreditCard, Receipt, AlertCircle, CheckCircle, TrendingUp, TrendingDown,
   LayoutDashboard, Users, Briefcase, Award, Star, Gauge, Timer, Activity,
   Zap, Shield, Crown, Sparkles, ChevronLeft, ChevronRight, ChevronsLeft,
   ChevronsRight, Filter, Info, Clock, Send, MoreHorizontal, Layers,
-  Wallet, Percent, CircleDollarSign, BarChart3, PieChart as PieChartIcon,
+  Wallet, Percent, Banknote, BarChart3, PieChart as PieChartIcon,
   LineChart as LineChartIcon, Flame, Target, Minus as MinusIcon, Crown as CrownIcon,
   Package, Phone, Tag
 } from 'lucide-react';
@@ -318,7 +318,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
       meta: Utils.formatCurrencyShort(overdueAmount), color: '#ef4444',
       accent: 'linear-gradient(90deg,#ef4444,#f87171)',
       trend: overdueInvoices > 0 ? 'down' : 'flat' },
-    { id: 'amount', icon: DollarSign, label: 'Total Amount',
+    { id: 'amount', icon: Banknote, label: 'Total Amount',
       value: Utils.formatCurrencyShort(totalAmount),
       meta: `Avg ${Utils.formatCurrencyShort(avgInvoice)}`, color: '#10b981',
       accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' }
@@ -831,7 +831,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
           <div className="inv-card-panel-header">
             <div className="inv-card-panel-title">
               <span className="inv-card-panel-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
-                <CircleDollarSign size={16} />
+                <Banknote size={16} />
               </span>
               <div>
                 <h4>Amount by Status</h4>

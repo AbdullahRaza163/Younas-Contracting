@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import {
   Plus, Search, Edit, Trash2, Eye, Calendar,
   TrendingUp, TrendingDown, AlertCircle, CheckCircle, Clock,
-  Users, DollarSign, Building2, ChevronDown, ChevronUp, X, Save,
+  Users, Banknote, Building2, ChevronDown, ChevronUp, X, Save,
   RefreshCw, Printer, Download, Activity, Briefcase, Phone, Mail, User,
   FolderKanban, ArrowUpRight, FileText, Info, Gauge, Target,
   PlayCircle, PauseCircle, XCircle, BarChart3, Wallet, Shield,
@@ -755,7 +755,7 @@ const ProjectDashboard = ({ data, refreshData }) => {
       color: '#dc2626', bg: 'rgba(220, 38, 38, 0.12)',
       accent: 'linear-gradient(90deg,#dc2626,#ef4444)',
       trend: stats.overdue > 0 ? 'down' : 'neutral' },
-    { id: 'budget', icon: DollarSign, label: 'Total Budget',
+    { id: 'budget', icon: Banknote, label: 'Total Budget',
       value: Utils.formatCurrencyShort(stats.totalBudget),
       meta: `${stats.budgetUtilization.toFixed(0)}% utilized`,
       color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.12)',
@@ -1497,7 +1497,7 @@ const ProjectDashboard = ({ data, refreshData }) => {
 
               {/* Financials */}
               <div className="pd-detail-section">
-                <h4 className="pd-detail-section-title"><DollarSign size={13} /> Financial Summary</h4>
+                <h4 className="pd-detail-section-title"><Banknote size={13} /> Financial Summary</h4>
                 <div className="pd-detail-fin-grid">
                   <div className="pd-detail-fin-item" style={{ borderLeft: '4px solid #f59e0b' }}>
                     <span className="pd-detail-fin-label">Budget</span>

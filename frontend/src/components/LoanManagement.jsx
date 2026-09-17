@@ -4,13 +4,13 @@ import { createPortal } from 'react-dom';
 import {
   Plus, Search, Eye, Edit, Trash2, X, Save, RefreshCw, ChevronDown,
   ChevronUp, CheckCircle, AlertCircle, User, Calendar, Wallet,
-  DollarSign, TrendingUp, FileText, Receipt, Settings, Zap, Users,
-  CreditCard, Banknote, Percent, Tag, Clock, Shield, Award, Building2,
+   TrendingUp, FileText, Receipt, Settings, Zap, Users,
+  CreditCard, Percent, Tag, Clock, Shield, Award, Building2,
   Phone, Mail, MapPin, UserCheck, UserX, LayoutDashboard, Briefcase,
   Timer, Activity, Gauge, Sparkles, Crown, Star, ArrowUpRight,
   ArrowDownRight, Info, HardHat, Layers, Box, Package, ChevronLeft,
   ChevronRight, ChevronsLeft, ChevronsRight, BarChart3, PieChart as PieChartIcon,
-  LineChart as LineChartIcon, Flame, Target, Minus, CircleDollarSign,
+  LineChart as LineChartIcon, Flame, Target, Minus, Banknote,
   Trophy, Percent as PercentIcon, Landmark, PiggyBank, Calculator,
   ReceiptText, BadgeCheck, Scale, Hourglass, CalendarClock
 } from 'lucide-react';
@@ -716,7 +716,7 @@ const LoanManagement = ({ data, refreshData }) => {
       color: '#8b5cf6', accent: 'linear-gradient(90deg,#8b5cf6,#a78bfa)', trend: 'up'
     },
     {
-      id: 'amount', icon: DollarSign, label: 'Total Amount',
+      id: 'amount', icon: Banknote, label: 'Total Amount',
       value: Utils.formatCurrencyShort(summary?.totalAmount || 0),
       meta: `${summary?.totalLoans || 0} loans`,
       color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)', trend: 'up'
@@ -1458,7 +1458,7 @@ const LoanManagement = ({ data, refreshData }) => {
 
                 <div className="loan-form-row">
                   <div className="loan-form-group">
-                    <label><DollarSign size={12} /> Loan Amount (BD) <span className="loan-required">*</span></label>
+                    <label><Banknote size={12} /> Loan Amount (BD) <span className="loan-required">*</span></label>
                     <input type="number" step="0.001" value={formData.amount} required
                       onChange={e => setFormData({ ...formData, amount: e.target.value })}
                       placeholder="0.000" max={employeeSalary * 2}
@@ -1674,7 +1674,7 @@ const LoanManagement = ({ data, refreshData }) => {
               </div>
               <div className="loan-form-row">
                 <div className="loan-form-group">
-                  <label><DollarSign size={12} /> Max Amount (BD)</label>
+                  <label><Banknote size={12} /> Max Amount (BD)</label>
                   <input type="number" step="0.001" value={typeForm.maxAmount}
                     onChange={e => setTypeForm({ ...typeForm, maxAmount: e.target.value })}
                     placeholder="0.000" className="loan-form-input" />

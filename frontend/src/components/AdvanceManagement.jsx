@@ -4,13 +4,13 @@ import { createPortal } from 'react-dom';
 import {
   Plus, Search, Eye, Edit, Trash2, X, Save, RefreshCw, ChevronDown,
   ChevronUp, CheckCircle, AlertCircle, User, Calendar, Wallet,
-  DollarSign, TrendingUp, FileText, Receipt, Settings, Zap, Users,
-  CreditCard, Banknote, Percent, Tag, Clock, Shield, Award, Building2,
+   TrendingUp, FileText, Receipt, Settings, Zap, Users,
+  CreditCard, Percent, Tag, Clock, Shield, Award, Building2,
   Phone, Mail, MapPin, UserCheck, UserX, LayoutDashboard, Briefcase,
   Timer, Activity, Gauge, Sparkles, Crown, Star, ArrowUpRight,
   ArrowDownRight, Info, HardHat, Layers, Box, Package, ChevronLeft,
   ChevronRight, ChevronsLeft, ChevronsRight, BarChart3, PieChart as PieChartIcon,
-  LineChart as LineChartIcon, Flame, Target, Minus, CircleDollarSign,
+  LineChart as LineChartIcon, Flame, Target, Minus, Banknote,
   Trophy, Percent as PercentIcon
 } from 'lucide-react';
 import {
@@ -586,7 +586,7 @@ const AdvanceManagement = ({ data, refreshData }) => {
       value: summary?.activeAdvances || 0,
       meta: `${summary?.totalAdvances ? ((summary.activeAdvances / summary.totalAdvances) * 100).toFixed(0) : 0}% of total`,
       color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
-    { id: 'amount', icon: DollarSign, label: 'Total Amount',
+    { id: 'amount', icon: Banknote, label: 'Total Amount',
       value: Utils.formatCurrencyShort(summary?.totalAmount || 0),
       meta: `${summary?.totalAdvances || 0} advances`,
       color: '#8b5cf6', accent: 'linear-gradient(90deg,#8b5cf6,#a78bfa)', trend: 'up' },

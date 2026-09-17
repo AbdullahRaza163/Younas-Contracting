@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Edit, Trash2, Package, Plus, Save, X, Search, RefreshCw,
-  DollarSign, Tag, Box, Layers, Award, Star, TrendingUp, TrendingDown,
+   Tag, Box, Layers, Award, Star, TrendingUp, TrendingDown,
   AlertCircle, CheckCircle, User, Calendar, Building2, Settings,
   Zap, Shield, Crown, Sparkles, Briefcase, Timer, Activity, Gauge,
   ArrowUpRight, ArrowDownRight, Info, ChevronLeft, ChevronRight,
@@ -199,7 +199,7 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
     { id: 'categories', icon: Layers, label: 'Categories', value: totalCategories,
       meta: mostPopularCategory ? `Top: ${mostPopularCategory[0]}` : '—',
       color: '#8b5cf6', accent: 'linear-gradient(90deg,#8b5cf6,#a78bfa)', trend: 'up' },
-    { id: 'value', icon: DollarSign, label: 'Total Value',
+    { id: 'value', icon: Banknote, label: 'Total Value',
       value: Utils.formatCurrencyShort(totalValue),
       meta: `Avg ${Utils.formatCurrencyShort(avgPrice)}`,
       color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },

@@ -2,13 +2,12 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Plus, Save, X, Edit, Trash2, RefreshCw, Building2, Calendar,
-  DollarSign, AlertCircle, ChevronDown, Filter, ChevronLeft,
+  Plus, Save, X, Edit, Trash2, RefreshCw, Building2, Calendar, AlertCircle, ChevronDown, Filter, ChevronLeft,
   ChevronRight, TrendingUp, TrendingDown, Users, Clock, BarChart3,
   LayoutDashboard, FileText, Tag, ChevronUp, Search, Sparkles,
   PieChart as PieChartIcon, LineChart as LineChartIcon, Layers,
   Target, Percent, Wallet, Minus, ChevronsLeft, ChevronsRight,
-  Repeat, CircleDollarSign, Flame, Crown
+  Repeat, Banknote, Flame, Crown
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
@@ -268,7 +267,7 @@ const MonthlyOverheadManager = ({
   // KPI CARDS
   // ============================================
   const kpiItems = [
-    { id: 'total', icon: DollarSign, label: 'Total Overhead',
+    { id: 'total', icon: Banknote, label: 'Total Overhead',
       value: Utils.formatCurrencyShort(summary.total),
       meta: `${summary.count} entries`,
       color: '#3b82f6', accent: 'linear-gradient(90deg,#3b82f6,#60a5fa)',
@@ -807,7 +806,7 @@ const MonthlyOverheadManager = ({
 
               <div className="mo-form-row">
                 <div className="mo-form-group">
-                  <label><DollarSign size={12} /> Amount (BD) <span className="mo-required">*</span></label>
+                  <label><Banknote size={12} /> Amount (BD) <span className="mo-required">*</span></label>
                   <input type="number" step="0.001" value={formData.amount}
                     onChange={e => setFormData({ ...formData, amount: e.target.value })}
                     required placeholder="0.000" className="mo-form-input" />

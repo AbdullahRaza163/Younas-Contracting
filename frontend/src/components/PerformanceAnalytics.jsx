@@ -5,13 +5,13 @@ import {
   TrendingUp, TrendingDown, BarChart3, PieChart, LineChart, Users,
   Building2, Award, Target, AlertCircle, CheckCircle, Clock, Calendar,
   Download, Printer, RefreshCw, ChevronDown, ChevronUp, Filter, Search,
-  X, DollarSign, Percent, Activity, Zap, Shield, Star, LayoutDashboard,
+  X, Percent, Activity, Zap, Shield, Star, LayoutDashboard,
   FolderKanban, Wallet, CalendarDays, MessageSquare, Video, Link2, Unlink,
   PhoneCall, Mail as MailIcon, Gauge, Sparkles, Crown, ArrowUpRight,
   ArrowDownRight, Info, HardHat, Briefcase, Timer, User, UserCheck, UserX,
   Plus, Edit, Trash2, Eye, Save, FileText, Settings, Award as AwardIcon,
   Target as TargetIcon, ChevronLeft, ChevronRight, ChevronsLeft,
-  ChevronsRight, Flame, Layers, Minus, CircleDollarSign, Rocket
+  ChevronsRight, Flame, Layers, Minus, Banknote, Rocket
 } from 'lucide-react';
 import {
   LineChart as ReLineChart, Line, BarChart, Bar,
@@ -210,7 +210,7 @@ const PerformanceAnalytics = ({ data, refreshData }) => {
 
   const kpiItems = [
     { id: 'revenue', label: 'Total Revenue', value: financial.totalRevenue || 0,
-      target: 100000, unit: 'BD', icon: DollarSign, color: '#10b981',
+      target: 100000, unit: 'BD', icon: Banknote, color: '#10b981',
       accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
     { id: 'profit', label: 'Total Profit', value: financial.totalProfit || 0,
       target: 25000, unit: 'BD', icon: TrendingUp,
@@ -443,7 +443,7 @@ const PerformanceAnalytics = ({ data, refreshData }) => {
                 <div className="pa-rank-meta">
                   {item.members > 0 && <span><Users size={11} /> {item.members} members</span>}
                   {item.entries > 0 && <span><FileText size={11} /> {item.entries} entries</span>}
-                  {item.revenue > 0 && <span><DollarSign size={11} /> {Utils.formatCurrencyShort(item.revenue)}</span>}
+                  {item.revenue > 0 && <span><Banknote size={11} /> {Utils.formatCurrencyShort(item.revenue)}</span>}
                   {item.profit !== undefined && item.profit !== 0 && (
                     <span className={item.profit >= 0 ? 'pa-text-green' : 'pa-text-red'}>
                       {item.profit >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
@@ -636,7 +636,7 @@ const PerformanceAnalytics = ({ data, refreshData }) => {
         { key: 'labourCost', label: 'Labour Cost', format: 'currency' },
         { key: 'labourToRevenueRatio', label: 'Labour/Revenue Ratio', format: 'percent' }
       ]},
-      { title: 'Financial', icon: DollarSign, data: financial, fields: [
+      { title: 'Financial', icon: Banknote, data: financial, fields: [
         { key: 'totalRevenue', label: 'Total Revenue', format: 'currency' },
         { key: 'totalCost', label: 'Total Cost', format: 'currency' },
         { key: 'totalProfit', label: 'Total Profit', format: 'currency' },

@@ -15,7 +15,7 @@ import {
   PieChart as PieChartIcon, LineChart as LineChartIcon,
   Trophy, Wallet, Landmark, Receipt, Scale,
   BadgeCheck, Minus, Briefcase, Calculator,
-  CircleDollarSign, Package, Timer, Filter,
+  Banknote, Package, Timer, Filter,
   ChevronDown, MoreHorizontal, Eye
 } from 'lucide-react';
 import {

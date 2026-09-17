@@ -4,14 +4,14 @@ import { createPortal } from 'react-dom';
 import {
   Package, Plus, Search, Edit, Trash2, Eye, X, Save, RefreshCw,
   ChevronDown, ChevronUp, CheckCircle, AlertCircle, Clock, Building2,
-  User, Calendar, DollarSign, TrendingUp, TrendingDown, Boxes, Truck,
+  User, Calendar, TrendingUp, TrendingDown, Boxes, Truck,
   ShoppingCart, Warehouse, Tag, Layers, FileText, Shield, Users,
   AlertTriangle, Check, XCircle, Star, MapPin, Bell, Zap, Gauge,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, FolderKanban,
   Box, HardHat, Award, Landmark, Phone, Mail, BarChart3,
   PieChart as PieChartIcon, LineChart as LineChartIcon,
   LayoutDashboard, Sparkles, Flame, Target, Percent, Wallet,
-  Minus, Crown, CircleDollarSign, ClipboardList, PackageCheck,
+  Minus, Crown, Banknote, ClipboardList, PackageCheck,
   PackageX, PackageSearch, Loader2, Info
 } from 'lucide-react';
 import {
@@ -669,7 +669,7 @@ const hideGlobalLoader = useCallback(() => {
       meta: 'Need reordering',
       color: '#ef4444', accent: 'linear-gradient(90deg,#ef4444,#f87171)',
       trend: (summary?.lowStockItems || 0) > 0 ? 'down' : 'flat' },
-    { id: 'value', icon: DollarSign, label: 'Stock Value',
+    { id: 'value', icon: Banknote, label: 'Stock Value',
       value: Utils.formatCurrencyShort(summary?.totalStockValue ||
         materials.reduce((s, m) => s + (m.quantity || 0) * (m.unitPrice || 0), 0)),
       meta: `${suppliers.length} suppliers`,

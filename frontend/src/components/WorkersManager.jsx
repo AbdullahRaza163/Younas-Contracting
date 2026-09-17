@@ -2,7 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import {
   HardHat, Edit, Trash2, Plus, X, Save, Search, Users, UserCheck, UserX,
-  Clock, DollarSign, Phone, Mail, MapPin, Calendar, TrendingUp, TrendingDown,
+  Clock, Banknote, Phone, Mail, MapPin, Calendar, TrendingUp, TrendingDown,
   Award, Shield, Briefcase, Eye, RefreshCw, ChevronDown, ChevronUp,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, AlertCircle,
   CheckCircle, LayoutDashboard, User, UserPlus, Crown, Activity, Timer,
@@ -384,7 +384,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
             </div>
           </div>
           <div className="wk-rate-chip">
-            <DollarSign size={12} />
+            <Banknote size={12} />
             <span>{Utils.formatCurrencyShort(worker.dailyRate || 0)}</span>
             <span className="wk-rate-unit">/day</span>
           </div>
@@ -423,7 +423,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               </div>
             </div>
             <div className="wk-mini-stat">
-              <div className="wk-mini-icon wk-mini-icon-amber"><DollarSign size={12} /></div>
+              <div className="wk-mini-icon wk-mini-icon-amber"><Banknote size={12} /></div>
               <div className="wk-mini-content">
                 <span className="wk-mini-label">Wages</span>
                 <span className="wk-mini-value">{Utils.formatCurrencyShort(workerStats.totalWages)}</span>
@@ -653,7 +653,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               </div>
               <div className="wk-detail-stat">
                 <div className="wk-detail-stat-icon wk-detail-stat-icon-amber">
-                  <DollarSign size={16} />
+                  <Banknote size={16} />
                 </div>
                 <div>
                   <span className="wk-detail-stat-label">Total Wages</span>
@@ -662,7 +662,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               </div>
               <div className="wk-detail-stat">
                 <div className="wk-detail-stat-icon wk-detail-stat-icon-purple">
-                  <DollarSign size={16} />
+                  <Banknote size={16} />
                 </div>
                 <div>
                   <span className="wk-detail-stat-label">Daily Rate</span>
@@ -882,7 +882,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
 
             <div className="wk-form-row">
               <div className="wk-form-group">
-                <label><DollarSign size={12} /> Daily Rate (BD)</label>
+                <label><Banknote size={12} /> Daily Rate (BD)</label>
                 <input
                   type="number"
                   step="0.001"
@@ -1104,7 +1104,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     },
     {
       id: 'cost',
-      icon: DollarSign,
+      icon: Banknote,
       label: 'Daily Labor Cost',
       value: Utils.formatCurrencyShort(stats.totalDailyCost),
       meta: `avg ${Utils.formatCurrencyShort(stats.avgRate)}/worker`,

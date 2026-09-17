@@ -2,14 +2,14 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  DollarSign, TrendingDown as TrendingDownIcon, TrendingUp as TrendingUpIcon,
+  TrendingDown as TrendingDownIcon, TrendingUp as TrendingUpIcon,
   Users, Download, HardHat, PieChart as PieChartIcon, BarChart3, Calendar,
   Filter, ChevronDown, Eye, Printer, FileText, Building2, Clock, Award,
   Target, Shield, Zap, Sparkles, Crown, RefreshCw, ChevronLeft, ChevronRight,
   AlertCircle, CheckCircle, Info, ArrowUpRight, ArrowDownRight, X,
   LayoutDashboard, Search, ChevronsLeft, ChevronsRight, Percent as PercentIcon,
   LineChart as LineChartIcon, Trophy, Wallet, Landmark, Receipt,
-  Activity, Gauge, Flame, CircleDollarSign, Calculator, BadgeCheck,
+  Activity, Gauge, Flame, Banknote, Calculator, BadgeCheck,
   Scale, Minus, Layers, Package, Timer
 } from 'lucide-react';
 import {
@@ -530,7 +530,7 @@ const ReportsComponent = ({ data }) => {
   // ============================================
   const kpiItems = [
     {
-      id: 'revenue', icon: DollarSign, label: 'Total Revenue',
+      id: 'revenue', icon: Banknote, label: 'Total Revenue',
       value: Utils.formatCurrencyShort(totalKamai),
       meta: `${filteredData.length} entries`,
       color: '#3b82f6', accent: 'linear-gradient(90deg,#3b82f6,#60a5fa)', trend: 'up'

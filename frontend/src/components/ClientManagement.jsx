@@ -3,7 +3,7 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Users, UserPlus, Search, Plus, Edit, Trash2, Eye, X, Save, RefreshCw,
-  Phone, Mail, MapPin, Building2, Briefcase, Calendar, DollarSign, Star,
+  Phone, Mail, MapPin, Building2, Briefcase, Calendar, Star,
   StarHalf, FileText, Download, ChevronDown, ChevronUp, CheckCircle,
   AlertCircle, Clock, TrendingUp, TrendingDown, Award, Shield, UserCheck,
   UserX, LayoutDashboard, FolderKanban, Wallet, CalendarDays, MessageSquare,
@@ -11,7 +11,7 @@ import {
   ArrowUpRight, ArrowDownRight, Info, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, BarChart3, PieChart as PieChartIcon,
   LineChart as LineChartIcon, Activity, Globe, Layers, Star as StarIcon,
-  Target, Zap, CircleDollarSign, Percent, MapPinned, Heart, Award as AwardIcon
+  Target, Zap, Banknote, Percent, MapPinned, Heart, Award as AwardIcon
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
@@ -416,7 +416,7 @@ const ClientManagement = ({ data, refreshData }) => {
       meta: `${clients.filter(c => c.priority === 'critical').length} critical`,
       color: '#ef4444', accent: 'linear-gradient(90deg,#ef4444,#f87171)',
       trend: stats.highPriority > 0 ? 'down' : 'flat' },
-    { id: 'payments', icon: DollarSign, label: 'Total Payments',
+    { id: 'payments', icon: Banknote, label: 'Total Payments',
       value: Utils.formatCurrencyShort(stats.totalPayments),
       meta: `${stats.withPayments} clients paying`,
       color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },

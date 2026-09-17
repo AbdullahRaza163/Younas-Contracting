@@ -2,14 +2,14 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Plus, Edit, Trash2, Calendar, Building2, DollarSign, Users, Receipt,
+  Plus, Edit, Trash2, Calendar, Building2, Users, Receipt,
   FileText, X, Filter, Search, RefreshCw, Save, AlertCircle, CheckCircle,
   TrendingUp, TrendingDown, Clock, Info, Eye, Printer, Download, Settings,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, LayoutDashboard,
   Wallet, Briefcase, ArrowUpRight, ArrowDownRight, Award, Star, Gauge,
   Timer, Activity, Zap, Shield, Crown, Sparkles, RotateCcw,
   BarChart3, PieChart as PieChartIcon, LineChart as LineChartIcon,
-  Layers, Flame, Percent, CircleDollarSign, Target, ChevronDown
+  Layers, Flame, Percent, Banknote, Target, ChevronDown
 } from 'lucide-react';
 import {
   ResponsiveContainer, ComposedChart, Bar, Line, XAxis, YAxis,
@@ -344,7 +344,7 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
     { id: 'entries', icon: FileText, label: 'Total Entries', value: totalEntries,
       meta: `${data.sites.length} sites`, color: '#3b82f6',
       accent: 'linear-gradient(90deg,#3b82f6,#60a5fa)', trend: 'up' },
-    { id: 'revenue', icon: DollarSign, label: 'Total Revenue',
+    { id: 'revenue', icon: Banknote, label: 'Total Revenue',
       value: Utils.formatCurrencyShort(totalRevenue),
       meta: `${totalEntries} entries`, color: '#10b981',
       accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
@@ -809,7 +809,7 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
                 </div>
                 <div className="em-form-row">
                   <div className="em-form-group">
-                    <label><DollarSign size={12} /> Revenue (BD)</label>
+                    <label><Banknote size={12} /> Revenue (BD)</label>
                     <input type="number" step="0.001" value={formData.kamai}
                       onChange={e => setFormData({ ...formData, kamai: e.target.value })}
                       placeholder="0.000" className="em-form-input" />

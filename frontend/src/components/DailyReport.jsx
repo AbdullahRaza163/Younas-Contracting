@@ -3,7 +3,7 @@ import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Download, Printer, X, FileText, HardHat,
-  Calendar, TrendingUp, TrendingDown, DollarSign,
+  Calendar, TrendingUp, TrendingDown,
   Users, Clock, BarChart3, LayoutDashboard,
   Building2, Award, AlertCircle, CheckCircle,
   Info, ArrowUpRight, ArrowDownRight,
@@ -14,7 +14,7 @@ import {
   Percent as PercentIcon, PieChart as PieChartIcon,
   LineChart as LineChartIcon, Trophy, Wallet,
   Landmark, Scale, BadgeCheck, Minus, Calculator,
-  CircleDollarSign, Package, Timer, Filter,
+  Banknote, Package, Timer, Filter,
   ChevronDown, Activity, Layers
 } from 'lucide-react';
 import {
@@ -514,7 +514,7 @@ const DailyReportComponent = ({ data, selectedDate }) => {
   // ============================================
   const kpiItems = [
     {
-      id: 'revenue', icon: DollarSign, label: 'Total Revenue',
+      id: 'revenue', icon: Banknote, label: 'Total Revenue',
       value: Utils.formatCurrencyShort(filteredData.totals.revenue),
       meta: `${filteredData.totals.totalDays} days · ${filteredData.totals.entryCount} entries`,
       color: '#009846', accent: 'linear-gradient(90deg,#009846,#34d399)', trend: 'up'

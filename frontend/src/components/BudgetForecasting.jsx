@@ -1,14 +1,14 @@
 // src/components/BudgetForecasting.jsx
 import React, { useState, useMemo, useCallback } from 'react';
 import {
-  TrendingUp, TrendingDown, DollarSign, AlertCircle, CheckCircle, Calendar,
+  TrendingUp, TrendingDown, AlertCircle, CheckCircle, Calendar,
   Download, X, Save, RefreshCw, Filter, Search, Target, Activity, Zap,
   AlertTriangle, Wallet, Rocket, TrendingUp as TrendingUpIcon,
   TrendingDown as TrendingDownIcon, LayoutDashboard, FolderKanban,
   Building2, Award as AwardIcon, ArrowUpRight, ArrowDownRight, Clock,
   Plus, Edit, Trash2, Eye, Printer, BarChart3, PieChart, LineChart,
   Gauge, Sparkles, Crown, Star, Info, ArrowUp, ArrowDown, Minus,
-  CircleDollarSign, Percent, Layers, Briefcase, ChevronRight
+  Banknote, Percent, Layers, Briefcase, ChevronRight
 } from 'lucide-react';
 import Utils from '../utils/Utils';
 import './BudgetForecasting.css';
@@ -381,7 +381,7 @@ const BudgetForecasting = ({ data, refreshData }) => {
       <div className="bf-header">
         <div className="bf-header-left">
           <div className="bf-header-icon">
-            <CircleDollarSign size={24} />
+            <Banknote size={24} />
             <span className="bf-header-badge">
               <Sparkles size={10} /> BUDGET
             </span>
@@ -461,7 +461,7 @@ const BudgetForecasting = ({ data, refreshData }) => {
           {/* KPI GRID */}
           <div className="bf-kpi-grid">
             <KPICard
-              icon={DollarSign} label="Total Budget"
+              icon={Banknote} label="Total Budget"
               value={Utils.formatCurrencyShort(totals.budget)}
               sub={`${projectBudgetData.length} projects`}
               accent="#3b82f6"
@@ -838,7 +838,7 @@ const BudgetForecasting = ({ data, refreshData }) => {
       {viewMode === 'forecast' && forecastData && (
         <div className="bf-view">
           <div className="bf-kpi-grid">
-            <KPICard icon={DollarSign} label="Avg Monthly Revenue"
+            <KPICard icon={Banknote} label="Avg Monthly Revenue"
               value={Utils.formatCurrencyShort(forecastData.avgRevenue)}
               sub="Last 6 months" accent="#3b82f6"
               trend={{ direction: 'up', value: 'Trending' }} />

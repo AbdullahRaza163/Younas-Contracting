@@ -3,10 +3,10 @@ import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Edit, Trash2, FileText, Eye, Printer, X, Save, Plus,
-  Search, RefreshCw, DollarSign, Calendar,
+  Search, RefreshCw, Calendar,
   Receipt, AlertCircle, CheckCircle, TrendingUp, TrendingDown,
   LayoutDashboard, Info, Clock, Send, Layers,
-  CircleDollarSign, PieChart as PieChartIcon,
+  Banknote, PieChart as PieChartIcon,
   LineChart as LineChartIcon, Crown as CrownIcon, Minus as MinusIcon,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Sparkles,
   Building2, User, Phone, MapPin, Package, Tag
@@ -342,7 +342,7 @@ const ClientInvoicesManager = ({ showLoader, hideLoader }) => {
       meta: Utils.formatCurrencyShort(overdueAmount), color: '#ef4444',
       accent: 'linear-gradient(90deg,#ef4444,#f87171)',
       trend: overdueInvoices > 0 ? 'down' : 'flat' },
-    { id: 'amount', icon: DollarSign, label: 'Total Amount',
+    { id: 'amount', icon: Banknote, label: 'Total Amount',
       value: Utils.formatCurrencyShort(totalAmount),
       meta: `Avg ${Utils.formatCurrencyShort(avgInvoice)}`, color: '#10b981',
       accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' }
@@ -846,7 +846,7 @@ const ClientInvoicesManager = ({ showLoader, hideLoader }) => {
           <div className="cinv-card-panel-header">
             <div className="cinv-card-panel-title">
               <span className="cinv-card-panel-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
-                <CircleDollarSign size={16} />
+                <Banknote size={16} />
               </span>
               <div>
                 <h4>Amount by Status</h4>

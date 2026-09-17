@@ -13,7 +13,6 @@ import {
   Package,
   Settings as SettingsIcon,
   Users,
-  DollarSign,
   Layers,
   Receipt,
   FileSpreadsheet,
@@ -28,7 +27,7 @@ import {
   FolderKanban,
   Users2,
   CreditCard,
-  CircleDollarSign,
+  Banknote,
   ChevronDown,
   ChevronUp,
   ChevronLeft,
@@ -94,15 +93,15 @@ const Navigation = ({
     {
       id: 'finance',
       title: 'Finance',
-      icon: DollarSign,
+      icon: Banknote,
       items: [
         { id: 'entries', label: 'Entries', icon: PlusCircle },
-        { id: 'expenses', label: 'Expenses', icon: DollarSign },
+        { id: 'expenses', label: 'Expenses', icon: Banknote },
         { id: 'invoices', label: 'Invoices', icon: FileText },
         { id: 'units', label: 'Units', icon: Ruler },
         // ⭐ NEW — isolated client invoicing screen
         { id: 'client-invoices', label: 'Client Invoices', icon: FileSpreadsheet },
-        { id: 'advances', label: 'Advances', icon: CircleDollarSign },
+        { id: 'advances', label: 'Advances', icon: Banknote },
         { id: 'loans', label: 'Loans', icon: CreditCard }
       ]
     },

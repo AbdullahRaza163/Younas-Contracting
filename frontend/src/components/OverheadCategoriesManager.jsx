@@ -3,11 +3,11 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom';
 import {
   Plus, Save, X, Edit, Trash2, RefreshCw, AlertCircle, Check,
-  Circle, Clock, Calendar, Tag, Building2, DollarSign, Search,
+  Circle, Clock, Calendar, Tag, Building2, Search,
   Filter, BarChart3, PieChart as PieChartIcon, LineChart as LineChartIcon,
   LayoutDashboard, Sparkles, TrendingUp, TrendingDown, Minus, Power,
   PowerOff, Eye, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
-  Layers, Flame, Target, Percent, Wallet, Repeat, CircleDollarSign
+  Layers, Flame, Target, Percent, Wallet, Repeat, Banknote
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,

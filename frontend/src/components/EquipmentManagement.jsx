@@ -4,13 +4,13 @@ import { createPortal } from 'react-dom';
 import {
   Plus, Search, Edit, Trash2, Eye, X, Save, RefreshCw, ChevronDown,
   ChevronUp, CheckCircle, AlertCircle, Wrench, Building2, User, Calendar,
-  DollarSign, TrendingUp, TrendingDown, Settings, Shield, FileText, MapPin,
+  TrendingUp, TrendingDown, Settings, Shield, FileText, MapPin,
   Package, LayoutDashboard, Users, Gauge, Timer, Activity, Award, Clock,
   HardHat, Fuel, Box, Briefcase, Layers, Zap, ArrowRightLeft, Truck, Home,
   History, List as ListIcon, MoreVertical, ExternalLink, CheckSquare, Square,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, BarChart3,
   PieChart as PieChartIcon, LineChart as LineChartIcon, Sparkles, Crown,
-  ArrowUpRight, ArrowDownRight, Minus, Target, Percent, CircleDollarSign,
+  ArrowUpRight, ArrowDownRight, Minus, Target, Percent, Banknote,
   Flame
 } from 'lucide-react';
 import {
@@ -393,7 +393,7 @@ const EquipmentManagement = ({ data, refreshData }) => {
       meta: `${Utils.formatCurrencyShort(stats.totalMaintenanceCost)} cost`, color: '#f59e0b',
       accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)',
       trend: stats.maintenance + stats.repair > 0 ? 'down' : 'flat' },
-    { id: 'value', icon: DollarSign, label: 'Asset Value',
+    { id: 'value', icon: Banknote, label: 'Asset Value',
       value: Utils.formatCurrencyShort(stats.totalValue),
       meta: `Avg ${Utils.formatCurrencyShort(stats.avgValue)}`, color: '#f59e0b',
       accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)', trend: 'up' }
@@ -815,7 +815,7 @@ const EquipmentManagement = ({ data, refreshData }) => {
           <div className="eq-expanded">
             <div className="eq-expanded-grid">
               <div className="eq-expanded-item"><Calendar size={13} /><span><strong>Purchase:</strong> {item.purchaseDate ? Utils.formatDate(item.purchaseDate) : 'N/A'}</span></div>
-              <div className="eq-expanded-item"><DollarSign size={13} /><span><strong>Price:</strong> {Utils.formatCurrency(item.purchasePrice || 0)}</span></div>
+              <div className="eq-expanded-item"><Banknote size={13} /><span><strong>Price:</strong> {Utils.formatCurrency(item.purchasePrice || 0)}</span></div>
               <div className="eq-expanded-item"><Gauge size={13} /><span><strong>Depreciation:</strong> {item.depreciationMethod || 'Straight Line'} ({item.depreciationRate || 10}%)</span></div>
               <div className="eq-expanded-item"><Timer size={13} /><span><strong>Useful Life:</strong> {item.usefulLifeYears || 5} yrs</span></div>
               <div className="eq-expanded-item"><Award size={13} /><span><strong>Salvage:</strong> {Utils.formatCurrency(item.salvageValue || 0)}</span></div>
@@ -1418,7 +1418,7 @@ const EquipmentManagement = ({ data, refreshData }) => {
                   </div>
 
                   <div className="eq-financial-section">
-                    <h4><DollarSign size={14} /> Financial Information</h4>
+                    <h4><Banknote size={14} /> Financial Information</h4>
                     <div className="eq-financial-grid">
                       {[
                         ['Purchase Date', e.purchaseDate ? Utils.formatDate(e.purchaseDate) : 'N/A'],
@@ -1559,7 +1559,7 @@ const EquipmentManagement = ({ data, refreshData }) => {
                               {u.siteId && sitesMap[u.siteId] && <span><Building2 size={11} /> {sitesMap[u.siteId].name}</span>}
                               {u.operatorName && <span><User size={11} /> {u.operatorName}</span>}
                               {u.fuelUsed && <span><Fuel size={11} /> {u.fuelUsed}L</span>}
-                              {u.fuelCost && <span><DollarSign size={11} /> {Utils.formatCurrency(u.fuelCost)}</span>}
+                              {u.fuelCost && <span><Banknote size={11} /> {Utils.formatCurrency(u.fuelCost)}</span>}
                             </div>
                             {u.notes && <div className="eq-history-notes"><FileText size={11} /> {u.notes}</div>}
                           </div>

@@ -12,7 +12,7 @@ import {
   PlayCircle, StopCircle, CalendarDays, FileSpreadsheet, Package, Box,
   Layers, BarChart3, PieChart as PieChartIcon, LineChart as LineChartIcon,
   ChevronLeft, ChevronsLeft, ChevronsRight, Flame, Target, Percent,
-  CircleDollarSign, Minus, List, Sun, Moon, Sliders, RotateCcw
+  Banknote, Minus, List, Sun, Moon, Sliders, RotateCcw
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
@@ -767,7 +767,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       value: `${dayStats.totalHours.toFixed(1)}h`,
       meta: `Avg ${dayStats.avgHours.toFixed(1)}h`,
       color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)', trend: 'up' },
-    { id: 'wages', icon: CircleDollarSign, label: 'Total Wages',
+    { id: 'wages', icon: Banknote, label: 'Total Wages',
       value: fmtBDShort(dayStats.totalWages),
       meta: `${dayStats.present} present · BD`,
       color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
@@ -2135,7 +2135,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
               <span className="value">{teamStats?.hours?.toFixed(1) || 0}h</span>
             </div>
             <div className="am-team-summary-item">
-              <span className="label"><CircleDollarSign size={13} /> Wages (BD)</span>
+              <span className="label"><Banknote size={13} /> Wages (BD)</span>
               <span className="value" style={{ color: '#047857' }}>{fmtBDShort(teamStats?.wages || 0)}</span>
             </div>
           </div>
@@ -2208,7 +2208,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                         {member.siteName && <span className="am-member-site"><MapPin size={11} /> {member.siteName}</span>}
                         {member.hoursWorked > 0 && <span><Timer size={11} /> {member.hoursWorked.toFixed(1)}h</span>}
                         {member.overtimeHours > 0 && <span style={{ color: '#d97706' }}><Flame size={11} /> OT {member.overtimeHours.toFixed(1)}h</span>}
-                        {member.wageEarned > 0 && <span style={{ color: '#047857' }}><CircleDollarSign size={11} /> {fmtBDShort(member.wageEarned)}</span>}
+                        {member.wageEarned > 0 && <span style={{ color: '#047857' }}><Banknote size={11} /> {fmtBDShort(member.wageEarned)}</span>}
                         {member.earlyIn && <span className="am-flag early-in"><ArrowDownRight size={10} /> Early In</span>}
                         {member.lateIn && <span className="am-flag late-in"><ArrowUpRight size={10} /> Late In{member.lateInMinutes > 0 ? ` +${member.lateInMinutes}m` : ''}</span>}
                         {member.lateOut && <span className="am-flag late-out"><ArrowUpRight size={10} /> Late Out{member.lateOutMinutes > 0 ? ` +${member.lateOutMinutes}m` : ''}</span>}
@@ -2246,7 +2246,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                       <div className="am-member-expanded">
                         <div className="am-expand-item"><User size={12} /><span><strong>ID:</strong> {worker.id}</span></div>
                         <div className="am-expand-item"><Briefcase size={12} /><span><strong>Role:</strong> {worker.role || 'N/A'}</span></div>
-                        <div className="am-expand-item"><CircleDollarSign size={12} /><span><strong>Rate:</strong> {fmtBD(worker.dailyRate)}</span></div>
+                        <div className="am-expand-item"><Banknote size={12} /><span><strong>Rate:</strong> {fmtBD(worker.dailyRate)}</span></div>
                         <div className="am-expand-item"><Phone size={12} /><span><strong>Phone:</strong> {worker.phone || 'N/A'}</span></div>
                         {member.siteName && <div className="am-expand-item"><Building2 size={12} /><span><strong>Site:</strong> {member.siteName}</span></div>}
                         {member.checkedIn && <div className="am-expand-item"><LogIn size={12} /><span><strong>In:</strong> {Utils.formatTime(member.checkedIn)}</span></div>}
@@ -2306,7 +2306,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
           </button>
           <button className={`am-report-tab ${reportViewMode === 'salary' ? 'active' : ''}`}
             onClick={() => { setReportViewMode('salary'); setTimeout(loadSalaryReport, 100); }}>
-            <CircleDollarSign size={14} /> Salary Report (BD)
+            <Banknote size={14} /> Salary Report (BD)
           </button>
         </div>
 
@@ -2344,7 +2344,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                   <span className="value">{attendanceReport.totalHours.toFixed(1)}h</span>
                 </div>
                 <div className="am-report-summary-item">
-                  <span className="label"><CircleDollarSign size={13} /> Wages (BD)</span>
+                  <span className="label"><Banknote size={13} /> Wages (BD)</span>
                   <span className="value" style={{ color: '#047857' }}>{fmtBDShort(attendanceReport.totalWages)}</span>
                 </div>
               </div>
@@ -2446,7 +2446,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                 <span className="value">{salaryReportData.summary?.totalWorkers || 0}</span>
               </div>
               <div className="am-report-summary-item">
-                <span className="label"><CircleDollarSign size={13} /> Gross</span>
+                <span className="label"><Banknote size={13} /> Gross</span>
                 <span className="value">{fmtBDShort(salaryReportData.summary?.totalGrossSalary || 0)}</span>
               </div>
               <div className="am-report-summary-item">
@@ -2973,7 +2973,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         )}
         {worker.hoursWorked > 0 && <div className="am-row-tooltip-row"><Timer size={11} /><span>Hours:</span><strong>{worker.hoursWorked.toFixed(2)}h</strong></div>}
         {worker.overtimeHours > 0 && <div className="am-row-tooltip-row"><Flame size={11} /><span>OT:</span><strong style={{ color: '#d97706' }}>{worker.overtimeHours.toFixed(2)}h</strong></div>}
-        {worker.wageEarned > 0 && <div className="am-row-tooltip-row"><CircleDollarSign size={11} /><span>Wage:</span><strong style={{ color: '#047857' }}>{fmtBD(worker.wageEarned)}</strong></div>}
+        {worker.wageEarned > 0 && <div className="am-row-tooltip-row"><Banknote size={11} /><span>Wage:</span><strong style={{ color: '#047857' }}>{fmtBD(worker.wageEarned)}</strong></div>}
         {worker.earlyIn && <div className="am-row-tooltip-row"><ArrowDownRight size={11} /><span>Flag:</span><strong style={{ color: '#0284c7' }}>Early In</strong></div>}
         {worker.lateIn && <div className="am-row-tooltip-row"><ArrowUpRight size={11} /><span>Flag:</span><strong style={{ color: '#d97706' }}>Late In +{worker.lateInMinutes}m</strong></div>}
         {worker.lateOut && <div className="am-row-tooltip-row"><ArrowUpRight size={11} /><span>Flag:</span><strong style={{ color: '#7c3aed' }}>Late Out +{worker.lateOutMinutes}m</strong></div>}
