@@ -11,7 +11,7 @@ class ApiService {
 
     // Add auth token if available
     const token = localStorage.getItem('accessToken');
-     console.log(`📡 Request to: ${endpoint}`);
+    console.log(`📡 Request to: ${endpoint}`);
     console.log(`📡 Token exists: ${!!token}`);
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
@@ -20,8 +20,9 @@ class ApiService {
 
     try {
       const response = await fetch(url, { ...options, headers });
-      
-        console.log(`📡 Response status: ${response.status} for ${endpoint}`);
+
+      console.log(`📡 Response status: ${response.status} for ${endpoint}`);
+
       // Handle token refresh on 401/403
       if (response.status === 401 || response.status === 403) {
         const refreshToken = localStorage.getItem('refreshToken');
@@ -77,9 +78,8 @@ class ApiService {
   }
 
   // ============================================
-  // AUTHENTICATION - ADD THIS SECTION
+  // AUTHENTICATION
   // ============================================
-  
   static async login(identifier, password) {
     return this.request('/auth/login', {
       method: 'POST',
@@ -139,63 +139,69 @@ class ApiService {
       body: JSON.stringify({ token })
     });
   }
-static async getDashboardData(params = {}) {
-  const queryParams = new URLSearchParams();
-  Object.keys(params).forEach(key => {
-    if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
-      queryParams.append(key, params[key]);
-    }
-  });
-  const queryString = queryParams.toString();
-  const endpoint = `/dashboard${queryString ? `?${queryString}` : ''}`;
-  console.log('📊 Fetching dashboard data from:', endpoint);
-  return this.request(endpoint, { method: 'GET' });
-}
 
-/**
- * Get filter options (sites and workers) for dashboard
- */
-static async getDashboardFilters() {
-  console.log('📊 Fetching dashboard filters');
-  return this.request('/dashboard/filters', { method: 'GET' });
-}
-
-/**
- * Export dashboard report as Excel
- */
-static async exportDashboardReport(params = {}) {
-  const queryParams = new URLSearchParams();
-  Object.keys(params).forEach(key => {
-    if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
-      queryParams.append(key, params[key]);
-    }
-  });
-  const queryString = queryParams.toString();
-  const endpoint = `/dashboard/export${queryString ? `?${queryString}` : ''}`;
-  console.log('📊 Exporting dashboard report from:', endpoint);
-  
-  const url = `${CONFIG.API_BASE}${endpoint}`;
-  const headers = {
-    'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  };
-
-  const token = localStorage.getItem('accessToken');
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
+  // ============================================
+  // DASHBOARD
+  // ============================================
+  static async getDashboardData(params = {}) {
+    const queryParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
+        queryParams.append(key, params[key]);
+      }
+    });
+    const queryString = queryParams.toString();
+    const endpoint = `/dashboard${queryString ? `?${queryString}` : ''}`;
+    console.log('📊 Fetching dashboard data from:', endpoint);
+    return this.request(endpoint, { method: 'GET' });
   }
 
-  const response = await fetch(url, { 
-    method: 'GET', 
-    headers,
-  });
-
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({}));
-    throw new Error(error.message || error.error || `HTTP error ${response.status}`);
+  static async getDashboardFilters() {
+    console.log('📊 Fetching dashboard filters');
+    return this.request('/dashboard/filters', { method: 'GET' });
   }
 
-  return await response.blob();
-}
+  static async exportDashboardReport(params = {}) {
+    const queryParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      if (params[key] !== undefined && params[key] !== null && params[key] !== '') {
+        queryParams.append(key, params[key]);
+      }
+    });
+    const queryString = queryParams.toString();
+    const endpoint = `/dashboard/export${queryString ? `?${queryString}` : ''}`;
+    console.log('📊 Exporting dashboard report from:', endpoint);
+
+    const url = `${CONFIG.API_BASE}${endpoint}`;
+    const headers = {
+      'Accept': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    };
+
+    const token = localStorage.getItem('accessToken');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers,
+    });
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}));
+      throw new Error(error.message || error.error || `HTTP error ${response.status}`);
+    }
+
+    return await response.blob();
+  }
+
+  static async getDashboardSummary(period, startDate, endDate) {
+    const params = new URLSearchParams({ period });
+    if (startDate) params.append('dateFrom', startDate);
+    if (endDate) params.append('dateTo', endDate);
+    return this.request(`/dashboard/summary?${params}`);
+  }
+
   // ============================================
   // SITES
   // ============================================
@@ -256,13 +262,104 @@ static async exportDashboardReport(params = {}) {
     return this.request('/attendance', { method: 'POST', body: JSON.stringify(attendance) });
   }
   static async updateAttendance(id, updates) {
-  return this.request(`/attendance/${id}`, {
-    method: 'PUT',
-    body: JSON.stringify(updates)
-  });
-}
+    return this.request(`/attendance/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates)
+    });
+  }
   static async deleteAttendance(id) {
     return this.request(`/attendance/${id}`, { method: 'DELETE' });
+  }
+  static async editAttendanceTimes(attendanceId, times) {
+    return this.request(`/attendance/${attendanceId}/edit-times`, {
+      method: 'PUT',
+      body: JSON.stringify(times)
+    });
+  }
+  static async getTeamAttendance(teamId, date) {
+    return this.request(`/attendance/team/${teamId}?date=${date}`);
+  }
+  static async getAttendanceSettings() {
+    return this.request('/attendance/settings');
+  }
+  static async updateAttendanceSettings(settings) {
+    return this.request('/attendance/settings', {
+      method: 'PUT',
+      body: JSON.stringify(settings)
+    });
+  }
+
+  // ============================================
+  // UNITS ⭐ (now static — matches all other methods)
+  // ============================================
+  static async getUnits(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.includeInactive) params.append('includeInactive', '1');
+    if (filters.category) params.append('category', filters.category);
+    if (filters.search) params.append('search', filters.search);
+    const qs = params.toString();
+    return this.request(`/units${qs ? '?' + qs : ''}`);
+  }
+
+  static async getUnitCategories() {
+    return this.request('/units/categories');
+  }
+
+  static async createUnit(payload) {
+    return this.request('/units', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  static async updateUnit(id, payload) {
+    return this.request(`/units/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  static async deleteUnit(id) {
+    return this.request(`/units/${id}`, { method: 'DELETE' });
+  }
+
+  // ============================================
+  // CLIENT INVOICES ⭐ (now static)
+  // ============================================
+  static async getClientInvoices(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.status) params.append('status', filters.status);
+    if (filters.search) params.append('search', filters.search);
+    if (filters.dateFrom) params.append('dateFrom', filters.dateFrom);
+    if (filters.dateTo) params.append('dateTo', filters.dateTo);
+    const qs = params.toString();
+    return this.request(`/client-invoices${qs ? '?' + qs : ''}`);
+  }
+
+  static async getNextClientInvoiceNumber() {
+    return this.request('/client-invoices/next-number');
+  }
+
+  static async getClientInvoice(id) {
+    return this.request(`/client-invoices/${id}`);
+  }
+
+  static async createClientInvoice(payload) {
+    return this.request('/client-invoices', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  static async updateClientInvoice(id, payload) {
+    return this.request(`/client-invoices/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  static async deleteClientInvoice(id) {
+    return this.request(`/client-invoices/${id}`, { method: 'DELETE' });
   }
 
   // ============================================
@@ -292,7 +389,7 @@ static async exportDashboardReport(params = {}) {
   }
 
   // ============================================
-  // INVOICES
+  // INVOICES (daily)
   // ============================================
   static async getInvoices() {
     return this.request('/invoices');
@@ -434,9 +531,7 @@ static async exportDashboardReport(params = {}) {
   // ============================================
   static async getMonthlySummaries(filters = {}) {
     const params = new URLSearchParams();
-    if (filters.month) {
-      params.append('month', filters.month);
-    }
+    if (filters.month) params.append('month', filters.month);
     const queryString = params.toString();
     const url = `/monthly-summary${queryString ? `?${queryString}` : ''}`;
     console.log('📊 Fetching monthly summaries from:', url);
@@ -446,9 +541,7 @@ static async exportDashboardReport(params = {}) {
   }
 
   static async getMonthlySummary(month) {
-    if (!month) {
-      return this.getMonthlySummaries();
-    }
+    if (!month) return this.getMonthlySummaries();
     console.log('📊 Fetching monthly summary for month:', month);
     return this.request(`/monthly-summary?month=${month}`);
   }
@@ -469,23 +562,11 @@ static async exportDashboardReport(params = {}) {
   }
 
   static async calculateMonthlySummary(month) {
-    if (!month) {
-      throw new Error('Month is required for calculation');
-    }
+    if (!month) throw new Error('Month is required for calculation');
     console.log('📊 Calculating monthly summary for month:', month);
     const result = await this.request(`/monthly-summary/calculate/${month}`, { method: 'POST' });
     console.log('📊 Calculate result:', result);
     return result;
-  }
-
-  // ============================================
-  // DASHBOARD
-  // ============================================
-  static async getDashboardSummary(period, startDate, endDate) {
-    const params = new URLSearchParams({ period });
-    if (startDate) params.append('dateFrom', startDate);
-    if (endDate) params.append('dateTo', endDate);
-    return this.request(`/dashboard/summary?${params}`);
   }
 
   // ============================================
@@ -547,7 +628,7 @@ static async exportDashboardReport(params = {}) {
   }
 
   // ============================================
-  // EXPORT/IMPORT
+  // EXPORT / IMPORT
   // ============================================
   static async exportData() {
     return this.request('/export');
@@ -574,41 +655,33 @@ static async exportDashboardReport(params = {}) {
     const url = `/projects${params ? `?${params}` : ''}`;
     return this.request(url);
   }
-
   static async getProject(id) {
     return this.request(`/projects/${id}`);
   }
-
   static async createProject(project) {
     return this.request('/projects', {
       method: 'POST',
       body: JSON.stringify(project)
     });
   }
-
   static async updateProject(id, project) {
     return this.request(`/projects/${id}`, {
       method: 'PUT',
       body: JSON.stringify(project)
     });
   }
-
   static async deleteProject(id) {
     return this.request(`/projects/${id}`, { method: 'DELETE' });
   }
-
   static async calculateProject(id) {
     return this.request(`/projects/${id}/calculate`, { method: 'POST' });
   }
-
   static async getProjectSummary() {
     return this.request('/projects/summary');
   }
-
   static async getProjectEntries(projectId) {
     return this.request(`/projects/${projectId}/entries`);
   }
-
   static async getProjectTimeline(projectId) {
     return this.request(`/projects/${projectId}/timeline`);
   }
@@ -621,98 +694,77 @@ static async exportDashboardReport(params = {}) {
     const url = `/clients${params ? `?${params}` : ''}`;
     return this.request(url);
   }
-
   static async getClient(id) {
     return this.request(`/clients/${id}`);
   }
-
   static async createClient(client) {
     return this.request('/clients', {
       method: 'POST',
       body: JSON.stringify(client)
     });
   }
-
   static async updateClient(id, client) {
     return this.request(`/clients/${id}`, {
       method: 'PUT',
       body: JSON.stringify(client)
     });
   }
-
   static async deleteClient(id) {
     return this.request(`/clients/${id}`, { method: 'DELETE' });
   }
 
-  // Client Contacts
   static async addClientContact(clientId, contact) {
     return this.request(`/clients/${clientId}/contacts`, {
       method: 'POST',
       body: JSON.stringify(contact)
     });
   }
-
   static async updateClientContact(contactId, contact) {
     return this.request(`/clients/contacts/${contactId}`, {
       method: 'PUT',
       body: JSON.stringify(contact)
     });
   }
-
   static async deleteClientContact(contactId) {
     return this.request(`/clients/contacts/${contactId}`, { method: 'DELETE' });
   }
-
-  // Client Communications
   static async addClientCommunication(clientId, communication) {
     return this.request(`/clients/${clientId}/communications`, {
       method: 'POST',
       body: JSON.stringify(communication)
     });
   }
-
   static async getClientCommunications(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     return this.request(`/clients/communications?${params}`);
   }
-
-  // Client Projects
   static async linkClientProject(clientId, projectId, data = {}) {
     return this.request(`/clients/${clientId}/projects`, {
       method: 'POST',
       body: JSON.stringify({ projectId, ...data })
     });
   }
-
   static async unlinkClientProject(linkId) {
     return this.request(`/clients/client-projects/${linkId}`, { method: 'DELETE' });
   }
-
-  // Client Payments
   static async addClientPayment(clientId, payment) {
     return this.request(`/clients/${clientId}/payments`, {
       method: 'POST',
       body: JSON.stringify(payment)
     });
   }
-
-  // Client Meetings
   static async addClientMeeting(clientId, meeting) {
     return this.request(`/clients/${clientId}/meetings`, {
       method: 'POST',
       body: JSON.stringify(meeting)
     });
   }
-
-  // Client Satisfaction
   static async addClientSatisfaction(clientId, satisfaction) {
     return this.request(`/clients/${clientId}/satisfaction`, {
       method: 'POST',
       body: JSON.stringify(satisfaction)
     });
   }
-
-  // Client Summary
   static async getClientSummary() {
     return this.request('/clients/summary');
   }
@@ -720,92 +772,71 @@ static async exportDashboardReport(params = {}) {
   // ============================================
   // EQUIPMENT MANAGEMENT
   // ============================================
-
-  // Equipment CRUD
   static async getEquipment(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     const url = `/equipment${params ? `?${params}` : ''}`;
     return this.request(url);
   }
-
   static async getEquipmentItem(id) {
     return this.request(`/equipment/${id}`);
   }
-
   static async createEquipment(data) {
     return this.request('/equipment', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
   static async updateEquipment(id, data) {
     return this.request(`/equipment/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data)
     });
   }
-
   static async deleteEquipment(id) {
     return this.request(`/equipment/${id}`, { method: 'DELETE' });
   }
-
-  // Equipment Categories
   static async getEquipmentCategories() {
     return this.request('/equipment/categories');
   }
-
   static async createEquipmentCategory(data) {
     return this.request('/equipment/categories', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
-  // Equipment Maintenance
   static async addMaintenance(equipmentId, data) {
     return this.request(`/equipment/${equipmentId}/maintenance`, {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
   static async getMaintenanceRecords(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     return this.request(`/equipment/maintenance?${params}`);
   }
-
-  // Equipment Assignments
   static async assignEquipment(equipmentId, data) {
     return this.request(`/equipment/${equipmentId}/assign`, {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
   static async returnEquipment(assignmentId, data) {
     return this.request(`/equipment/assignments/${assignmentId}/return`, {
       method: 'PUT',
       body: JSON.stringify(data)
     });
   }
-
-  // Equipment Usage
   static async logUsage(equipmentId, data) {
     return this.request(`/equipment/${equipmentId}/usage`, {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
-  // Equipment Depreciation
   static async calculateDepreciation(equipmentId) {
     return this.request(`/equipment/${equipmentId}/depreciation`, {
       method: 'POST'
     });
   }
-
-  // Equipment Summary
   static async getEquipmentSummary() {
     return this.request('/equipment/summary');
   }
@@ -813,116 +844,91 @@ static async exportDashboardReport(params = {}) {
   // ============================================
   // QUALITY CONTROL
   // ============================================
-
-  // Inspection Types
   static async getInspectionTypes() {
     return this.request('/qc/inspection-types');
   }
-
   static async createInspectionType(data) {
     return this.request('/qc/inspection-types', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
-  // Checklists
   static async getChecklists(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     return this.request(`/qc/checklists?${params}`);
   }
-
   static async createChecklist(data) {
     return this.request('/qc/checklists', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
-  // Inspections
   static async getInspections(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     return this.request(`/qc/inspections?${params}`);
   }
-
   static async getInspection(id) {
     return this.request(`/qc/inspections/${id}`);
   }
-
   static async createInspection(data) {
     return this.request('/qc/inspections', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
   static async updateInspection(id, data) {
     return this.request(`/qc/inspections/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data)
     });
   }
-
   static async deleteInspection(id) {
     return this.request(`/qc/inspections/${id}`, { method: 'DELETE' });
   }
-
   static async updateInspectionResults(id, data) {
     return this.request(`/qc/inspections/${id}/results`, {
       method: 'PUT',
       body: JSON.stringify(data)
     });
   }
-
-  // Issues
   static async getIssues(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     return this.request(`/qc/issues?${params}`);
   }
-
   static async createIssue(data) {
     return this.request('/qc/issues', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
   static async updateIssue(id, data) {
     return this.request(`/qc/issues/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data)
     });
   }
-
-  // Corrective Actions
   static async addCorrectiveAction(issueId, data) {
     return this.request(`/qc/issues/${issueId}/actions`, {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
-  // Safety Incidents
   static async getSafetyIncidents(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     return this.request(`/qc/safety-incidents?${params}`);
   }
-
   static async createSafetyIncident(data) {
     return this.request('/qc/safety-incidents', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
   static async updateSafetyIncident(id, data) {
     return this.request(`/qc/safety-incidents/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data)
     });
   }
-
-  // Summary
   static async getQCSummary() {
     return this.request('/qc/summary');
   }
@@ -930,25 +936,21 @@ static async exportDashboardReport(params = {}) {
   // ============================================
   // PERFORMANCE ANALYTICS
   // ============================================
-
   static async getPerformanceMetrics(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     const url = `/performance/metrics${params ? `?${params}` : ''}`;
     return this.request(url);
   }
-
   static async getPerformanceRankings(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     const url = `/performance/rankings${params ? `?${params}` : ''}`;
     return this.request(url);
   }
-
   static async getPerformanceTrends(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     const url = `/performance/trends${params ? `?${params}` : ''}`;
     return this.request(url);
   }
-
   static async getPerformanceKPIs() {
     return this.request('/performance/kpis');
   }
@@ -956,89 +958,74 @@ static async exportDashboardReport(params = {}) {
   // ============================================
   // LEAVE & HOLIDAY MANAGEMENT
   // ============================================
-
-  // Leave Types
   static async getLeaveTypes() {
     return this.request('/leave/types');
   }
-
   static async createLeaveType(data) {
     return this.request('/leave/types', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
   static async updateLeaveType(id, data) {
     return this.request(`/leave/types/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data)
     });
   }
-
   static async deleteLeaveType(id) {
     return this.request(`/leave/types/${id}`, { method: 'DELETE' });
   }
 
-  // Leave Requests
   static async getLeaveRequests(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     const url = `/leave/requests${params ? `?${params}` : ''}`;
     return this.request(url);
   }
-
   static async createLeaveRequest(data) {
     return this.request('/leave/requests', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
   static async updateLeaveRequest(id, data) {
     return this.request(`/leave/requests/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data)
     });
   }
-
   static async approveLeaveRequest(id, data = {}) {
     return this.request(`/leave/requests/${id}/approve`, {
       method: 'PUT',
       body: JSON.stringify(data)
     });
   }
-
   static async rejectLeaveRequest(id, data = {}) {
     return this.request(`/leave/requests/${id}/reject`, {
       method: 'PUT',
       body: JSON.stringify(data)
     });
   }
-
   static async cancelLeaveRequest(id) {
     return this.request(`/leave/requests/${id}/cancel`, {
       method: 'PUT'
     });
   }
-
   static async deleteLeaveRequest(id) {
     return this.request(`/leave/requests/${id}`, { method: 'DELETE' });
   }
 
-  // Leave Balances
   static async getLeaveBalances(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     const url = `/leave/balances${params ? `?${params}` : ''}`;
     return this.request(url);
   }
-
   static async initializeLeaveBalances(data) {
     return this.request('/leave/balances/initialize', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
   static async updateLeaveBalance(id, data) {
     return this.request(`/leave/balances/${id}`, {
       method: 'PUT',
@@ -1046,38 +1033,75 @@ static async exportDashboardReport(params = {}) {
     });
   }
 
-  // Holidays
   static async getHolidays(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     const url = `/leave/holidays${params ? `?${params}` : ''}`;
     return this.request(url);
   }
-
   static async createHoliday(data) {
     return this.request('/leave/holidays', {
       method: 'POST',
       body: JSON.stringify(data)
     });
   }
-
   static async updateHoliday(id, data) {
     return this.request(`/leave/holidays/${id}`, {
       method: 'PUT',
       body: JSON.stringify(data)
     });
   }
-
   static async deleteHoliday(id) {
     return this.request(`/leave/holidays/${id}`, { method: 'DELETE' });
   }
 
-  // Leave Statistics
   static async getLeaveStats(filters = {}) {
     const params = new URLSearchParams(filters).toString();
     const url = `/leave/stats${params ? `?${params}` : ''}`;
     return this.request(url);
   }
+  // ============================================
+  // INVENTORY MATERIALS (used by BOM screen)
+  // ============================================
+  static async getMaterials(filters = {}) {
+    const params = new URLSearchParams();
+    if (filters.search) params.append('search', filters.search);
+    if (filters.categoryId) params.append('categoryId', filters.categoryId);
+    if (filters.status) params.append('status', filters.status);
+    if (filters.supplierId) params.append('supplierId', filters.supplierId);
+    if (filters.lowStock) params.append('lowStock', 'true');
+    const qs = params.toString();
+    return this.request(`/inventory/materials${qs ? '?' + qs : ''}`);
+  }
 
+  static async getMaterial(id) {
+    return this.request(`/inventory/materials/${id}`);
+  }
+
+  static async createMaterial(payload) {
+    return this.request('/inventory/materials', {
+      method: 'POST',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  static async updateMaterial(id, payload) {
+    return this.request(`/inventory/materials/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload)
+    });
+  }
+
+  static async deleteMaterial(id) {
+    return this.request(`/inventory/materials/${id}`, { method: 'DELETE' });
+  }
+
+  static async getMaterialCategories() {
+    return this.request('/inventory/categories');
+  }
+
+  static async getInventorySummary() {
+    return this.request('/inventory/summary');
+  }
   // ============================================
   // UTILITY
   // ============================================
@@ -1092,20 +1116,16 @@ static async exportDashboardReport(params = {}) {
   static isAuthenticated() {
     return !!localStorage.getItem('accessToken');
   }
-
   static getAuthToken() {
     return localStorage.getItem('accessToken');
   }
-
   static getRefreshToken() {
     return localStorage.getItem('refreshToken');
   }
-
   static clearAuthTokens() {
     localStorage.removeItem('accessToken');
     localStorage.removeItem('refreshToken');
   }
-
   static setAuthTokens(accessToken, refreshToken) {
     localStorage.setItem('accessToken', accessToken);
     if (refreshToken) {

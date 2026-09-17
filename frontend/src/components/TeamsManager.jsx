@@ -40,7 +40,8 @@ import {
   Hash,
   Layers,
   CircleDot,
-  MoreHorizontal
+  MoreHorizontal,
+  RotateCcw
 } from 'lucide-react';
 import Utils from '../utils/Utils';
 import './TeamsManager.css';
@@ -56,7 +57,7 @@ const TeamsManagerComponent = ({
   const [editingId, setEditingId] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all'); // all | supervised | unsupervised | empty
+  const [statusFilter, setStatusFilter] = useState('all');
   const [expandedTeams, setExpandedTeams] = useState({});
   const [hoveredCard, setHoveredCard] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
@@ -66,6 +67,9 @@ const TeamsManagerComponent = ({
   const [formData, setFormData] = useState({ name: '', supervisorId: '' });
   const [selectedTeam, setSelectedTeam] = useState(null);
   const [memberForm, setMemberForm] = useState({ workerId: '', roleInTeam: '' });
+
+  // ⭐ Track whether the role was auto-filled so we can show a hint
+  const [roleAutoFilled, setRoleAutoFilled] = useState(false);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setMounted(true));
@@ -240,6 +244,7 @@ const TeamsManagerComponent = ({
     addTeamMember(teamId, memberForm);
     showToast('Member added');
     setMemberForm({ workerId: '', roleInTeam: '' });
+    setRoleAutoFilled(false);
     setSelectedTeam(null);
   };
 
@@ -267,6 +272,40 @@ const TeamsManagerComponent = ({
   const hasActiveFilters = searchTerm.trim() !== '' || statusFilter !== 'all';
 
   // ============================================
+  // ⭐ NEW: HANDLERS for auto-picking worker role
+  // ============================================
+  const handleWorkerSelect = (workerId) => {
+    const worker = workersMap[workerId];
+    if (!worker) {
+      // Selection cleared — reset role + hint
+      setMemberForm({ workerId: '', roleInTeam: '' });
+      setRoleAutoFilled(false);
+      return;
+    }
+
+    // ⭐ Auto-fill the role from the worker record
+    const autoRole = worker.role || worker.position || worker.jobTitle || '';
+    setMemberForm({ workerId, roleInTeam: autoRole });
+    setRoleAutoFilled(!!autoRole);
+  };
+
+  const handleResetRoleToDefault = () => {
+    if (!memberForm.workerId) return;
+    const worker = workersMap[memberForm.workerId];
+    if (!worker) return;
+    const autoRole = worker.role || worker.position || worker.jobTitle || '';
+    setMemberForm(prev => ({ ...prev, roleInTeam: autoRole }));
+    setRoleAutoFilled(!!autoRole);
+    if (autoRole) showToast('Role reset to worker default');
+  };
+
+  const handleRoleChange = (value) => {
+    // ⭐ User typed something — no longer "auto-filled"
+    setMemberForm(prev => ({ ...prev, roleInTeam: value }));
+    setRoleAutoFilled(false);
+  };
+
+  // ============================================
   // RENDER TEAM CARD
   // ============================================
   const renderTeamCard = (team, index) => {
@@ -281,7 +320,6 @@ const TeamsManagerComponent = ({
         className="tm-card"
         style={{ animationDelay: `${Math.min(index * 60, 480)}ms` }}
       >
-        {/* Card top accent */}
         <div className="tm-card-accent" />
 
         <div className="tm-card-header">
@@ -316,7 +354,6 @@ const TeamsManagerComponent = ({
           </div>
         </div>
 
-        {/* Members preview strip */}
         {members.length > 0 && (
           <div className="tm-members-preview">
             <div className="tm-avatars-stack">
@@ -578,17 +615,18 @@ const TeamsManagerComponent = ({
   );
 
   // ============================================
-  // RENDER ADD MEMBER MODAL
+  // RENDER ADD MEMBER MODAL — ⭐ AUTO-ROLE
   // ============================================
   const renderAddMemberModal = () => {
     if (!selectedTeam) return null;
     const availableWorkers = getAvailableWorkers(selectedTeam);
     const team = teams.find(t => t.id === selectedTeam);
+    const selectedWorker = memberForm.workerId ? workersMap[memberForm.workerId] : null;
 
     return (
       <div
         className="tm-modal-overlay"
-        onClick={() => { setSelectedTeam(null); setMemberForm({ workerId: '', roleInTeam: '' }); }}
+        onClick={() => { setSelectedTeam(null); setMemberForm({ workerId: '', roleInTeam: '' }); setRoleAutoFilled(false); }}
       >
         <div className="tm-modal-content tm-member-modal" onClick={e => e.stopPropagation()}>
           <div className="tm-modal-header tm-modal-header-green">
@@ -605,20 +643,21 @@ const TeamsManagerComponent = ({
             </div>
             <button
               className="tm-modal-close"
-              onClick={() => { setSelectedTeam(null); setMemberForm({ workerId: '', roleInTeam: '' }); }}
+              onClick={() => { setSelectedTeam(null); setMemberForm({ workerId: '', roleInTeam: '' }); setRoleAutoFilled(false); }}
             >
               <X size={20} />
             </button>
           </div>
 
           <div className="tm-modal-body">
+            {/* ⭐ Worker dropdown — on change, auto-fills role */}
             <div className="tm-form-group">
               <label>
                 <User size={13} /> Worker <span className="tm-required">*</span>
               </label>
               <select
                 value={memberForm.workerId}
-                onChange={e => setMemberForm({ ...memberForm, workerId: e.target.value })}
+                onChange={e => handleWorkerSelect(e.target.value)}
                 className="tm-form-select"
               >
                 <option value="">Select a worker</option>
@@ -635,17 +674,71 @@ const TeamsManagerComponent = ({
                 </div>
               )}
             </div>
+
+            {/* ⭐ Selected worker preview — shows name, role, phone */}
+            {selectedWorker && (
+              <div className="tm-worker-preview">
+                <div className="tm-worker-preview-avatar">
+                  {selectedWorker.name.charAt(0).toUpperCase()}
+                </div>
+                <div className="tm-worker-preview-info">
+                  <div className="tm-worker-preview-name">{selectedWorker.name}</div>
+                  <div className="tm-worker-preview-meta">
+                    {selectedWorker.role && (
+                      <span className="tm-worker-preview-role">
+                        <Briefcase size={11} /> {selectedWorker.role}
+                      </span>
+                    )}
+                    {selectedWorker.phone && (
+                      <span className="tm-worker-preview-phone">
+                        <Phone size={11} /> {selectedWorker.phone}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ⭐ Role field with auto-fill hint + reset button */}
             <div className="tm-form-group">
-              <label>
-                <Briefcase size={13} /> Role in Team
-              </label>
+              <div className="tm-form-label-row">
+                <label>
+                  <Briefcase size={13} /> Role in Team
+                </label>
+                {memberForm.workerId && roleAutoFilled && (
+                  <button
+                    type="button"
+                    className="tm-btn-reset-role"
+                    onClick={handleResetRoleToDefault}
+                    title="Reset to worker's default role"
+                  >
+                    <RotateCcw size={11} /> Reset
+                  </button>
+                )}
+              </div>
               <input
                 type="text"
                 value={memberForm.roleInTeam}
-                onChange={e => setMemberForm({ ...memberForm, roleInTeam: e.target.value })}
-                placeholder="e.g. Mason, Helper, Driver"
-                className="tm-form-input"
+                onChange={e => handleRoleChange(e.target.value)}
+                placeholder={
+                  selectedWorker?.role
+                    ? `Auto-filled: ${selectedWorker.role}`
+                    : "e.g. Mason, Helper, Driver"
+                }
+                className={`tm-form-input ${roleAutoFilled ? 'tm-input-auto-filled' : ''}`}
               />
+              {roleAutoFilled && (
+                <div className="tm-auto-fill-hint">
+                  <Sparkles size={11} />
+                  <span>Auto-filled from worker role — edit to override</span>
+                </div>
+              )}
+              {!roleAutoFilled && selectedWorker && !memberForm.roleInTeam && (
+                <div className="tm-no-role-hint">
+                  <Info size={11} />
+                  <span>This worker has no default role — enter one above</span>
+                </div>
+              )}
             </div>
 
             <div className="tm-form-actions">
@@ -658,7 +751,7 @@ const TeamsManagerComponent = ({
               </button>
               <button
                 className="tm-btn-secondary"
-                onClick={() => { setSelectedTeam(null); setMemberForm({ workerId: '', roleInTeam: '' }); }}
+                onClick={() => { setSelectedTeam(null); setMemberForm({ workerId: '', roleInTeam: '' }); setRoleAutoFilled(false); }}
               >
                 Cancel
               </button>
@@ -682,14 +775,12 @@ const TeamsManagerComponent = ({
         </div>
       )}
 
-      {/* Ambient background orbs */}
       <div className="tm-ambient">
         <div className="tm-ambient-orb tm-ambient-1" />
         <div className="tm-ambient-orb tm-ambient-2" />
         <div className="tm-ambient-orb tm-ambient-3" />
       </div>
 
-      {/* Header */}
       <div className="tm-header">
         <div className="tm-header-left">
           <div className="tm-header-icon-wrapper">
@@ -717,7 +808,6 @@ const TeamsManagerComponent = ({
         </div>
       </div>
 
-      {/* Stats Cards */}
       <div className="tm-stats-grid">
         <div
           className="tm-stat-card tm-stat-total"
@@ -788,7 +878,6 @@ const TeamsManagerComponent = ({
         </div>
       </div>
 
-      {/* Tooltip */}
       {hoveredCard && cardDetails[hoveredCard] && (
         <div
           className="tm-card-tooltip"
@@ -813,7 +902,6 @@ const TeamsManagerComponent = ({
         </div>
       )}
 
-      {/* Filters */}
       <div className="tm-filters-section">
         <div className="tm-search-box">
           <Search size={16} className="tm-search-icon" />
@@ -863,7 +951,6 @@ const TeamsManagerComponent = ({
         </span>
       </div>
 
-      {/* Teams Grid */}
       {filteredTeams.length === 0 ? (
         <div className="tm-empty-state">
           <div className="tm-empty-icon-wrapper">
@@ -894,7 +981,6 @@ const TeamsManagerComponent = ({
         </div>
       )}
 
-      {/* Modals */}
       {showForm && renderFormModal()}
       {selectedTeam && renderAddMemberModal()}
     </div>

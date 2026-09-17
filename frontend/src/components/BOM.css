@@ -1095,3 +1095,106 @@
   .bom-material-row { grid-template-columns: 1fr; }
   .bom-pred-materials-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
 }
+/* ============================================
+   IN-TAB MATERIAL PICKER (BOM tab)
+   ============================================ */
+.bom-picker-section {
+  margin: 8px 0 16px;
+  padding: 14px;
+  background: rgba(59, 130, 246, 0.04);
+  border: 1px dashed rgba(59, 130, 246, 0.28);
+  border-radius: 12px;
+}
+
+.bom-picker-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #3b82f6;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 10px;
+}
+
+.bom-picker-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 12px;
+  background: white;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: #64748b;
+  border: 1px solid #e5e7eb;
+}
+
+.bom-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.bom-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-align: left;
+  font-family: inherit;
+  width: 100%;
+}
+
+.bom-picker-item:hover {
+  border-color: #10b981;
+  background: #f0fdf4;
+  transform: translateX(2px);
+}
+
+.bom-picker-info { flex: 1; min-width: 0; }
+.bom-picker-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bom-picker-meta {
+  display: flex;
+  gap: 5px;
+  font-size: 10.5px;
+  color: #94a3b8;
+  font-weight: 500;
+}
+.bom-picker-price {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #047857;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.bom-picker-add-icon {
+  color: #10b981;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.bom-picker-item:hover .bom-picker-add-icon {
+  transform: scale(1.2);
+}
+
+/* Highlight already-in-BOM indicator on material cards */
+.bom-icon-add.is-in-bom {
+  background: #d1fae5;
+  color: #047857;
+}

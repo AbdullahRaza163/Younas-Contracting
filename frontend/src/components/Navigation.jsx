@@ -6,6 +6,7 @@ import {
   PlusCircle,
   Building2,
   HardHat,
+  Ruler,
   Clock,
   FileText,
   BarChart3,
@@ -37,7 +38,7 @@ import {
 } from 'lucide-react';
 import './Navigation.css';
 import logoImg from '../assets/logo.png';
-import sideLogoImg from '../assets/SideLogo.png'; // Import smaller logo for collapsed state
+import sideLogoImg from '../assets/SideLogo.png'; // smaller logo for collapsed state
 
 const Navigation = ({ 
   activeTab, 
@@ -98,6 +99,9 @@ const Navigation = ({
         { id: 'entries', label: 'Entries', icon: PlusCircle },
         { id: 'expenses', label: 'Expenses', icon: DollarSign },
         { id: 'invoices', label: 'Invoices', icon: FileText },
+        { id: 'units', label: 'Units', icon: Ruler },
+        // ⭐ NEW — isolated client invoicing screen
+        { id: 'client-invoices', label: 'Client Invoices', icon: FileSpreadsheet },
         { id: 'advances', label: 'Advances', icon: CircleDollarSign },
         { id: 'loans', label: 'Loans', icon: CreditCard }
       ]
@@ -178,21 +182,18 @@ const Navigation = ({
       <div className="sidebar-logo">
         <div className="logo-icon-wrapper">
           {isCollapsed ? (
-            // Show smaller side logo when collapsed
             <img 
               src={sideLogoImg} 
               alt="HYC" 
               className="sidebar-logo-img collapsed-logo" 
             />
           ) : (
-            // Show full logo when expanded
             <img 
               src={logoImg} 
               alt="HYC" 
               className="sidebar-logo-img" 
             />
           )}
-          {/* <span className="logo-badge"></span> */}
         </div>
         {!isCollapsed && (
           <div className="logo-text">
@@ -219,9 +220,6 @@ const Navigation = ({
                 {!isCollapsed && (
                   <>
                     <span className="nav-section-title">{section.title}</span>
-                    {/* <div className="section-toggle-icon">
-                      {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                    </div> */}
                   </>
                 )}
               </div>
@@ -242,10 +240,6 @@ const Navigation = ({
           <>
             <div className="nav-footer-content">
               <span className="nav-version">v2.0.0</span>
-              {/* <button className="logout-btn" onClick={onLogout}>
-                <LogOut size={16} />
-                <span>Logout</span>
-              </button> */}
             </div>
           </>
         ) : (
@@ -254,11 +248,6 @@ const Navigation = ({
           </button>
         )}
       </div>
-
-      {/* Collapse Toggle Button */}
-      {/* <button className="collapse-btn" onClick={toggleNav} title={isCollapsed ? 'Expand' : 'Collapse'}>
-        {isCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-      </button> */}
     </nav>
   );
 };

@@ -1838,3 +1838,350 @@ html[data-theme="light"] {
     transition-duration: 0.01ms !important;
   }
 }
+/* ============================================ */
+/* DEDUCTION FEATURE                            */
+/* ============================================ */
+
+/* Card state when worker has deduction enabled */
+.wk-card.wk-card-with-deduction {
+  border: 1.5px solid rgba(139, 92, 246, 0.35);
+  box-shadow:
+    0 4px 20px rgba(139, 92, 246, 0.10),
+    0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+/* Deduction banner on card */
+.wk-deduction-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 16px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: linear-gradient(90deg, rgba(139, 92, 246, 0.12), rgba(167, 139, 250, 0.08));
+  border: 1px solid rgba(139, 92, 246, 0.22);
+}
+
+.wk-deduction-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #6d28d9;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.wk-deduction-badge strong {
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: #8b5cf6;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+}
+
+.wk-deduction-net {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.wk-deduction-net strong {
+  color: #047857;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+/* Expanded deduction row */
+.wk-expanded-deduction {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+
+.wk-expanded-deduction.active {
+  background: rgba(139, 92, 246, 0.08);
+  border-color: rgba(139, 92, 246, 0.22);
+}
+
+.wk-expanded-deduction.inactive {
+  background: rgba(148, 163, 184, 0.08);
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
+.wk-expanded-deduction.active svg { color: #7c3aed; }
+.wk-expanded-deduction.inactive svg { color: #94a3b8; }
+
+/* Detail modal deduction card */
+.wk-detail-deduction-card {
+  display: flex;
+  gap: 14px;
+  padding: 16px 18px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  margin-bottom: 20px;
+}
+
+.wk-detail-deduction-card.active {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.06), rgba(167, 139, 250, 0.03));
+  border-color: rgba(139, 92, 246, 0.35);
+}
+
+.wk-detail-deduction-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+}
+
+.wk-detail-deduction-card.active .wk-detail-deduction-icon {
+  background: rgba(139, 92, 246, 0.15);
+  color: #7c3aed;
+}
+
+.wk-detail-deduction-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.wk-detail-deduction-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+  margin-bottom: 8px;
+}
+
+.wk-detail-deduction-state {
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.5px;
+}
+
+.wk-detail-deduction-state.on {
+  background: #8b5cf6;
+  color: #fff;
+}
+
+.wk-detail-deduction-state.off {
+  background: #e2e8f0;
+  color: #64748b;
+}
+
+.wk-detail-deduction-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wk-detail-deduction-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: #475569;
+}
+
+.wk-detail-deduction-row strong {
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.wk-detail-deduction-row.deduction strong { color: #b91c1c; }
+.wk-detail-deduction-row.net {
+  padding-top: 6px;
+  border-top: 1px dashed #cbd5e1;
+  margin-top: 4px;
+}
+.wk-detail-deduction-row.net strong {
+  color: #047857;
+  font-size: 14px;
+}
+
+.wk-detail-deduction-empty {
+  font-size: 12.5px;
+  color: #94a3b8;
+  font-style: italic;
+}
+
+/* Form deduction block */
+.wk-form-deduction-block {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1.5px solid #e2e8f0;
+  margin: 16px 0;
+  transition: all 0.2s ease;
+}
+
+.wk-form-deduction-block.active {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.06), rgba(167, 139, 250, 0.03));
+  border-color: rgba(139, 92, 246, 0.35);
+}
+
+.wk-form-deduction-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wk-form-deduction-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.wk-form-deduction-icon {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(148, 163, 184, 0.15);
+  color: #94a3b8;
+}
+
+.wk-form-deduction-block.active .wk-form-deduction-icon {
+  background: rgba(139, 92, 246, 0.15);
+  color: #7c3aed;
+}
+
+.wk-form-deduction-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.wk-form-deduction-subtitle {
+  font-size: 12px;
+  color: #64748b;
+  margin-top: 2px;
+}
+
+.wk-form-deduction-block.active .wk-form-deduction-subtitle {
+  color: #6d28d9;
+}
+
+.wk-deduction-toggle {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+  border-radius: 8px;
+  transition: transform 0.15s ease;
+}
+
+.wk-deduction-toggle:hover { transform: scale(1.08); }
+
+.wk-deduction-toggle.on { color: #8b5cf6; }
+.wk-deduction-toggle.off { color: #cbd5e1; }
+
+.wk-form-deduction-body {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px dashed rgba(139, 92, 246, 0.22);
+  animation: wk-deduction-slide 0.25s ease;
+}
+
+@keyframes wk-deduction-slide {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.wk-form-percent-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.wk-form-percent-input .wk-form-input {
+  padding-right: 36px;
+}
+
+.wk-form-percent-suffix {
+  position: absolute;
+  right: 12px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #8b5cf6;
+  pointer-events: none;
+}
+
+/* Form live preview */
+.wk-form-deduction-preview {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: #fff;
+  border-radius: 10px;
+  border: 1px solid rgba(139, 92, 246, 0.18);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wk-preview-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  color: #64748b;
+}
+
+.wk-preview-row strong {
+  color: #0f172a;
+  font-weight: 700;
+}
+
+.wk-preview-row.deduction strong { color: #b91c1c; }
+
+.wk-preview-row.net {
+  padding-top: 6px;
+  border-top: 1px dashed #cbd5e1;
+  margin-top: 4px;
+}
+.wk-preview-row.net strong {
+  color: #047857;
+  font-size: 14px;
+}
+
+/* Deduction filter dropdown */
+.wk-deduction-filter {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid #d4d9e0;
+}
+
+.wk-deduction-filter-icon { color: #8b5cf6; }
+
+.wk-deduction-select {
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #334155;
+  cursor: pointer;
+  padding-right: 4px;
+}

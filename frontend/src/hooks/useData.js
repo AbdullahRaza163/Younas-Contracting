@@ -15,6 +15,16 @@ const withTimeout = (promise, ms = 12000, label = 'request') => {
   ]);
 };
 
+// ⭐ Safe single fetch with fallback
+const safeFetch = async (promise, fallback, ms, label) => {
+  try {
+    return await withTimeout(promise, ms, label);
+  } catch (err) {
+    console.warn(`⚠️ [useData] ${label} failed:`, err.message);
+    return fallback;
+  }
+};
+
 // ============================================
 // DEFAULT STATE
 // ============================================
@@ -65,7 +75,6 @@ const DEFAULT_STATE = {
 
 const CACHE_KEY = 'haji_younas_backup';
 
-// ⭐ Load cache synchronously so the app renders instantly
 const loadCache = () => {
   try {
     const raw = localStorage.getItem(CACHE_KEY);
@@ -86,9 +95,36 @@ const useData = () => {
   const [error, setError] = useState(null);
   const [expenseSummary, setExpenseSummary] = useState(null);
 
-  // ⭐ GLOBAL TAB LOADER — shows overlay while lazy loader fetches
+  // ⭐ GLOBAL TAB LOADER
   const [tabLoading, setTabLoading] = useState(false);
   const [tabLoadingLabel, setTabLoadingLabel] = useState('');
+
+  // ⭐ Reference counter so overlapping requests don't flicker
+  const loaderCountRef = useRef(0);
+  const loaderTimerRef = useRef(null);
+
+  /**
+   * showLoader(label): starts a loader session.
+   * Debounced by 200ms — if the operation finishes before that,
+   * the loader never appears (avoids flashing on fast ops).
+   */
+  const showLoader = useCallback((label = 'Loading…') => {
+    loaderCountRef.current += 1;
+    if (loaderTimerRef.current) clearTimeout(loaderTimerRef.current);
+    loaderTimerRef.current = setTimeout(() => {
+      setTabLoading(true);
+      setTabLoadingLabel(label);
+    }, 200);
+  }, []);
+
+  const hideLoader = useCallback(() => {
+    loaderCountRef.current = Math.max(0, loaderCountRef.current - 1);
+    if (loaderCountRef.current === 0) {
+      if (loaderTimerRef.current) clearTimeout(loaderTimerRef.current);
+      setTabLoading(false);
+      setTabLoadingLabel('');
+    }
+  }, []);
 
   const hasLoadedOnce = useRef(!!initialCache);
   const dataRef = useRef(data);
@@ -97,84 +133,113 @@ const useData = () => {
   const loadedTabsRef = useRef(new Set());
 
   // ============================================
-  // ⭐ GENERIC LAZY LOADER WRAPPER
-  // Shows the overlay only if the fetch takes more than 300ms
+  // LAZY LOADER WRAPPER
   // ============================================
   const runLazy = useCallback(async (key, label, fn) => {
     if (loadedTabsRef.current.has(key)) return;
     loadedTabsRef.current.add(key);
 
-    // ⭐ Delay showing the overlay — avoids a flash on fast fetches
-    let showTimer = setTimeout(() => {
-      setTabLoading(true);
-      setTabLoadingLabel(label);
-    }, 300);
-
+    showLoader(label);
     try {
       await fn();
     } finally {
-      clearTimeout(showTimer);
-      setTabLoading(false);
-      setTabLoadingLabel('');
+      hideLoader();
     }
-  }, []);
+  }, [showLoader, hideLoader]);
 
   // ============================================
-  // CORE FETCH — only essentials
+  // CORE FETCH
   // ============================================
   const fetchCore = useCallback(async ({ silent = false } = {}) => {
     if (!hasLoadedOnce.current && !silent) setLoading(true);
     else setRefreshing(true);
     setError(null);
 
+    const currentMonth = new Date().toISOString().slice(0, 7);
+
     try {
-      const currentMonth = new Date().toISOString().slice(0, 7);
+      const [sites, workers, teams, attendance, settings] = await Promise.all([
+        safeFetch(ApiService.getSites(),     [], 20000, 'getSites'),
+        safeFetch(ApiService.getWorkers(),   [], 20000, 'getWorkers'),
+        safeFetch(ApiService.getTeams(),     [], 20000, 'getTeams'),
+        safeFetch(ApiService.getAttendance({ month: currentMonth }), [], 45000, 'getAttendance'),
+        safeFetch(ApiService.getSettings(),  {}, 20000, 'getSettings'),
+      ]);
 
-      const [sites, workers, teams, attendance, settings] = await withTimeout(
-        Promise.all([
-          ApiService.getSites().catch(() => []),
-          ApiService.getWorkers().catch(() => []),
-          ApiService.getTeams().catch(() => []),
-          ApiService.getAttendance({ month: currentMonth }).catch(() => []),
-          ApiService.getSettings().catch(() => ({})),
-        ]),
-        15000,
-        'coreData'
-      );
-
-      setData(prev => ({
-        ...prev,
+      const patch = {
         sites: sites || [],
         workers: workers || [],
         teams: teams || [],
         attendance: attendance || [],
         settings: settings || {},
         workingHours: parseFloat(settings?.working_hours_per_day) || 8,
-        monthlyOverheadValue: settings?.monthly_overhead || prev.monthlyOverheadValue,
-        companyName: settings?.company_name || prev.companyName,
-        companyCr: settings?.company_cr || prev.companyCr,
-        companyAddress: settings?.company_address || prev.companyAddress,
-        companyPhone: settings?.company_phone || prev.companyPhone,
-        companyEmail: settings?.company_email || prev.companyEmail,
-      }));
+        monthlyOverheadValue: settings?.monthly_overhead,
+        companyName: settings?.company_name,
+        companyCr: settings?.company_cr,
+        companyAddress: settings?.company_address,
+        companyPhone: settings?.company_phone,
+        companyEmail: settings?.company_email,
+      };
+
+      Object.keys(patch).forEach(k => {
+        if (patch[k] === undefined) delete patch[k];
+      });
+
+      const merged = { ...dataRef.current, ...patch };
+      setData(merged);
+      dataRef.current = merged;
 
       hasLoadedOnce.current = true;
-      console.log('✅ Core data loaded');
+      console.log('✅ Core data loaded', {
+        sites: patch.sites?.length || 0,
+        workers: patch.workers?.length || 0,
+        teams: patch.teams?.length || 0,
+        attendance: patch.attendance?.length || 0,
+      });
+
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify(merged));
+      } catch (e) { /* ignore quota */ }
     } catch (err) {
       console.error('❌ Core load failed:', err);
       setError(err.message || 'Failed to load data');
     } finally {
       setLoading(false);
       setRefreshing(false);
-      try {
-        const snapshot = dataRef.current;
-        localStorage.setItem(CACHE_KEY, JSON.stringify(snapshot));
-      } catch (e) { /* ignore quota */ }
     }
   }, []);
 
   // ============================================
-  // BACKGROUND FETCH — projects, entries, etc.
+  // TARGETED REFRESHES
+  // ============================================
+  const refreshAttendance = useCallback(async (month) => {
+    const targetMonth = month || new Date().toISOString().slice(0, 7);
+    showLoader('Refreshing attendance…');
+    try {
+      const attendance = await withTimeout(
+        ApiService.getAttendance({ month: targetMonth }),
+        45000,
+        'refreshAttendance'
+      );
+      const patch = { attendance: attendance || [] };
+      const merged = { ...dataRef.current, ...patch };
+      setData(merged);
+      dataRef.current = merged;
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify(merged));
+      } catch (e) { /* ignore quota */ }
+      console.log('✅ Attendance refreshed:', attendance?.length || 0);
+      return attendance;
+    } catch (err) {
+      console.error('❌ refreshAttendance failed:', err.message);
+      throw err;
+    } finally {
+      hideLoader();
+    }
+  }, [showLoader, hideLoader]);
+
+  // ============================================
+  // BACKGROUND FETCH
   // ============================================
   const fetchBackground = useCallback(async () => {
     console.log('🔄 Background fetch starting...');
@@ -188,6 +253,7 @@ const useData = () => {
       ApiService.getExpenses().then(v => ({ key: 'expenses', value: v || [] })).catch(() => null),
       ApiService.getInvoices().then(v => ({ key: 'invoices', value: v || [] })).catch(() => null),
       ApiService.getItems().then(v => ({ key: 'items', value: v || [] })).catch(() => null),
+      ApiService.getMaterials().then(v => ({ key: 'materials', value: v || [] })).catch(() => null),
       ApiService.getMonthlyOverhead().then(v => ({ key: 'monthlyOverhead', value: v || [] })).catch(() => null),
       ApiService.getOverheadCategories().then(v => ({ key: 'overheadCategories', value: v || [] })).catch(() => null),
       ApiService.getCumulativeTracker().then(v => ({ key: 'cumulativeTracker', value: v || [] })).catch(() => null),
@@ -204,11 +270,12 @@ const useData = () => {
     });
 
     if (Object.keys(patch).length > 0) {
-      setData(prev => ({ ...prev, ...patch }));
+      const merged = { ...dataRef.current, ...patch };
+      setData(merged);
+      dataRef.current = merged;
       console.log('✅ Background data loaded:', Object.keys(patch).join(', '));
       try {
-        const snapshot = { ...dataRef.current, ...patch };
-        localStorage.setItem(CACHE_KEY, JSON.stringify(snapshot));
+        localStorage.setItem(CACHE_KEY, JSON.stringify(merged));
       } catch (e) { /* ignore quota */ }
     }
   }, []);
@@ -229,7 +296,7 @@ const useData = () => {
   }, [fetchCore, fetchBackground]);
 
   // ============================================
-  // LAZY LOADERS — each wrapped with runLazy
+  // LAZY LOADERS
   // ============================================
   const loadEntries = useCallback(() => runLazy('entries', 'Loading entries…', async () => {
     try {
@@ -272,6 +339,18 @@ const useData = () => {
     } catch (err) {
       console.error('❌ getItems:', err.message);
       loadedTabsRef.current.delete('items');
+    }
+  }), [runLazy]);
+
+  // ⭐ Materials lazy loader (used by BOM screen)
+  const loadMaterials = useCallback(() => runLazy('materials', 'Loading materials…', async () => {
+    try {
+      const materials = await withTimeout(ApiService.getMaterials(), 15000, 'getMaterials');
+      setData(prev => ({ ...prev, materials: materials || [] }));
+      console.log('✅ Loaded materials:', materials?.length || 0);
+    } catch (err) {
+      console.error('❌ getMaterials:', err.message);
+      loadedTabsRef.current.delete('materials');
     }
   }), [runLazy]);
 
@@ -451,6 +530,7 @@ const useData = () => {
   // ATTENDANCE
   // ============================================
   const clockInWorker = useCallback(async (workerId, date, siteId) => {
+    showLoader('Clocking in worker…');
     try {
       const now = new Date().toISOString();
       const result = await ApiService.createAttendance({
@@ -472,10 +552,13 @@ const useData = () => {
     } catch (err) {
       console.error('Failed to clock in:', err);
       throw err;
+    } finally {
+      hideLoader();
     }
-  }, []);
+  }, [showLoader, hideLoader]);
 
   const clockOutWorker = useCallback(async (workerId, date) => {
+    showLoader('Clocking out worker…');
     try {
       const now = new Date().toISOString();
       const current = dataRef.current.attendance || [];
@@ -492,80 +575,171 @@ const useData = () => {
     } catch (err) {
       console.error('Failed to clock out:', err);
       throw err;
+    } finally {
+      hideLoader();
     }
+  }, [showLoader, hideLoader]);
+
+  // ============================================
+  // MATERIALS
+  // ============================================
+  const addMaterial = useCallback(async (payload) => {
+    showLoader('Saving material…');
+    try {
+      const created = await ApiService.createMaterial(payload);
+      setData(prev => ({ ...prev, materials: [created, ...(prev.materials || [])] }));
+      loadedTabsRef.current.add('materials');
+      return created;
+    } catch (err) {
+      console.error('Failed to add material:', err);
+      throw err;
+    } finally {
+      hideLoader();
+    }
+  }, [showLoader, hideLoader]);
+
+  const updateMaterial = useCallback(async (id, updates) => {
+    showLoader('Updating material…');
+    try {
+      const updated = await ApiService.updateMaterial(id, updates);
+      setData(prev => ({
+        ...prev,
+        materials: (prev.materials || []).map(m => m.id === id ? updated : m)
+      }));
+      return updated;
+    } catch (err) {
+      console.error('Failed to update material:', err);
+      throw err;
+    } finally {
+      hideLoader();
+    }
+  }, [showLoader, hideLoader]);
+
+  const deleteMaterial = useCallback(async (id) => {
+    showLoader('Deleting material…');
+    try {
+      await ApiService.deleteMaterial(id);
+      setData(prev => ({
+        ...prev,
+        materials: (prev.materials || []).filter(m => m.id !== id)
+      }));
+    } catch (err) {
+      console.error('Failed to delete material:', err);
+      throw err;
+    } finally {
+      hideLoader();
+    }
+  }, [showLoader, hideLoader]);
+
+  // ============================================
+  // BOM (local only — no backend table yet)
+  // ============================================
+  const addBOM = useCallback((bom) => {
+    setData(prev => ({ ...prev, bom: [...(prev.bom || []), bom] }));
+    return bom;
+  }, []);
+
+  const updateBOM = useCallback((id, updates) => {
+    setData(prev => ({
+      ...prev,
+      bom: (prev.bom || []).map(b => b.id === id ? { ...b, ...updates } : b)
+    }));
+  }, []);
+
+  const deleteBOM = useCallback((id) => {
+    setData(prev => ({
+      ...prev,
+      bom: (prev.bom || []).filter(b => b.id !== id)
+    }));
   }, []);
 
   // ============================================
-  // CRUD ACTIONS
+  // EQUIPMENT
   // ============================================
   const addEquipment = useCallback(async (equipment) => {
+    showLoader('Saving equipment…');
     try {
       const newEquipment = await ApiService.createEquipment(equipment);
       setData(prev => ({ ...prev, equipment: [...(prev.equipment || []), newEquipment] }));
       return newEquipment;
     } catch (err) { console.error('Failed to add equipment:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const updateEquipment = useCallback(async (id, updates) => {
+    showLoader('Updating equipment…');
     try {
       const updated = await ApiService.updateEquipment(id, updates);
       setData(prev => ({ ...prev, equipment: (prev.equipment || []).map(e => e.id === id ? updated : e) }));
       return updated;
     } catch (err) { console.error('Failed to update equipment:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const deleteEquipment = useCallback(async (id) => {
     if (!window.confirm('Delete this equipment?')) return;
+    showLoader('Deleting equipment…');
     try {
       await ApiService.deleteEquipment(id);
       setData(prev => ({ ...prev, equipment: (prev.equipment || []).filter(e => e.id !== id) }));
     } catch (err) { console.error('Failed to delete equipment:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const addMaintenance = useCallback(async (equipmentId, data) => {
+    showLoader('Adding maintenance…');
     try {
       const result = await ApiService.addMaintenance(equipmentId, data);
       loadedTabsRef.current.delete('equipment');
       await loadEquipment();
       return result;
     } catch (err) { console.error('Failed to add maintenance:', err); throw err; }
-  }, [loadEquipment]);
+    finally { hideLoader(); }
+  }, [loadEquipment, showLoader, hideLoader]);
 
   const assignEquipment = useCallback(async (equipmentId, data) => {
+    showLoader('Assigning equipment…');
     try {
       const result = await ApiService.assignEquipment(equipmentId, data);
       loadedTabsRef.current.delete('equipment');
       await loadEquipment();
       return result;
     } catch (err) { console.error('Failed to assign equipment:', err); throw err; }
-  }, [loadEquipment]);
+    finally { hideLoader(); }
+  }, [loadEquipment, showLoader, hideLoader]);
 
   const returnEquipment = useCallback(async (assignmentId, data) => {
+    showLoader('Returning equipment…');
     try {
       const result = await ApiService.returnEquipment(assignmentId, data);
       loadedTabsRef.current.delete('equipment');
       await loadEquipment();
       return result;
     } catch (err) { console.error('Failed to return equipment:', err); throw err; }
-  }, [loadEquipment]);
+    finally { hideLoader(); }
+  }, [loadEquipment, showLoader, hideLoader]);
 
   const logEquipmentUsage = useCallback(async (equipmentId, data) => {
+    showLoader('Logging equipment usage…');
     try {
       const result = await ApiService.logUsage(equipmentId, data);
       loadedTabsRef.current.delete('equipment');
       await loadEquipment();
       return result;
     } catch (err) { console.error('Failed to log equipment usage:', err); throw err; }
-  }, [loadEquipment]);
+    finally { hideLoader(); }
+  }, [loadEquipment, showLoader, hideLoader]);
 
   const calculateDepreciation = useCallback(async (equipmentId) => {
+    showLoader('Calculating depreciation…');
     try {
       const result = await ApiService.calculateDepreciation(equipmentId);
       loadedTabsRef.current.delete('equipment');
       await loadEquipment();
       return result;
     } catch (err) { console.error('Failed to calculate depreciation:', err); throw err; }
-  }, [loadEquipment]);
+    finally { hideLoader(); }
+  }, [loadEquipment, showLoader, hideLoader]);
 
   const loadQualityData = loadQuality;
 
@@ -601,26 +775,34 @@ const useData = () => {
     } catch (err) { console.error('Failed to load performance KPIs:', err); throw err; }
   }, []);
 
-  // Leave
+  // ============================================
+  // LEAVE
+  // ============================================
   const loadLeaveTypes = useCallback(async () => {
     try { const t = await ApiService.getLeaveTypes(); setData(prev => ({ ...prev, leaveTypes: t })); return t; }
     catch (err) { console.error('Failed:', err); throw err; }
   }, []);
 
   const createLeaveType = useCallback(async (d) => {
+    showLoader('Creating leave type…');
     try { const n = await ApiService.createLeaveType(d); setData(prev => ({ ...prev, leaveTypes: [...prev.leaveTypes, n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const updateLeaveType = useCallback(async (id, d) => {
+    showLoader('Updating leave type…');
     try { const u = await ApiService.updateLeaveType(id, d); setData(prev => ({ ...prev, leaveTypes: prev.leaveTypes.map(t => t.id === id ? u : t) })); return u; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const deleteLeaveType = useCallback(async (id) => {
+    showLoader('Deleting leave type…');
     try { await ApiService.deleteLeaveType(id); setData(prev => ({ ...prev, leaveTypes: prev.leaveTypes.filter(t => t.id !== id) })); }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const loadLeaveRequests = useCallback(async (filters = {}) => {
     try { const r = await ApiService.getLeaveRequests(filters); setData(prev => ({ ...prev, leaveRequests: r })); return r; }
@@ -628,24 +810,32 @@ const useData = () => {
   }, []);
 
   const createLeaveRequest = useCallback(async (d) => {
+    showLoader('Creating leave request…');
     try { const n = await ApiService.createLeaveRequest(d); setData(prev => ({ ...prev, leaveRequests: [n, ...prev.leaveRequests] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const approveLeaveRequest = useCallback(async (id, d = {}) => {
+    showLoader('Approving leave request…');
     try { const a = await ApiService.approveLeaveRequest(id, d); setData(prev => ({ ...prev, leaveRequests: prev.leaveRequests.map(r => r.id === id ? a : r) })); return a; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const rejectLeaveRequest = useCallback(async (id, d = {}) => {
+    showLoader('Rejecting leave request…');
     try { const r = await ApiService.rejectLeaveRequest(id, d); setData(prev => ({ ...prev, leaveRequests: prev.leaveRequests.map(x => x.id === id ? r : x) })); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const cancelLeaveRequest = useCallback(async (id) => {
+    showLoader('Cancelling leave request…');
     try { const c = await ApiService.cancelLeaveRequest(id); setData(prev => ({ ...prev, leaveRequests: prev.leaveRequests.map(r => r.id === id ? c : r) })); return c; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const loadLeaveBalances = useCallback(async (filters = {}) => {
     try { const b = await ApiService.getLeaveBalances(filters); setData(prev => ({ ...prev, leaveBalances: b })); return b; }
@@ -653,9 +843,11 @@ const useData = () => {
   }, []);
 
   const initializeLeaveBalances = useCallback(async (d) => {
+    showLoader('Initializing leave balances…');
     try { const r = await ApiService.initializeLeaveBalances(d); await loadLeaveBalances(); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, [loadLeaveBalances]);
+    finally { hideLoader(); }
+  }, [loadLeaveBalances, showLoader, hideLoader]);
 
   const loadHolidays = useCallback(async (filters = {}) => {
     try { const h = await ApiService.getHolidays(filters); setData(prev => ({ ...prev, holidays: h })); return h; }
@@ -663,233 +855,364 @@ const useData = () => {
   }, []);
 
   const createHoliday = useCallback(async (d) => {
+    showLoader('Creating holiday…');
     try { const n = await ApiService.createHoliday(d); setData(prev => ({ ...prev, holidays: [...prev.holidays, n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const updateHoliday = useCallback(async (id, d) => {
+    showLoader('Updating holiday…');
     try { const u = await ApiService.updateHoliday(id, d); setData(prev => ({ ...prev, holidays: prev.holidays.map(h => h.id === id ? u : h) })); return u; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const deleteHoliday = useCallback(async (id) => {
+    showLoader('Deleting holiday…');
     try { await ApiService.deleteHoliday(id); setData(prev => ({ ...prev, holidays: prev.holidays.filter(h => h.id !== id) })); }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const loadLeaveStats = useCallback(async (filters = {}) => {
     try { const s = await ApiService.getLeaveStats(filters); setData(prev => ({ ...prev, leaveStats: s })); return s; }
     catch (err) { console.error('Failed:', err); throw err; }
   }, []);
 
-  // Client
+  // ============================================
+  // CLIENT
+  // ============================================
   const addClient = useCallback(async (client) => {
+    showLoader('Saving client…');
     try { const n = await ApiService.createClient(client); setData(prev => ({ ...prev, clients: [...(prev.clients || []), n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const updateClient = useCallback(async (id, u) => {
+    showLoader('Updating client…');
     try { const r = await ApiService.updateClient(id, u); setData(prev => ({ ...prev, clients: (prev.clients || []).map(c => c.id === id ? r : c) })); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const deleteClient = useCallback(async (id) => {
     if (!window.confirm('Delete this client?')) return;
+    showLoader('Deleting client…');
     try { await ApiService.deleteClient(id); setData(prev => ({ ...prev, clients: (prev.clients || []).filter(c => c.id !== id) })); }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
-  // Project
+  // ============================================
+  // PROJECT
+  // ============================================
   const addProject = useCallback(async (project) => {
+    showLoader('Saving project…');
     try { const n = await ApiService.createProject(project); setData(prev => ({ ...prev, projects: [...(prev.projects || []), n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const updateProject = useCallback(async (id, u) => {
+    showLoader('Updating project…');
     try { const r = await ApiService.updateProject(id, u); setData(prev => ({ ...prev, projects: (prev.projects || []).map(p => p.id === id ? r : p) })); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const deleteProject = useCallback(async (id) => {
     if (!window.confirm('Delete this project?')) return;
+    showLoader('Deleting project…');
     try { await ApiService.deleteProject(id); setData(prev => ({ ...prev, projects: (prev.projects || []).filter(p => p.id !== id) })); }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const calculateProject = useCallback(async (id) => {
     try { return await ApiService.calculateProject(id); }
     catch (err) { console.error('Failed:', err); throw err; }
   }, []);
+
   const getProjectSummary = useCallback(async () => {
     try { return await ApiService.getProjectSummary(); }
     catch (err) { console.error('Failed:', err); throw err; }
   }, []);
 
-  // Monthly overhead
+  // ============================================
+  // MONTHLY OVERHEAD
+  // ============================================
   const addMonthlyOverhead = useCallback(async (o) => {
+    showLoader('Saving overhead…');
     try { const n = await ApiService.createMonthlyOverhead(o); setData(prev => ({ ...prev, monthlyOverhead: [...(prev.monthlyOverhead || []), n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const updateMonthlyOverhead = useCallback(async (id, u) => {
+    showLoader('Updating overhead…');
     try { const r = await ApiService.updateMonthlyOverhead(id, u); setData(prev => ({ ...prev, monthlyOverhead: (prev.monthlyOverhead || []).map(i => i.id === id ? r : i) })); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const deleteMonthlyOverhead = useCallback(async (id) => {
     if (!window.confirm('Delete this overhead entry?')) return;
+    showLoader('Deleting overhead…');
     try { await ApiService.deleteMonthlyOverhead(id); setData(prev => ({ ...prev, monthlyOverhead: (prev.monthlyOverhead || []).filter(i => i.id !== id) })); }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
-  // Monthly summary
+  // ============================================
+  // MONTHLY SUMMARY
+  // ============================================
   const addMonthlySummary = useCallback(async (s) => {
+    showLoader('Saving monthly summary…');
     try { const n = await ApiService.createMonthlySummary(s); setData(prev => ({ ...prev, monthlySummary: [...(prev.monthlySummary || []), n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const updateMonthlySummary = useCallback(async (id, u) => {
+    showLoader('Updating monthly summary…');
     try { const r = await ApiService.updateMonthlySummary(id, u); setData(prev => ({ ...prev, monthlySummary: (prev.monthlySummary || []).map(i => i.id === id ? r : i) })); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const deleteMonthlySummary = useCallback(async (id) => {
     if (!window.confirm('Delete this monthly summary?')) return;
+    showLoader('Deleting monthly summary…');
     try { await ApiService.deleteMonthlySummary(id); setData(prev => ({ ...prev, monthlySummary: (prev.monthlySummary || []).filter(i => i.id !== id) })); }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const calculateMonthlySummary = useCallback(async (month) => {
+    showLoader('Calculating monthly summary…');
     try {
       const result = await ApiService.calculateMonthlySummary(month);
       loadedTabsRef.current.delete('monthlySummary');
       await loadMonthlySummary();
       return result;
     } catch (err) { console.error('Failed:', err); throw err; }
-  }, [loadMonthlySummary]);
+    finally { hideLoader(); }
+  }, [loadMonthlySummary, showLoader, hideLoader]);
 
-  // Cumulative
+  // ============================================
+  // CUMULATIVE
+  // ============================================
   const addCumulativeEntry = useCallback(async (e) => {
+    showLoader('Saving cumulative entry…');
     try { const n = await ApiService.createCumulativeTracker(e); setData(prev => ({ ...prev, cumulativeTracker: [...(prev.cumulativeTracker || []), n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const fetchMonthlyExpenseSummary = useCallback(async (month) => {
     try { const s = await ApiService.getMonthlyExpenseSummary(month); setExpenseSummary(s); return s; }
     catch (err) { console.error('Failed:', err); return null; }
   }, []);
 
-  // Entries
+  // ============================================
+  // ENTRIES
+  // ============================================
   const addEntry = useCallback(async (entry) => {
+    showLoader('Saving entry…');
     try { const n = await ApiService.createEntry(entry); setData(prev => ({ ...prev, entries: [n, ...prev.entries] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const updateEntry = useCallback(async (id, u) => {
+    showLoader('Updating entry…');
     try { const r = await ApiService.updateEntry(id, u); setData(prev => ({ ...prev, entries: prev.entries.map(e => e.id === id ? r : e) })); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const deleteEntry = useCallback(async (id) => {
     if (!window.confirm('Are you sure you want to delete this entry?')) return;
+    showLoader('Deleting entry…');
     try { await ApiService.deleteEntry(id); setData(prev => ({ ...prev, entries: prev.entries.filter(e => e.id !== id) })); }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
-  // Sites
+  // ============================================
+  // SITES
+  // ============================================
   const addSite = useCallback(async (site) => {
+    showLoader('Saving site…');
     try { const n = await ApiService.createSite(site); setData(prev => ({ ...prev, sites: [...prev.sites, n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const updateSite = useCallback(async (id, u) => {
+    showLoader('Updating site…');
     try { const r = await ApiService.updateSite(id, u); setData(prev => ({ ...prev, sites: prev.sites.map(s => s.id === id ? r : s) })); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const deleteSite = useCallback(async (id) => {
     if (!window.confirm('Delete this site?')) return;
+    showLoader('Deleting site…');
     try {
       await ApiService.deleteSite(id);
       setData(prev => ({ ...prev, sites: prev.sites.filter(s => s.id !== id), entries: prev.entries.filter(e => e.siteId !== id) }));
     } catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
-  // Workers
+  // ============================================
+  // WORKERS
+  // ============================================
   const addWorker = useCallback(async (worker) => {
+    showLoader('Saving worker…');
     try { const n = await ApiService.createWorker(worker); setData(prev => ({ ...prev, workers: [...prev.workers, n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const updateWorker = useCallback(async (id, u) => {
+    showLoader('Updating worker…');
     try { const r = await ApiService.updateWorker(id, u); setData(prev => ({ ...prev, workers: prev.workers.map(w => w.id === id ? r : w) })); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const deleteWorker = useCallback(async (id) => {
     if (!window.confirm('Delete this worker?')) return;
+    showLoader('Deleting worker…');
     try {
       await ApiService.deleteWorker(id);
       setData(prev => ({ ...prev, workers: prev.workers.filter(w => w.id !== id), attendance: prev.attendance.filter(a => a.workerId !== id) }));
     } catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
-  // Teams
+  // ============================================
+  // TEAMS
+  // ============================================
   const addTeam = useCallback(async (team) => {
+    showLoader('Saving team…');
     try { const n = await ApiService.createTeam(team); setData(prev => ({ ...prev, teams: [...(prev.teams || []), n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const updateTeam = useCallback(async (id, u) => {
+    showLoader('Updating team…');
     try { const r = await ApiService.updateTeam(id, u); setData(prev => ({ ...prev, teams: (prev.teams || []).map(t => t.id === id ? r : t) })); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const deleteTeam = useCallback(async (id) => {
     if (!window.confirm('Delete this team?')) return;
+    showLoader('Deleting team…');
     try { await ApiService.deleteTeam(id); setData(prev => ({ ...prev, teams: (prev.teams || []).filter(t => t.id !== id) })); }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const addTeamMember = useCallback(async (teamId, member) => {
+    showLoader('Adding team member…');
     try {
       const n = await ApiService.addTeamMember(teamId, member);
       setData(prev => ({ ...prev, teams: (prev.teams || []).map(t => t.id === teamId ? { ...t, members: [...(t.members || []), n] } : t) }));
       return n;
     } catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const removeTeamMember = useCallback(async (teamId, memberId) => {
+    showLoader('Removing team member…');
     try {
       await ApiService.removeTeamMember(teamId, memberId);
       setData(prev => ({ ...prev, teams: (prev.teams || []).map(t => t.id === teamId ? { ...t, members: (t.members || []).filter(m => m.id !== memberId) } : t) }));
     } catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
-  // Expenses
+  // ============================================
+  // EXPENSES
+  // ============================================
   const addExpense = useCallback(async (e) => {
+    showLoader('Saving expense…');
     try { const n = await ApiService.createExpense(e); setData(prev => ({ ...prev, expenses: [...(prev.expenses || []), n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const updateExpense = useCallback(async (id, u) => {
+    showLoader('Updating expense…');
     try { const r = await ApiService.updateExpense(id, u); setData(prev => ({ ...prev, expenses: (prev.expenses || []).map(e => e.id === id ? r : e) })); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const deleteExpense = useCallback(async (id) => {
     if (!window.confirm('Delete this expense?')) return;
+    showLoader('Deleting expense…');
     try { await ApiService.deleteExpense(id); setData(prev => ({ ...prev, expenses: (prev.expenses || []).filter(e => e.id !== id) })); }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
-  // Invoices
+  // ============================================
+  // INVOICES
+  // ============================================
   const addInvoice = useCallback(async (i) => {
+    showLoader('Saving invoice…');
     try { const n = await ApiService.createInvoice(i); setData(prev => ({ ...prev, invoices: [...(prev.invoices || []), n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const updateInvoice = useCallback(async (id, u) => {
+    showLoader('Updating invoice…');
     try { const r = await ApiService.updateInvoice(id, u); setData(prev => ({ ...prev, invoices: (prev.invoices || []).map(i => i.id === id ? r : i) })); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const deleteInvoice = useCallback(async (id) => {
     if (!window.confirm('Delete this invoice?')) return;
+    showLoader('Deleting invoice…');
     try { await ApiService.deleteInvoice(id); setData(prev => ({ ...prev, invoices: (prev.invoices || []).filter(i => i.id !== id) })); }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
-  // Items
+  // ============================================
+  // ITEMS
+  // ============================================
   const addItem = useCallback(async (i) => {
+    showLoader('Saving item…');
     try { const n = await ApiService.createItem(i); setData(prev => ({ ...prev, items: [...(prev.items || []), n] })); return n; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const updateItem = useCallback(async (id, u) => {
+    showLoader('Updating item…');
     try { const r = await ApiService.updateItem(id, u); setData(prev => ({ ...prev, items: (prev.items || []).map(i => i.id === id ? r : i) })); return r; }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
+
   const deleteItem = useCallback(async (id) => {
     if (!window.confirm('Delete this item?')) return;
+    showLoader('Deleting item…');
     try { await ApiService.deleteItem(id); setData(prev => ({ ...prev, items: (prev.items || []).filter(i => i.id !== id) })); }
     catch (err) { console.error('Failed:', err); throw err; }
-  }, []);
+    finally { hideLoader(); }
+  }, [showLoader, hideLoader]);
 
   const updateData = useCallback((newData) => {
     setData(prev => ({ ...prev, ...newData }));
@@ -902,11 +1225,16 @@ const useData = () => {
     data,
     loading,
     refreshing,
-    tabLoading,        // ⭐ NEW
-    tabLoadingLabel,   // ⭐ NEW
+    tabLoading,
+    tabLoadingLabel,
+    showLoader,
+    hideLoader,
+    setTabLoading,
+    setTabLoadingLabel,
     error,
     loadData,
     refreshData,
+    refreshAttendance,
     updateData,
 
     // Lazy loaders
@@ -914,6 +1242,7 @@ const useData = () => {
     loadExpenses,
     loadInvoices,
     loadItems,
+    loadMaterials,
     loadProjects,
     loadClients,
     loadEquipment,
@@ -923,6 +1252,16 @@ const useData = () => {
     loadMonthlyOverhead,
     loadMonthlySummary,
     loadCumulativeTracker,
+
+    // Materials
+    addMaterial,
+    updateMaterial,
+    deleteMaterial,
+
+    // BOM (local)
+    addBOM,
+    updateBOM,
+    deleteBOM,
 
     // Equipment
     addEquipment, updateEquipment, deleteEquipment,

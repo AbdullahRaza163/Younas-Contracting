@@ -12,7 +12,7 @@ import {
   PieChart as PieChartIcon, LineChart as LineChartIcon,
   LayoutDashboard, Sparkles, Flame, Target, Percent, Wallet,
   Minus, Crown, CircleDollarSign, ClipboardList, PackageCheck,
-  PackageX, PackageSearch
+  PackageX, PackageSearch, Loader2, Info
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
@@ -21,6 +21,7 @@ import {
 } from 'recharts';
 import Utils from '../utils/Utils';
 import './InventoryManagement.css';
+import useUnits from '../hooks/useUnits';
 
 import { CONFIG } from '../config/constants';
 const API_BASE_URL = CONFIG.API_BASE || 'http://localhost:5000/api';
@@ -55,13 +56,25 @@ const ChartTooltip = ({ active, payload, label, formatter }) => {
 };
 
 // ============================================
+// FALLBACK UNITS
+// ============================================
+const FALLBACK_UNITS = ['pcs', 'kg', 'ton', 'm', 'm2', 'm3', 'liter', 'box', 'roll', 'sheet', 'bag', 'set'];
+
+// ============================================
 // MAIN COMPONENT
 // ============================================
-const InventoryManagement = ({ data, refreshData }) => {
+const InventoryManagement = ({
+  data,
+  refreshData,
+  setTabLoading,
+  setTabLoadingLabel,
+  showLoader: externalShowLoader,   // ← renamed
+  hideLoader: externalHideLoader,
+}) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
-  const [viewMode, setViewMode] = useState('overview'); // overview | materials | suppliers | orders | movements
+  const [viewMode, setViewMode] = useState('overview');
   const [mounted, setMounted] = useState(false);
 
   const [showForm, setShowForm] = useState(false);
@@ -83,7 +96,20 @@ const InventoryManagement = ({ data, refreshData }) => {
   const [optimizationResults, setOptimizationResults] = useState(null);
   const [autoReorderResults, setAutoReorderResults] = useState(null);
 
-  // Pagination — separate per tab
+  // ---------- Units from Units table ----------
+  const { units: allUnits } = useUnits();
+
+  const availableUnitNames = useMemo(() => {
+    const active = (allUnits || []).filter(u => u.isActive);
+    if (active.length > 0) {
+      return [...active]
+        .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0))
+        .map(u => u.name);
+    }
+    return FALLBACK_UNITS;
+  }, [allUnits]);
+
+  // Pagination
   const [matPage, setMatPage] = useState(1);
   const [matPer, setMatPer] = useState(10);
   const [supPage, setSupPage] = useState(1);
@@ -120,8 +146,9 @@ const InventoryManagement = ({ data, refreshData }) => {
     quantity: '', movementType: 'adjustment', notes: ''
   });
 
+  // ⭐ poItemForm now includes materialUnit
   const [poItemForm, setPoItemForm] = useState({
-    materialId: '', quantity: '', unitPrice: ''
+    materialId: '', quantity: '', unitPrice: '', materialUnit: ''
   });
 
   useEffect(() => {
@@ -129,6 +156,29 @@ const InventoryManagement = ({ data, refreshData }) => {
     return () => cancelAnimationFrame(id);
   }, []);
 
+  // ============================================
+  // GLOBAL LOADER — works with either prop shape
+  // ============================================
+  const showGlobalLoader = useCallback((label = 'Loading…') => {
+  if (typeof externalShowLoader === 'function') {
+    externalShowLoader(label);   // ← reference-counted loader from useData
+    return;
+  }
+  // Fallback: immediate set (only if showLoader wasn't passed)
+  if (setTabLoading) {
+    setTabLoading(true);
+    if (setTabLoadingLabel) setTabLoadingLabel(label);
+  }
+}, [externalShowLoader, setTabLoading, setTabLoadingLabel]);
+
+const hideGlobalLoader = useCallback(() => {
+  if (typeof externalHideLoader === 'function') {
+    externalHideLoader();        // ← reference-counted loader from useData
+    return;
+  }
+  if (setTabLoading) setTabLoading(false);
+}, [externalHideLoader, setTabLoading]);
+  
   // ============================================
   // RESET
   // ============================================
@@ -153,7 +203,7 @@ const InventoryManagement = ({ data, refreshData }) => {
       supplierId: '', orderDate: Utils.today(), expectedDelivery: '',
       vatRate: 0, notes: '', items: []
     });
-    setPoItemForm({ materialId: '', quantity: '', unitPrice: '' });
+    setPoItemForm({ materialId: '', quantity: '', unitPrice: '', materialUnit: '' });
     setEditingId(null);
   };
   const resetStockForm = () => setStockForm({ quantity: '', movementType: 'adjustment', notes: '' });
@@ -161,8 +211,9 @@ const InventoryManagement = ({ data, refreshData }) => {
   // ============================================
   // LOAD
   // ============================================
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async ({ showLoader = false } = {}) => {
     setLoading(true); setError('');
+    if (showLoader) showGlobalLoader('Loading inventory…');
     try {
       const [materialsRes, categoriesRes, suppliersRes, ordersRes, summaryRes] = await Promise.all([
         fetch(`${API_BASE_URL}/inventory/materials`, { headers: { 'Accept': 'application/json' } }).then(r => r.ok ? r.json() : []),
@@ -183,8 +234,11 @@ const InventoryManagement = ({ data, refreshData }) => {
       checkLowStockAlerts(materialsRes);
       checkCostOptimization(materialsRes, categoriesRes);
     } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
-  }, [viewMode]);
+    finally {
+      setLoading(false);
+      if (showLoader) hideGlobalLoader();
+    }
+  }, [viewMode, showGlobalLoader, hideGlobalLoader]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
@@ -235,6 +289,7 @@ const InventoryManagement = ({ data, refreshData }) => {
       return;
     }
     setLoading(true);
+    showGlobalLoader('Preparing auto-reorder…');
     try {
       const reorderItems = lowItems.map(m => ({
         materialId: m.id, quantity: Math.ceil(m.reorderLevel * 2),
@@ -255,7 +310,10 @@ const InventoryManagement = ({ data, refreshData }) => {
       setSuccess(`Auto-reorder prepared for ${reorderItems.length} items`);
       setTimeout(() => setSuccess(''), 5000);
     } catch { setError('Failed to auto-reorder'); }
-    finally { setLoading(false); }
+    finally {
+      setLoading(false);
+      hideGlobalLoader();
+    }
   };
 
   // ============================================
@@ -274,7 +332,7 @@ const InventoryManagement = ({ data, refreshData }) => {
   }, [materials, searchTerm, categoryFilter, statusFilter, lowStockFilter]);
 
   // ============================================
-  // PAGINATION HELPERS
+  // PAGINATION
   // ============================================
   const paginate = (list, page, per) => {
     const total = Math.max(1, Math.ceil(list.length / per));
@@ -359,6 +417,7 @@ const InventoryManagement = ({ data, refreshData }) => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true); setError(''); setSuccess('');
+    showGlobalLoader(editingId ? 'Updating material…' : 'Saving material…');
     try {
       const url = editingId ? `${API_BASE_URL}/inventory/materials/${editingId}` : `${API_BASE_URL}/inventory/materials`;
       const method = editingId ? 'PUT' : 'POST';
@@ -375,7 +434,7 @@ const InventoryManagement = ({ data, refreshData }) => {
       resetForm(); setShowForm(false);
       setTimeout(() => setSuccess(''), 4000);
     } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
+    finally { setLoading(false); hideGlobalLoader(); }
   };
 
   const handleEdit = (m) => {
@@ -393,17 +452,20 @@ const InventoryManagement = ({ data, refreshData }) => {
 
   const handleDelete = async (id) => {
     if (!window.confirm('Delete this material?')) return;
+    showGlobalLoader('Deleting material…');
     try {
       await fetch(`${API_BASE_URL}/inventory/materials/${id}`, { method: 'DELETE' });
       setSuccess('Material deleted!');
       await loadData();
       setTimeout(() => setSuccess(''), 4000);
     } catch (err) { setError(err.message); }
+    finally { hideGlobalLoader(); }
   };
 
   const handleSupplierSubmit = async (e) => {
     e.preventDefault();
     setLoading(true); setError(''); setSuccess('');
+    showGlobalLoader(editingId ? 'Updating supplier…' : 'Saving supplier…');
     try {
       const url = editingId ? `${API_BASE_URL}/inventory/suppliers/${editingId}` : `${API_BASE_URL}/inventory/suppliers`;
       const method = editingId ? 'PUT' : 'POST';
@@ -420,13 +482,14 @@ const InventoryManagement = ({ data, refreshData }) => {
       resetSupplierForm(); setShowSupplierForm(false);
       setTimeout(() => setSuccess(''), 4000);
     } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
+    finally { setLoading(false); hideGlobalLoader(); }
   };
 
   const handleAdjustStock = async (e) => {
     e.preventDefault();
     if (!selectedItem) return;
     setLoading(true); setError(''); setSuccess('');
+    showGlobalLoader('Adjusting stock…');
     try {
       const r = await fetch(`${API_BASE_URL}/inventory/materials/${selectedItem.id}/stock-adjust`, {
         method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
@@ -445,12 +508,13 @@ const InventoryManagement = ({ data, refreshData }) => {
       setShowAdjustStock(false); resetStockForm();
       setTimeout(() => setSuccess(''), 4000);
     } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
+    finally { setLoading(false); hideGlobalLoader(); }
   };
 
   const handlePOSubmit = async (e) => {
     e.preventDefault();
     setLoading(true); setError(''); setSuccess('');
+    showGlobalLoader('Creating purchase order…');
     try {
       const r = await fetch(`${API_BASE_URL}/inventory/purchase-orders`, {
         method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
@@ -466,23 +530,55 @@ const InventoryManagement = ({ data, refreshData }) => {
       resetPoForm(); setShowPurchaseForm(false);
       setTimeout(() => setSuccess(''), 4000);
     } catch (err) { setError(err.message); }
-    finally { setLoading(false); }
+    finally { setLoading(false); hideGlobalLoader(); }
+  };
+
+  // ⭐ NEW: Auto-fill unit + price when material changes
+  const handlePOItemMaterialSelect = (materialId) => {
+    if (!materialId) {
+      setPoItemForm({ materialId: '', quantity: '', unitPrice: '', materialUnit: '' });
+      return;
+    }
+    const mat = materials.find(m => m.id === materialId);
+    if (!mat) {
+      setPoItemForm(prev => ({ ...prev, materialId }));
+      return;
+    }
+    setPoItemForm({
+      materialId: mat.id,
+      quantity: '',
+      unitPrice: mat.unitPrice != null ? String(mat.unitPrice) : '',
+      materialUnit: mat.unit || '',
+    });
   };
 
   const handleAddPOItem = () => {
     if (!poItemForm.materialId || !poItemForm.quantity) return;
     const mat = materials.find(m => m.id === poItemForm.materialId);
     if (!mat) return;
+
     const q = parseFloat(poItemForm.quantity) || 0;
-    const p = parseFloat(poItemForm.unitPrice) || mat.unitPrice;
+    const p = parseFloat(poItemForm.unitPrice);
+    const finalPrice = isNaN(p) ? (mat.unitPrice || 0) : p;
+    const unit = poItemForm.materialUnit || mat.unit || '';
+
     setPoForm(prev => ({
       ...prev,
-      items: [...prev.items, {
-        materialId: mat.id, materialName: mat.name,
-        quantity: q, unitPrice: p, total: q * p
-      }]
+      items: [
+        ...prev.items,
+        {
+          materialId: mat.id,
+          materialName: mat.name,
+          materialSku: mat.sku || '',
+          unit,
+          quantity: q,
+          unitPrice: finalPrice,
+          total: q * finalPrice,
+        }
+      ]
     }));
-    setPoItemForm({ materialId: '', quantity: '', unitPrice: '' });
+
+    setPoItemForm({ materialId: '', quantity: '', unitPrice: '', materialUnit: '' });
   };
 
   const handleRemovePOItem = (index) => {
@@ -613,6 +709,57 @@ const InventoryManagement = ({ data, refreshData }) => {
   const handleCardLeave = () => setHoveredCard(null);
 
   // ============================================
+  // AUTOMATION WIDGETS
+  // ============================================
+  const renderAutomationWidgets = () => {
+    const lowStockCount = materials.filter(m => m.quantity <= m.reorderLevel && m.reorderLevel > 0).length;
+    const costCount = optimizationResults?.length || 0;
+    if (lowStockCount === 0 && costCount === 0 && !autoReorderResults) return null;
+    return (
+      <div className="inv-automation-grid">
+        {lowStockCount > 0 && (
+          <div className="inv-automation-card alert">
+            <div className="inv-automation-icon"><Bell size={20} /></div>
+            <div className="inv-automation-content">
+              <span className="inv-automation-title">Low Stock Alert</span>
+              <span className="inv-automation-desc">{lowStockCount} items need reordering</span>
+            </div>
+            <button className="inv-btn inv-btn-primary" onClick={handleAutoReorder}>
+              <Zap size={13} /> Auto-Reorder
+            </button>
+          </div>
+        )}
+        {costCount > 0 && (
+          <div className="inv-automation-card success">
+            <div className="inv-automation-icon"><TrendingUp size={20} /></div>
+            <div className="inv-automation-content">
+              <span className="inv-automation-title">Cost Savings Found</span>
+              <span className="inv-automation-desc">{costCount} optimization opportunities</span>
+            </div>
+            <button className="inv-btn inv-btn-secondary" onClick={() => setShowCostOptimizer(true)}>
+              <Gauge size={13} /> View
+            </button>
+          </div>
+        )}
+        {autoReorderResults && (
+          <div className="inv-automation-card info">
+            <div className="inv-automation-icon"><ShoppingCart size={20} /></div>
+            <div className="inv-automation-content">
+              <span className="inv-automation-title">Auto-Reorder Ready</span>
+              <span className="inv-automation-desc">
+                {autoReorderResults.totalItems} items · {Utils.formatCurrency(autoReorderResults.estimatedCost)}
+              </span>
+            </div>
+            <button className="inv-btn inv-btn-ghost" onClick={() => setAutoReorderResults(null)}>
+              <X size={13} /> Dismiss
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ============================================
   // OVERVIEW TAB
   // ============================================
   const renderOverviewTab = () => (
@@ -659,10 +806,8 @@ const InventoryManagement = ({ data, refreshData }) => {
         </div>
       )}
 
-      {/* Automation widgets */}
       {renderAutomationWidgets()}
 
-      {/* Row 1 — Stock status donut + Category donut */}
       <div className="inv-grid-1-1">
         <div className="inv-card">
           <div className="inv-card-header">
@@ -737,7 +882,6 @@ const InventoryManagement = ({ data, refreshData }) => {
         </div>
       </div>
 
-      {/* Row 2 — Stock value by category bar */}
       <div className="inv-card">
         <div className="inv-card-header">
           <div className="inv-card-title">
@@ -767,7 +911,6 @@ const InventoryManagement = ({ data, refreshData }) => {
         ) : <div className="inv-empty-mini">No data</div>}
       </div>
 
-      {/* Row 3 — Top value items */}
       {topValueItems.length > 0 && (
         <div className="inv-card">
           <div className="inv-card-header">
@@ -802,7 +945,6 @@ const InventoryManagement = ({ data, refreshData }) => {
         </div>
       )}
 
-      {/* Row 4 — PO status */}
       {poStatusData.length > 0 && (
         <div className="inv-card">
           <div className="inv-card-header">
@@ -831,57 +973,6 @@ const InventoryManagement = ({ data, refreshData }) => {
       )}
     </div>
   );
-
-  // ============================================
-  // AUTOMATION WIDGETS
-  // ============================================
-  const renderAutomationWidgets = () => {
-    const lowStockCount = materials.filter(m => m.quantity <= m.reorderLevel && m.reorderLevel > 0).length;
-    const costCount = optimizationResults?.length || 0;
-    if (lowStockCount === 0 && costCount === 0 && !autoReorderResults) return null;
-    return (
-      <div className="inv-automation-grid">
-        {lowStockCount > 0 && (
-          <div className="inv-automation-card alert">
-            <div className="inv-automation-icon"><Bell size={20} /></div>
-            <div className="inv-automation-content">
-              <span className="inv-automation-title">Low Stock Alert</span>
-              <span className="inv-automation-desc">{lowStockCount} items need reordering</span>
-            </div>
-            <button className="inv-btn inv-btn-primary" onClick={handleAutoReorder}>
-              <Zap size={13} /> Auto-Reorder
-            </button>
-          </div>
-        )}
-        {costCount > 0 && (
-          <div className="inv-automation-card success">
-            <div className="inv-automation-icon"><TrendingUp size={20} /></div>
-            <div className="inv-automation-content">
-              <span className="inv-automation-title">Cost Savings Found</span>
-              <span className="inv-automation-desc">{costCount} optimization opportunities</span>
-            </div>
-            <button className="inv-btn inv-btn-secondary" onClick={() => setShowCostOptimizer(true)}>
-              <Gauge size={13} /> View
-            </button>
-          </div>
-        )}
-        {autoReorderResults && (
-          <div className="inv-automation-card info">
-            <div className="inv-automation-icon"><ShoppingCart size={20} /></div>
-            <div className="inv-automation-content">
-              <span className="inv-automation-title">Auto-Reorder Ready</span>
-              <span className="inv-automation-desc">
-                {autoReorderResults.totalItems} items · {Utils.formatCurrency(autoReorderResults.estimatedCost)}
-              </span>
-            </div>
-            <button className="inv-btn inv-btn-ghost" onClick={() => setAutoReorderResults(null)}>
-              <X size={13} /> Dismiss
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  };
 
   // ============================================
   // MATERIALS TAB
@@ -1197,7 +1288,7 @@ const InventoryManagement = ({ data, refreshData }) => {
                     {o.items?.slice(0, 3).map((item, i) => (
                       <div key={i} className="inv-order-item">
                         <span>{item.materialName}</span>
-                        <span>{item.quantity} × {Utils.formatCurrencyShort(item.unitPrice)}</span>
+                        <span>{item.quantity} {item.unit || ''} × {Utils.formatCurrencyShort(item.unitPrice)}</span>
                       </div>
                     ))}
                     {o.items?.length > 3 && <div className="inv-order-more">+{o.items.length - 3} more</div>}
@@ -1236,7 +1327,7 @@ const InventoryManagement = ({ data, refreshData }) => {
                 <span>{stockMovements.length} records</span>
               </div>
             </div>
-            <button className="inv-btn inv-btn-ghost" onClick={loadData}>
+            <button className="inv-btn inv-btn-ghost" onClick={() => loadData({ showLoader: true })}>
               <RefreshCw size={13} /> Refresh
             </button>
           </div>
@@ -1284,7 +1375,7 @@ const InventoryManagement = ({ data, refreshData }) => {
   };
 
   // ============================================
-  // MATERIAL FORM MODAL
+  // MATERIAL FORM MODAL — with Units from Units table
   // ============================================
   const renderMaterialFormModal = () => (
     <ModalPortal>
@@ -1331,15 +1422,14 @@ const InventoryManagement = ({ data, refreshData }) => {
                     onChange={e => setFormData({ ...formData, unit: e.target.value })}
                     className="inv-form-select">
                     <option value="">Select Unit</option>
-                    <option value="pcs">Pieces</option>
-                    <option value="kg">Kilogram</option>
-                    <option value="ton">Ton</option>
-                    <option value="meter">Meter</option>
-                    <option value="sqm">Square Meter</option>
-                    <option value="box">Box</option>
-                    <option value="roll">Roll</option>
-                    <option value="sheet">Sheet</option>
+                    {availableUnitNames.map(u => (
+                      <option key={u} value={u}>{u}</option>
+                    ))}
                   </select>
+                  <span className="inv-form-hint" style={{ fontSize: 11, color: '#94a3b8' }}>
+                    <Info size={10} style={{ verticalAlign: 'middle', marginRight: 3 }} />
+                    Manage units in Setup → Units
+                  </span>
                 </div>
                 <div className="inv-form-group">
                   <label>Unit Price (BD)</label>
@@ -1425,7 +1515,8 @@ const InventoryManagement = ({ data, refreshData }) => {
 
               <div className="inv-form-actions">
                 <button type="submit" className="inv-btn inv-btn-primary" disabled={loading}>
-                  <Save size={14} /> {loading ? 'Saving...' : (editingId ? 'Update' : 'Create')}
+                  {loading ? <Loader2 size={14} className="inv-spin" /> : <Save size={14} />}
+                  {loading ? 'Saving...' : (editingId ? 'Update' : 'Create')}
                 </button>
                 <button type="button" className="inv-btn inv-btn-secondary"
                   onClick={() => { setShowForm(false); resetForm(); }}>
@@ -1558,7 +1649,8 @@ const InventoryManagement = ({ data, refreshData }) => {
 
               <div className="inv-form-actions">
                 <button type="submit" className="inv-btn inv-btn-primary" disabled={loading}>
-                  <Save size={14} /> {loading ? 'Saving...' : (editingId ? 'Update' : 'Create')}
+                  {loading ? <Loader2 size={14} className="inv-spin" /> : <Save size={14} />}
+                  {loading ? 'Saving...' : (editingId ? 'Update' : 'Create')}
                 </button>
                 <button type="button" className="inv-btn inv-btn-secondary"
                   onClick={() => { setShowSupplierForm(false); resetSupplierForm(); }}>
@@ -1573,7 +1665,7 @@ const InventoryManagement = ({ data, refreshData }) => {
   );
 
   // ============================================
-  // PURCHASE ORDER FORM MODAL
+  // PURCHASE ORDER FORM MODAL — ⭐ AUTO-FILL UNIT + PRICE
   // ============================================
   const renderPurchaseFormModal = () => (
     <ModalPortal>
@@ -1635,31 +1727,81 @@ const InventoryManagement = ({ data, refreshData }) => {
 
               <div className="inv-po-section">
                 <h4 className="inv-po-title">Order Items</h4>
+
+                {/* ⭐ PO ITEM FORM: Material → Unit → Qty → Price → Add */}
                 <div className="inv-po-item-form">
-                  <select value={poItemForm.materialId}
-                    onChange={e => setPoItemForm({ ...poItemForm, materialId: e.target.value })}
-                    className="inv-form-select">
+                  <select
+                    value={poItemForm.materialId}
+                    onChange={e => handlePOItemMaterialSelect(e.target.value)}
+                    className="inv-form-select"
+                  >
                     <option value="">Select Material</option>
-                    {materials.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    {materials.map(m => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}{m.sku ? ` · ${m.sku}` : ''}
+                      </option>
+                    ))}
                   </select>
-                  <input type="number" step="0.01" value={poItemForm.quantity}
+
+                  {/* Auto-filled Unit (read-only) */}
+                  <input
+                    type="text"
+                    value={poItemForm.materialUnit || ''}
+                    readOnly
+                    placeholder="Unit"
+                    className="inv-form-input"
+                    style={{ background: 'rgba(148,163,184,0.08)', cursor: 'not-allowed' }}
+                    title="Auto-filled from material"
+                  />
+
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={poItemForm.quantity}
                     onChange={e => setPoItemForm({ ...poItemForm, quantity: e.target.value })}
-                    placeholder="Qty" className="inv-form-input" />
-                  <input type="number" step="0.001" value={poItemForm.unitPrice}
+                    placeholder="Qty"
+                    className="inv-form-input"
+                  />
+
+                  <input
+                    type="number"
+                    step="0.001"
+                    value={poItemForm.unitPrice}
                     onChange={e => setPoItemForm({ ...poItemForm, unitPrice: e.target.value })}
-                    placeholder="Price" className="inv-form-input" />
-                  <button type="button" className="inv-btn inv-btn-primary" onClick={handleAddPOItem}>
+                    placeholder="Price"
+                    className="inv-form-input"
+                    title="Auto-filled from material — edit to override"
+                  />
+
+                  <button
+                    type="button"
+                    className="inv-btn inv-btn-primary"
+                    onClick={handleAddPOItem}
+                    disabled={!poItemForm.materialId || !poItemForm.quantity}
+                  >
                     <Plus size={13} /> Add
                   </button>
                 </div>
+
+                {poItemForm.materialId && (
+                  <div className="inv-po-item-hint">
+                    <Info size={11} />
+                    <span>Unit &amp; price auto-filled from the material — you can change the price.</span>
+                  </div>
+                )}
 
                 <div className="inv-po-items">
                   {poForm.items.length === 0 ? (
                     <div className="inv-empty-mini">No items added yet</div>
                   ) : poForm.items.map((item, i) => (
                     <div key={i} className="inv-po-item">
-                      <span className="inv-po-name">{item.materialName}</span>
-                      <span className="inv-po-details">{item.quantity} × {Utils.formatCurrencyShort(item.unitPrice)}</span>
+                      <span className="inv-po-name">
+                        {item.materialName}
+                        {item.materialSku ? <small> · {item.materialSku}</small> : null}
+                      </span>
+                      <span className="inv-po-details">
+                        {item.quantity} {item.unit || ''} × {Utils.formatCurrencyShort(item.unitPrice)}
+                      </span>
                       <span className="inv-po-total">{Utils.formatCurrency(item.total)}</span>
                       <button className="inv-icon-btn inv-icon-danger" onClick={() => handleRemovePOItem(i)}>
                         <X size={12} />
@@ -1689,7 +1831,8 @@ const InventoryManagement = ({ data, refreshData }) => {
               <div className="inv-form-actions">
                 <button type="submit" className="inv-btn inv-btn-primary"
                   disabled={loading || poForm.items.length === 0}>
-                  <Save size={14} /> {loading ? 'Creating...' : 'Create PO'}
+                  {loading ? <Loader2 size={14} className="inv-spin" /> : <Save size={14} />}
+                  {loading ? 'Creating...' : 'Create PO'}
                 </button>
                 <button type="button" className="inv-btn inv-btn-secondary"
                   onClick={() => { setShowPurchaseForm(false); resetPoForm(); }}>
@@ -1763,7 +1906,8 @@ const InventoryManagement = ({ data, refreshData }) => {
 
                 <div className="inv-form-actions">
                   <button type="submit" className="inv-btn inv-btn-primary" disabled={loading}>
-                    <Save size={14} /> {loading ? 'Adjusting...' : 'Adjust Stock'}
+                    {loading ? <Loader2 size={14} className="inv-spin" /> : <Save size={14} />}
+                    {loading ? 'Adjusting...' : 'Adjust Stock'}
                   </button>
                   <button type="button" className="inv-btn inv-btn-secondary"
                     onClick={() => { setShowAdjustStock(false); resetStockForm(); }}>
@@ -1814,7 +1958,7 @@ const InventoryManagement = ({ data, refreshData }) => {
                     {selectedItem.items?.map((item, i) => (
                       <div key={i} className="inv-detail-row">
                         <span>{item.materialName}</span>
-                        <strong>{item.quantity} × {Utils.formatCurrencyShort(item.unitPrice)} = {Utils.formatCurrency(item.total)}</strong>
+                        <strong>{item.quantity} {item.unit || ''} × {Utils.formatCurrencyShort(item.unitPrice)} = {Utils.formatCurrency(item.total)}</strong>
                       </div>
                     ))}
                   </div>
@@ -1916,7 +2060,6 @@ const InventoryManagement = ({ data, refreshData }) => {
         <div className="inv-orb inv-orb-3" />
       </div>
 
-      {/* Header */}
       <div className="inv-header">
         <div className="inv-header-left">
           <div className="inv-header-icon">
@@ -1931,13 +2074,13 @@ const InventoryManagement = ({ data, refreshData }) => {
           </div>
         </div>
         <div className="inv-header-right">
-          <button className="inv-btn inv-btn-ghost" onClick={loadData}>
-            <RefreshCw size={14} /> Refresh
+          <button className="inv-btn inv-btn-ghost" onClick={() => loadData({ showLoader: true })}>
+            {loading ? <Loader2 size={14} className="inv-spin" /> : <RefreshCw size={14} />}
+            {loading ? 'Refreshing…' : 'Refresh'}
           </button>
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="inv-tabs">
         {[
           { id: 'overview', label: 'Overview', icon: LayoutDashboard },
@@ -1958,11 +2101,9 @@ const InventoryManagement = ({ data, refreshData }) => {
         })}
       </div>
 
-      {/* Messages */}
       {error && <div className="inv-message error"><AlertCircle size={15} /> {error}</div>}
       {success && <div className="inv-message success"><CheckCircle size={15} /> {success}</div>}
 
-      {/* View */}
       {loading && viewMode !== 'overview' && viewMode !== 'materials' ? (
         <div className="inv-loading">
           <div className="inv-loading-spinner" />
@@ -1978,7 +2119,6 @@ const InventoryManagement = ({ data, refreshData }) => {
         </>
       )}
 
-      {/* Modals */}
       {showForm && renderMaterialFormModal()}
       {showSupplierForm && renderSupplierFormModal()}
       {showPurchaseForm && renderPurchaseFormModal()}

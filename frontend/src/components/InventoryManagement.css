@@ -1310,3 +1310,66 @@
   .inv-material-details { grid-template-columns: 1fr; }
   .inv-expanded-grid { grid-template-columns: 1fr; }
 }
+/* ============================================
+   PO ITEM FORM — 5 columns (material, unit, qty, price, button)
+   ============================================ */
+.inv-po-item-form {
+  display: grid;
+  grid-template-columns: 2fr 0.9fr 0.7fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 900px) {
+  .inv-po-item-form {
+    grid-template-columns: 1fr 1fr;
+  }
+  .inv-po-item-form > button {
+    grid-column: span 2;
+  }
+}
+
+@media (max-width: 640px) {
+  .inv-po-item-form {
+    grid-template-columns: 1fr;
+  }
+  .inv-po-item-form > button {
+    grid-column: span 1;
+  }
+}
+
+/* Hint under the PO form */
+.inv-po-item-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  margin: 4px 0 10px;
+  background: rgba(59, 130, 246, 0.06);
+  color: #3b82f6;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  animation: invFadeIn 0.2s ease;
+}
+
+@keyframes invFadeIn {
+  from { opacity: 0; transform: translateY(-3px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* SKU in PO item rows */
+.inv-po-item small {
+  color: #94a3b8;
+  font-weight: 500;
+  font-size: 10.5px;
+}
+
+/* Spinner */
+.inv-spin {
+  animation: invSpin 1s linear infinite;
+}
+@keyframes invSpin {
+  to { transform: rotate(360deg); }
+}

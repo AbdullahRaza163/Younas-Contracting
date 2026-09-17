@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   RefreshCw, Users, UserCheck, Clock, Calendar, Users2, Building2,
-  ChevronDown, ChevronUp, FileText, DollarSign, TrendingUp, TrendingDown,
+  ChevronDown, ChevronUp, FileText, TrendingUp, TrendingDown,
   Search, Filter, Printer, ChevronRight, Eye, X, Download, User,
   Settings, Award, Briefcase, Phone, Mail, MapPin, CreditCard, Wallet,
   Receipt, AlertCircle, CheckCircle, LayoutDashboard, HardHat, Timer,
@@ -12,7 +12,7 @@ import {
   PlayCircle, StopCircle, CalendarDays, FileSpreadsheet, Package, Box,
   Layers, BarChart3, PieChart as PieChartIcon, LineChart as LineChartIcon,
   ChevronLeft, ChevronsLeft, ChevronsRight, Flame, Target, Percent,
-  CircleDollarSign, Minus, List
+  CircleDollarSign, Minus, List, Sun, Moon, Sliders, RotateCcw
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
@@ -24,9 +24,39 @@ import './AttendanceManager.css';
 import letterheadHeader from '../assets/letterhead-header.png';
 import letterheadFooter from '../assets/letterhead-footer.png';
 import background from '../assets/background.png';
+import ApiService from '../services/ApiService';
 
 import { CONFIG } from '../config/constants';
-const API_BASE_URL = CONFIG.API_BASE || 'http://localhost:5000/api';
+
+// ============================================
+// DEBUG HELPERS
+// ============================================
+const DEBUG = true;
+const dbg = (...args) => { if (DEBUG) console.log('%c[AM]', 'color:#8b5cf6;font-weight:bold', ...args); };
+const dbgErr = (...args) => { if (DEBUG) console.error('%c[AM-ERR]', 'color:#dc2626;font-weight:bold', ...args); };
+const dbgWarn = (...args) => { if (DEBUG) console.warn('%c[AM-WARN]', 'color:#f59e0b;font-weight:bold', ...args); };
+
+// ============================================
+// DEFAULTS
+// ============================================
+const DEFAULT_SETTINGS = {
+  shiftStartTime: '07:00',
+  shiftEndTime: '17:00',
+  shiftHours: 8,
+  breakStartTime: '12:00',
+  breakEndTime: '13:00',
+  breakHours: 1,
+  overtimeRate: 1.5,
+  overtimeEnabled: true,
+  earlyInThreshold: 15,
+  lateInThreshold: 15,
+  earlyOutThreshold: 15,
+  lateOutThreshold: 15,
+  countEarlyIn: true,
+  countLateIn: true,
+  countEarlyOut: true,
+  countLateOut: true,
+};
 
 // ============================================
 // PORTAL
@@ -34,6 +64,164 @@ const API_BASE_URL = CONFIG.API_BASE || 'http://localhost:5000/api';
 const ModalPortal = ({ children }) => {
   if (typeof document === 'undefined') return null;
   return createPortal(children, document.body);
+};
+
+// ============================================
+// HELPERS — BD currency + time
+// ============================================
+const fmtBD = (v) => `${Number(v || 0).toFixed(3)} BD`;
+const fmtBDShort = (v) => Number(v || 0).toFixed(3);
+
+const minutesSinceMidnight = (dtLike) => {
+  if (!dtLike) return null;
+  const d = new Date(dtLike);
+  if (isNaN(d.getTime())) return null;
+  return d.getHours() * 60 + d.getMinutes();
+};
+
+const hhmmToMinutes = (hhmm) => {
+  if (!hhmm || typeof hhmm !== 'string') return null;
+  const [h, m] = hhmm.split(':').map(Number);
+  if (isNaN(h) || isNaN(m)) return null;
+  return h * 60 + m;
+};
+
+const getClockInStatus = (checkedIn, cfg = DEFAULT_SETTINGS) => {
+  if (!checkedIn) return null;
+  const inMins = minutesSinceMidnight(checkedIn);
+  const startMins = hhmmToMinutes(cfg.shiftStartTime || '07:00');
+  if (inMins == null || startMins == null) return null;
+  const diff = startMins - inMins;
+  if (cfg.countEarlyIn && diff >= (cfg.earlyInThreshold ?? 15)) return 'early_in';
+  if (cfg.countLateIn && diff <= -(cfg.lateInThreshold ?? 15)) return 'late_in';
+  return 'on_time';
+};
+
+const getClockOutStatus = (checkedOut, cfg = DEFAULT_SETTINGS) => {
+  if (!checkedOut) return null;
+  const outMins = minutesSinceMidnight(checkedOut);
+  const endMins = hhmmToMinutes(cfg.shiftEndTime || '17:00');
+  if (outMins == null || endMins == null) return null;
+  const diff = outMins - endMins;
+  if (cfg.countLateOut && diff >= (cfg.lateOutThreshold ?? 15)) return 'late_out';
+  if (cfg.countEarlyOut && diff <= -(cfg.earlyOutThreshold ?? 15)) return 'early_out';
+  return 'on_time';
+};
+
+const isoToLocalHHMM = (iso) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+};
+
+const buildISO = (dateStr, hhmm) => {
+  if (!dateStr || !hhmm) return null;
+  const [h, m] = hhmm.split(':').map(Number);
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setHours(h, m, 0, 0);
+  return d.toISOString();
+};
+
+const normalizeDate = (raw) => {
+  if (!raw) return '';
+  if (typeof raw === 'string') return raw.includes('T') ? raw.slice(0, 10) : raw;
+  try {
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return '';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  } catch { return ''; }
+};
+
+// ⭐ Compute hours worked from a record, falling back to settings for break times.
+// Returns { hoursWorked, overtimeHours, normalHours, breakHours, overtimeRate }
+const computeHoursWithSettings = (record, cfg = DEFAULT_SETTINGS) => {
+  if (!record?.checkedIn || !record?.checkedOut) {
+    return { hoursWorked: 0, overtimeHours: 0, normalHours: 0, breakHours: 0 };
+  }
+
+  const inMs = new Date(record.checkedIn).getTime();
+  const outMs = new Date(record.checkedOut).getTime();
+  if (isNaN(inMs) || isNaN(outMs) || outMs <= inMs) {
+    return { hoursWorked: 0, overtimeHours: 0, normalHours: 0, breakHours: 0 };
+  }
+
+  const rawHours = (outMs - inMs) / (1000 * 60 * 60);
+
+  // ⭐ Break times: record value → settings fallback
+  let breakHours = 0;
+  const dateStr = normalizeDate(record.date);
+  const bStart = record.breakStart || (cfg.breakStartTime && dateStr
+    ? buildISO(dateStr, cfg.breakStartTime) : null);
+  const bEnd = record.breakEnd || (cfg.breakEndTime && dateStr
+    ? buildISO(dateStr, cfg.breakEndTime) : null);
+
+  if (bStart && bEnd) {
+    const bsMs = new Date(bStart).getTime();
+    const beMs = new Date(bEnd).getTime();
+    if (!isNaN(bsMs) && !isNaN(beMs) && beMs > bsMs) {
+      breakHours = (beMs - bsMs) / (1000 * 60 * 60);
+    }
+  } else if (cfg.breakHours) {
+    breakHours = Number(cfg.breakHours) || 0;
+  }
+
+  // Auto-apply settings.breakHours if none computed and shift is long enough
+  if (breakHours === 0 && cfg.breakHours > 0) {
+    const shiftHoursCfg = Number(cfg.shiftHours) || 8;
+    if (rawHours >= shiftHoursCfg) breakHours = Number(cfg.breakHours) || 0;
+  }
+
+  const paidHours = Math.max(0, rawHours - breakHours);
+  const shiftHours = Number(cfg.shiftHours) || 8;
+  const overtimeHours = Math.max(0, paidHours - shiftHours);
+  const normalHours = Math.min(paidHours, shiftHours);
+
+  return {
+    hoursWorked: paidHours,
+    overtimeHours,
+    normalHours,
+    breakHours,
+  };
+};
+
+// ⭐ Compute minutes late (positive) or early (negative) for clock-in
+const getClockInMinutes = (checkedIn, cfg = DEFAULT_SETTINGS) => {
+  if (!checkedIn) return null;
+  const inMins = minutesSinceMidnight(checkedIn);
+  const startMins = hhmmToMinutes(cfg.shiftStartTime || '07:00');
+  if (inMins == null || startMins == null) return null;
+  return inMins - startMins;
+};
+
+// ⭐ Compute minutes late (positive) or early (negative) for clock-out
+const getClockOutMinutes = (checkedOut, cfg = DEFAULT_SETTINGS) => {
+  if (!checkedOut) return null;
+  const outMins = minutesSinceMidnight(checkedOut);
+  const endMins = hhmmToMinutes(cfg.shiftEndTime || '17:00');
+  if (outMins == null || endMins == null) return null;
+  return outMins - endMins;
+};
+
+// ⭐ Compute wage from normal/OT hours + hourly rate + OT multiplier from settings
+const computeWage = (normalHours, overtimeHours, worker, cfg = DEFAULT_SETTINGS) => {
+  const otRate = Number(cfg.overtimeRate) || 1.5;
+  const otEnabled = cfg.overtimeEnabled !== false;
+  const shiftHours = Number(cfg.shiftHours) || 8;
+
+  // Prefer worker.hourlyRate; fall back to dailyRate / shiftHours
+  let hourlyRate = Number(worker?.hourlyRate) || 0;
+  if (!hourlyRate && Number(worker?.dailyRate) && shiftHours) {
+    hourlyRate = Number(worker.dailyRate) / shiftHours;
+  }
+
+  const normalPay = normalHours * hourlyRate;
+  const otPay = otEnabled ? overtimeHours * hourlyRate * otRate : overtimeHours * hourlyRate;
+  return normalPay + otPay;
 };
 
 // ============================================
@@ -77,6 +265,15 @@ const getDateFilterRange = (filterType) => {
       y.setDate(y.getDate() - 1);
       return { from: fmt(y), to: fmt(y) };
     }
+    case 'thisWeek': {
+      const first = new Date(today);
+      const day = first.getDay();
+      const diff = day === 0 ? 6 : day - 1;
+      first.setDate(first.getDate() - diff);
+      const last = new Date(first);
+      last.setDate(last.getDate() + 6);
+      return { from: fmt(first), to: fmt(last) };
+    }
     case 'thisMonth': {
       const first = new Date(today.getFullYear(), today.getMonth(), 1);
       const last = new Date(today.getFullYear(), today.getMonth() + 1, 0);
@@ -96,9 +293,16 @@ const getDateFilterRange = (filterType) => {
 // MAIN COMPONENT
 // ============================================
 const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData }) => {
+  dbg('🎬 AttendanceManager render', {
+    workers: data?.workers?.length,
+    attendance: data?.attendance?.length,
+    teams: data?.teams?.length,
+    sites: data?.sites?.length,
+  });
+
   const [selectedDate, setSelectedDate] = useState(Utils.today());
   const [loading, setLoading] = useState({});
-  const [viewMode, setViewMode] = useState('overview'); // overview | workers | teams | reports
+  const [viewMode, setViewMode] = useState('overview');
   const [selectedTeamId, setSelectedTeamId] = useState('');
   const [teamAttendance, setTeamAttendance] = useState(null);
   const [teamLoading, setTeamLoading] = useState(false);
@@ -121,6 +325,23 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const [showSiteModal, setShowSiteModal] = useState(false);
   const [siteModalContext, setSiteModalContext] = useState(null);
 
+  // ⭐ Edit Attendance Modal
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editRecord, setEditRecord] = useState(null);
+  const [editForm, setEditForm] = useState({
+    checkedIn: '',
+    checkedOut: '',
+    breakStart: '',
+    breakEnd: '',
+    siteId: '',
+    notes: '',
+    present: true,
+  });
+  const [editLoading, setEditLoading] = useState(false);
+
+  // ⭐ Optimistic local overrides — survives a failed refreshData
+  const [localAttendanceOverride, setLocalAttendanceOverride] = useState({});
+
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -131,13 +352,17 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const [salaryReportData, setSalaryReportData] = useState(null);
   const [salaryReportLoading, setSalaryReportLoading] = useState(false);
 
-  // ============================================
-  // DATE FILTER STATE
-  // ============================================
+  // ⭐ DATE FILTER STATE
   const [activeDateFilter, setActiveDateFilter] = useState('today');
   const [customDateFrom, setCustomDateFrom] = useState('');
   const [customDateTo, setCustomDateTo] = useState('');
   const [showCustomDate, setShowCustomDate] = useState(false);
+
+  // ⭐ Attendance Settings
+  const [settings, setSettings] = useState(DEFAULT_SETTINGS);
+  const [settingsForm, setSettingsForm] = useState(DEFAULT_SETTINGS);
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [settingsSaving, setSettingsSaving] = useState(false);
 
   // Pagination
   const [workerPage, setWorkerPage] = useState(1);
@@ -164,6 +389,62 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   }, [sites]);
 
   // ============================================
+  // MERGED ATTENDANCE — applies optimistic overrides on top of server data
+  // ============================================
+  const mergedAttendance = useMemo(() => {
+    const server = data.attendance || [];
+    if (Object.keys(localAttendanceOverride).length === 0) return server;
+    return server.map(a => {
+      const override = localAttendanceOverride[a.id];
+      return override ? { ...a, ...override } : a;
+    });
+  }, [data.attendance, localAttendanceOverride]);
+
+  // ============================================
+  // LOAD ATTENDANCE SETTINGS
+  // ============================================
+  const loadSettings = useCallback(async () => {
+    setSettingsLoading(true);
+    try {
+      const s = await ApiService.getAttendanceSettings();
+      setSettings({ ...DEFAULT_SETTINGS, ...s });
+      setSettingsForm({ ...DEFAULT_SETTINGS, ...s });
+    } catch (err) {
+      dbgErr('Failed to load attendance settings:', err);
+      setSettings(DEFAULT_SETTINGS);
+      setSettingsForm(DEFAULT_SETTINGS);
+    } finally {
+      setSettingsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadSettings();
+  }, [loadSettings]);
+
+  const handleSaveSettings = async () => {
+    setSettingsSaving(true); setError(''); setSuccess('');
+    try {
+      const res = await ApiService.updateAttendanceSettings(settingsForm);
+      const merged = { ...DEFAULT_SETTINGS, ...(res.settings || settingsForm) };
+      setSettings(merged);
+      setSettingsForm(merged);
+      setSuccess('Attendance settings saved');
+      setTimeout(() => setSuccess(''), 4000);
+    } catch (err) {
+      setError(err.message || 'Failed to save settings');
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const handleResetSettings = () => {
+    setSettingsForm(settings);
+    setSuccess('Form reset to saved values');
+    setTimeout(() => setSuccess(''), 2500);
+  };
+
+  // ============================================
   // DATE FILTER HANDLERS
   // ============================================
   const handleDateFilterChange = useCallback((filterType) => {
@@ -175,8 +456,11 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       setSelectedDate(range.from);
       setCustomDateFrom(range.from);
       setCustomDateTo(range.to);
+    } else {
+      if (!customDateFrom) setCustomDateFrom(selectedDate);
+      if (!customDateTo) setCustomDateTo(selectedDate);
     }
-  }, []);
+  }, [customDateFrom, customDateTo, selectedDate]);
 
   const handleCustomDateApply = useCallback(() => {
     if (!customDateFrom || !customDateTo) return;
@@ -188,7 +472,6 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     setSelectedDate(customDateFrom);
   }, [customDateFrom, customDateTo]);
 
-  // Get the active date range for filtering
   const activeDateRange = useMemo(() => {
     if (activeDateFilter === 'custom') {
       return { from: customDateFrom || selectedDate, to: customDateTo || selectedDate };
@@ -204,8 +487,12 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     setSalaryReportLoading(true);
     setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/attendance/salary-report/${selectedMonth}`, {
-        headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }
+      const response = await fetch(`${CONFIG.API_BASE}/attendance/salary-report/${selectedMonth}`, {
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
+        }
       });
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
@@ -226,32 +513,129 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   }, [viewMode, reportViewMode, selectedMonth, loadSalaryReport]);
 
   // ============================================
-  // WORKER ATTENDANCE
+  // WORKER ATTENDANCE — uses mergedAttendance
+  // ============================================
+  const dateRangeAttendance = useMemo(() => {
+    const range = activeDateRange;
+    return mergedAttendance.filter(a => {
+      if (!a.date) return false;
+      return a.date >= range.from && a.date <= range.to;
+    });
+  }, [mergedAttendance, activeDateRange]);
+
+  // ============================================
+  // ⭐ TODAY ATTENDANCE — auto-applies settings
   // ============================================
   const todayAttendance = useMemo(() => {
+    const range = activeDateRange;
+    const isSingleDay = range.from === range.to;
+    const cfg = settings || DEFAULT_SETTINGS;
+
     return (data.workers || []).map(worker => {
-      const record = (data.attendance || []).find(a => a.workerId === worker.id && a.date === selectedDate);
+      const workerRecords = dateRangeAttendance.filter(a => a.workerId === worker.id);
+
+      let record = null;
       let status = 'absent';
-      let checkedInTime = null, checkedOutTime = null, hoursWorked = 0, wageEarned = 0;
-      if (record) {
-        checkedInTime = record.checkedIn || null;
-        checkedOutTime = record.checkedOut || null;
-        if (record.checkedIn && !record.checkedOut) status = 'working';
-        else if (record.checkedIn && record.checkedOut) {
+      let checkedInTime = null, checkedOutTime = null;
+      let hoursWorked = 0, wageEarned = 0, overtimeHours = 0, normalHours = 0;
+      let earlyIn = false, lateIn = false, lateOut = false, earlyOut = false;
+      let lateInMinutes = 0, lateOutMinutes = 0;
+      let breakStart = null, breakEnd = null, breakHours = 0;
+
+      if (isSingleDay) {
+        // ⭐ Read from mergedAttendance (not raw data.attendance) so overrides apply
+        record = mergedAttendance.find(
+          a => a.workerId === worker.id && a.date === range.from
+        );
+        if (record) {
+          checkedInTime = record.checkedIn || null;
+          checkedOutTime = record.checkedOut || null;
+
+          // ⭐ Break times: DB value OR settings fallback
+          breakStart = record.breakStart || (cfg.breakStartTime
+            ? buildISO(range.from, cfg.breakStartTime) : null);
+          breakEnd = record.breakEnd || (cfg.breakEndTime
+            ? buildISO(range.from, cfg.breakEndTime) : null);
+
+          if (record.checkedIn && !record.checkedOut) {
+            status = 'working';
+          } else if (record.checkedIn && record.checkedOut) {
+            status = 'completed';
+
+            // ⭐ Compute hours using settings-aware helper
+            const computed = computeHoursWithSettings(record, cfg);
+            hoursWorked = computed.hoursWorked;
+            overtimeHours = computed.overtimeHours;
+            normalHours = computed.normalHours;
+            breakHours = computed.breakHours;
+
+            // ⭐ Wage from settings-aware helper
+            wageEarned = computeWage(normalHours, overtimeHours, worker, cfg);
+          } else if (record.present) {
+            status = 'pending';
+          }
+
+          // ⭐ Early / Late flags + minutes
+          const inStatus = getClockInStatus(record.checkedIn, cfg);
+          if (inStatus === 'early_in') earlyIn = true;
+          if (inStatus === 'late_in') {
+            lateIn = true;
+            lateInMinutes = Math.max(0, getClockInMinutes(record.checkedIn, cfg) || 0);
+          }
+
+          const outStatus = getClockOutStatus(record.checkedOut, cfg);
+          if (outStatus === 'late_out') {
+            lateOut = true;
+            lateOutMinutes = Math.max(0, getClockOutMinutes(record.checkedOut, cfg) || 0);
+          }
+          if (outStatus === 'early_out') earlyOut = true;
+        }
+      } else {
+        // Multi-day range
+        const completed = workerRecords.filter(a => a.checkedIn && a.checkedOut);
+        const active = workerRecords.find(a => a.checkedIn && !a.checkedOut);
+
+        // ⭐ Aggregate using settings-aware helper
+        completed.forEach(a => {
+          const computed = computeHoursWithSettings(a, cfg);
+          hoursWorked += computed.hoursWorked;
+          overtimeHours += computed.overtimeHours;
+          normalHours += computed.normalHours;
+          breakHours += computed.breakHours;
+        });
+
+        wageEarned = computeWage(normalHours, overtimeHours, worker, cfg);
+
+        const presentCount = workerRecords.filter(a => a.present).length;
+        if (active) {
+          status = 'working';
+          checkedInTime = active.checkedIn;
+        } else if (presentCount > 0) {
           status = 'completed';
-          hoursWorked = Utils.calculateHoursWorked(record.checkedIn, record.checkedOut);
-          wageEarned = Utils.calculateDailyWage(hoursWorked, worker.dailyRate);
-        } else if (record.present) status = 'pending';
+          record = completed[completed.length - 1] || workerRecords[workerRecords.length - 1];
+          checkedOutTime = record?.checkedOut || null;
+        } else {
+          status = 'absent';
+        }
       }
-      const siteId = record?.siteId || null;
+
+      const siteId = record?.siteId || (workerRecords[0]?.siteId || null);
       const siteName = siteId ? (resolveSiteName(siteId) || record?.siteName || null) : null;
+
       return {
         ...worker, record: record || null, status,
-        checkedInTime, checkedOutTime, hoursWorked, wageEarned,
-        present: record ? record.present : false, siteId, siteName
+        checkedInTime, checkedOutTime,
+        hoursWorked, wageEarned, overtimeHours, normalHours,
+        earlyIn, lateIn, lateOut, earlyOut,
+        lateInMinutes, lateOutMinutes,
+        breakStart, breakEnd, breakHours,
+        present: status !== 'absent',
+        siteId, siteName,
+        recordCount: workerRecords.length,
+        isSingleDay
       };
     });
-  }, [data.workers, data.attendance, selectedDate, resolveSiteName]);
+  }, [data.workers, mergedAttendance, dateRangeAttendance, activeDateRange, resolveSiteName, settings]);
 
   const filteredTodayAttendance = useMemo(() => {
     let list = todayAttendance;
@@ -293,11 +677,16 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     const totalHours = todayAttendance.reduce((sum, w) => sum + w.hoursWorked, 0);
     const totalWages = todayAttendance.reduce((sum, w) => sum + w.wageEarned, 0);
     const totalWorkers = data.workers?.length || 0;
+    const earlyInCount = todayAttendance.filter(w => w.earlyIn).length;
+    const lateInCount = todayAttendance.filter(w => w.lateIn).length;
+    const lateOutCount = todayAttendance.filter(w => w.lateOut).length;
+    const earlyOutCount = todayAttendance.filter(w => w.earlyOut).length;
     return {
       present: present.length, working: working.length, completed: completed.length,
       absent: absent.length, totalHours, totalWages, totalWorkers,
       attendanceRate: totalWorkers > 0 ? (present.length / totalWorkers) * 100 : 0,
-      avgHours: present.length > 0 ? totalHours / present.length : 0
+      avgHours: present.length > 0 ? totalHours / present.length : 0,
+      earlyInCount, lateInCount, lateOutCount, earlyOutCount,
     };
   }, [todayAttendance, data.workers]);
 
@@ -355,20 +744,20 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       const label = d.toLocaleString('en-US', { month: 'short' });
-      const monthAtt = (data.attendance || []).filter(a => a.date && a.date.startsWith(key));
+      const monthAtt = mergedAttendance.filter(a => a.date && a.date.startsWith(key));
       const present = monthAtt.filter(a => a.present).length;
       const hours = monthAtt.reduce((s, a) => s + (a.totalHours || 0), 0);
       const wages = monthAtt.reduce((s, a) => s + (a.wageEarned || 0), 0);
       months.push({ label, present, hours, wages });
     }
     return months;
-  }, [data.attendance]);
+  }, [mergedAttendance]);
 
   // ============================================
   // KPI
   // ============================================
   const kpiItems = [
-    { id: 'present', icon: UserCheck, label: 'Present Today', value: dayStats.present,
+    { id: 'present', icon: UserCheck, label: 'Present', value: dayStats.present,
       meta: `${dayStats.attendanceRate.toFixed(0)}% attendance`,
       color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
     { id: 'working', icon: Activity, label: 'Currently Working', value: dayStats.working,
@@ -378,22 +767,34 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       value: `${dayStats.totalHours.toFixed(1)}h`,
       meta: `Avg ${dayStats.avgHours.toFixed(1)}h`,
       color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)', trend: 'up' },
-    { id: 'wages', icon: DollarSign, label: 'Total Wages',
-      value: Utils.formatCurrencyShort(dayStats.totalWages),
-      meta: `${dayStats.present} present`,
+    { id: 'wages', icon: CircleDollarSign, label: 'Total Wages',
+      value: fmtBDShort(dayStats.totalWages),
+      meta: `${dayStats.present} present · BD`,
       color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
+    { id: 'earlyIn', icon: ArrowDownRight, label: 'Early In',
+      value: dayStats.earlyInCount,
+      meta: 'before expected start',
+      color: '#0ea5e9', accent: 'linear-gradient(90deg,#0ea5e9,#38bdf8)',
+      trend: 'flat' },
+    { id: 'lateIn', icon: ArrowUpRight, label: 'Late In',
+      value: dayStats.lateInCount,
+      meta: 'after expected start',
+      color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)',
+      trend: 'flat' },
+    { id: 'lateOut', icon: ArrowUpRight, label: 'Late Out',
+      value: dayStats.lateOutCount,
+      meta: 'after expected end',
+      color: '#8b5cf6', accent: 'linear-gradient(90deg,#8b5cf6,#a78bfa)',
+      trend: 'flat' },
     { id: 'absent', icon: X, label: 'Absent',
       value: dayStats.absent,
       meta: `${((dayStats.absent / (dayStats.totalWorkers || 1)) * 100).toFixed(0)}% absent`,
       color: '#ef4444', accent: 'linear-gradient(90deg,#ef4444,#f87171)',
       trend: dayStats.absent > 0 ? 'down' : 'flat' },
-    { id: 'total', icon: Users, label: 'Total Workers', value: dayStats.totalWorkers,
-      meta: `${(data.teams || []).length} teams`,
-      color: '#8b5cf6', accent: 'linear-gradient(90deg,#8b5cf6,#a78bfa)', trend: 'up' }
   ];
 
   const cardDetails = {
-    present: { title: 'Present Today', details: [
+    present: { title: 'Present', details: [
       { label: 'Present', value: dayStats.present },
       { label: 'Attendance Rate', value: `${dayStats.attendanceRate.toFixed(1)}%` },
       { label: 'Total Workers', value: dayStats.totalWorkers },
@@ -411,23 +812,35 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       { label: 'Present', value: dayStats.present },
       { label: 'Working Now', value: dayStats.working }
     ]},
-    wages: { title: 'Total Wages', details: [
-      { label: 'Total Wages', value: Utils.formatCurrency(dayStats.totalWages) },
-      { label: 'Avg Wage', value: dayStats.present > 0 ? Utils.formatCurrency(dayStats.totalWages / dayStats.present) : '0' },
+    wages: { title: 'Total Wages (BD)', details: [
+      { label: 'Total Wages', value: fmtBD(dayStats.totalWages) },
+      { label: 'Avg Wage', value: dayStats.present > 0 ? fmtBD(dayStats.totalWages / dayStats.present) : '0.000 BD' },
       { label: 'Total Hours', value: `${dayStats.totalHours.toFixed(1)}h` },
       { label: 'Present', value: dayStats.present }
+    ]},
+    earlyIn: { title: 'Early In', details: [
+      { label: 'Count', value: dayStats.earlyInCount },
+      { label: 'Threshold', value: `>${settings.earlyInThreshold} min before start` },
+      { label: 'Expected Start', value: settings.shiftStartTime },
+      { label: 'Total Workers', value: dayStats.totalWorkers }
+    ]},
+    lateIn: { title: 'Late In', details: [
+      { label: 'Count', value: dayStats.lateInCount },
+      { label: 'Threshold', value: `>${settings.lateInThreshold} min after start` },
+      { label: 'Expected Start', value: settings.shiftStartTime },
+      { label: 'Total Workers', value: dayStats.totalWorkers }
+    ]},
+    lateOut: { title: 'Late Out', details: [
+      { label: 'Count', value: dayStats.lateOutCount },
+      { label: 'Threshold', value: `>${settings.lateOutThreshold} min after end` },
+      { label: 'Expected End', value: settings.shiftEndTime },
+      { label: 'Total Workers', value: dayStats.totalWorkers }
     ]},
     absent: { title: 'Absent', details: [
       { label: 'Absent', value: dayStats.absent },
       { label: 'Total Workers', value: dayStats.totalWorkers },
       { label: 'Absent Rate', value: `${((dayStats.absent / (dayStats.totalWorkers || 1)) * 100).toFixed(1)}%` },
       { label: 'Present', value: dayStats.present }
-    ]},
-    total: { title: 'Total Workers', details: [
-      { label: 'Total', value: dayStats.totalWorkers },
-      { label: 'Present', value: dayStats.present },
-      { label: 'Absent', value: dayStats.absent },
-      { label: 'Teams', value: (data.teams || []).length }
     ]}
   };
 
@@ -455,17 +868,39 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     if (!selectedTeamId) return;
     setTeamLoading(true); setError('');
     try {
-      const response = await fetch(`${API_BASE_URL}/attendance/team/${selectedTeamId}?date=${selectedDate}`, {
-        headers: { 'Accept': 'application/json' }
-      });
-      if (!response.ok) throw new Error('Failed to load team attendance');
-      const result = await response.json();
+      const result = await ApiService.getTeamAttendance(selectedTeamId, selectedDate);
+      const cfg = settings || DEFAULT_SETTINGS;
       if (result?.members) {
-        result.members = result.members.map(m => ({
-          ...m,
-          siteName: m.siteName || resolveSiteName(m.siteId) || resolveSiteName(m.attendance?.siteId) || null,
-          siteId: m.siteId || m.attendance?.siteId || null
-        }));
+        result.members = result.members.map(m => {
+          const inStatus = getClockInStatus(m.checkedIn, cfg);
+          const outStatus = getClockOutStatus(m.checkedOut, cfg);
+          const computed = computeHoursWithSettings({
+            checkedIn: m.checkedIn,
+            checkedOut: m.checkedOut,
+            breakStart: m.attendance?.breakStart || m.breakStart,
+            breakEnd: m.attendance?.breakEnd || m.breakEnd,
+            date: selectedDate,
+          }, cfg);
+
+          return {
+            ...m,
+            siteName: m.siteName || resolveSiteName(m.siteId) || resolveSiteName(m.attendance?.siteId) || null,
+            siteId: m.siteId || m.attendance?.siteId || null,
+            earlyIn: inStatus === 'early_in',
+            lateIn: inStatus === 'late_in',
+            lateOut: outStatus === 'late_out',
+            earlyOut: outStatus === 'early_out',
+            lateInMinutes: inStatus === 'late_in'
+              ? Math.max(0, getClockInMinutes(m.checkedIn, cfg) || 0) : 0,
+            lateOutMinutes: outStatus === 'late_out'
+              ? Math.max(0, getClockOutMinutes(m.checkedOut, cfg) || 0) : 0,
+            hoursWorked: computed.hoursWorked,
+            overtimeHours: computed.overtimeHours,
+            normalHours: computed.normalHours,
+            breakHours: computed.breakHours,
+            wageEarned: computeWage(computed.normalHours, computed.overtimeHours, m.worker || {}, cfg),
+          };
+        });
       }
       setTeamAttendance(result);
     } catch (err) { setError(err.message); setTeamAttendance(null); }
@@ -491,39 +926,262 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   };
 
   // ============================================
+  // EDIT ATTENDANCE MODAL — FULL DEBUG
+  // ============================================
+  const openEditModal = (record, worker) => {
+    dbg('🔓 openEditModal', {
+      recordId: record?.id,
+      workerId: worker?.id,
+      workerName: worker?.name,
+      hasRecord: !!record,
+    });
+
+    if (!record) {
+      dbgWarn('⚠️ openEditModal: no record');
+      setError('No attendance record to edit for this date. Check the worker in first.');
+      return;
+    }
+
+    const cfg = settings || DEFAULT_SETTINGS;
+    const dateStr = normalizeDate(record.date);
+
+    // ⭐ Pre-fill break times from settings if DB is empty
+    const fallbackBreakStart = record.breakStart
+      || (cfg.breakStartTime ? buildISO(dateStr, cfg.breakStartTime) : null);
+    const fallbackBreakEnd = record.breakEnd
+      || (cfg.breakEndTime ? buildISO(dateStr, cfg.breakEndTime) : null);
+
+    const parsed = {
+      checkedIn: isoToLocalHHMM(record.checkedIn),
+      checkedOut: isoToLocalHHMM(record.checkedOut),
+      breakStart: isoToLocalHHMM(fallbackBreakStart),
+      breakEnd: isoToLocalHHMM(fallbackBreakEnd),
+    };
+
+    dbg('📝 openEditModal parsed:', {
+      rawCheckedIn: record.checkedIn,
+      parsedCheckedIn: parsed.checkedIn,
+      rawCheckedOut: record.checkedOut,
+      parsedCheckedOut: parsed.checkedOut,
+      rawBreakStart: record.breakStart,
+      parsedBreakStart: parsed.breakStart,
+      rawBreakEnd: record.breakEnd,
+      parsedBreakEnd: parsed.breakEnd,
+      rawDate: record.date,
+      normalizedDate: dateStr,
+      siteId: record.siteId,
+      notes: record.notes,
+      present: record.present,
+    });
+
+    setEditRecord({ ...record, _worker: worker });
+    setEditForm({
+      checkedIn: parsed.checkedIn,
+      checkedOut: parsed.checkedOut,
+      breakStart: parsed.breakStart,
+      breakEnd: parsed.breakEnd,
+      siteId: record.siteId || '',
+      notes: record.notes || '',
+      present: record.present !== false,
+    });
+    setShowEditModal(true);
+  };
+
+  const closeEditModal = () => {
+    dbg('🔒 closeEditModal');
+    setShowEditModal(false);
+    setEditRecord(null);
+  };
+
+  const handleSaveEdit = async () => {
+    dbg('═══════════════════════════════════════════');
+    dbg('💾 handleSaveEdit START');
+
+    if (!editRecord) {
+      dbgWarn('⚠️ no editRecord — aborting');
+      return;
+    }
+
+    setEditLoading(true); setError(''); setSuccess('');
+
+    try {
+      const rawDate = editRecord.date;
+      const dateStr = normalizeDate(rawDate);
+
+      dbg('📅 Date normalization:', { rawDate, rawDateType: typeof rawDate, normalizedDate: dateStr });
+
+      if (!dateStr) throw new Error('Attendance record has no valid date');
+
+      const origIn = isoToLocalHHMM(editRecord.checkedIn);
+      const origOut = isoToLocalHHMM(editRecord.checkedOut);
+      const origBreakStart = isoToLocalHHMM(editRecord.breakStart);
+      const origBreakEnd = isoToLocalHHMM(editRecord.breakEnd);
+      const origSite = editRecord.siteId || '';
+      const origNotes = editRecord.notes || '';
+      const origPresent = editRecord.present !== false;
+
+      const newIn = editForm.checkedIn;
+      const newOut = editForm.checkedOut;
+      const newBreakStart = editForm.breakStart;
+      const newBreakEnd = editForm.breakEnd;
+      const newSite = editForm.siteId;
+      const newNotes = editForm.notes;
+      const newPresent = editForm.present;
+
+      dbg('🔍 DIFF:', {
+        checkedIn:  { orig: origIn,       new: newIn,       changed: origIn !== newIn },
+        checkedOut: { orig: origOut,      new: newOut,      changed: origOut !== newOut },
+        breakStart: { orig: origBreakStart, new: newBreakStart, changed: origBreakStart !== newBreakStart },
+        breakEnd:   { orig: origBreakEnd, new: newBreakEnd, changed: origBreakEnd !== newBreakEnd },
+        siteId:     { orig: origSite,     new: newSite,     changed: origSite !== newSite },
+        notes:      { orig: origNotes,    new: newNotes,    changed: origNotes !== newNotes },
+        present:    { orig: origPresent,  new: newPresent,  changed: origPresent !== newPresent },
+      });
+
+      const body = {};
+
+      if (newIn !== origIn) {
+        body.checkedIn = newIn ? buildISO(dateStr, newIn) : null;
+      }
+      if (newOut !== origOut) {
+        body.checkedOut = newOut ? buildISO(dateStr, newOut) : null;
+      }
+      if (newBreakStart !== origBreakStart) {
+        body.breakStart = newBreakStart ? buildISO(dateStr, newBreakStart) : null;
+      }
+      if (newBreakEnd !== origBreakEnd) {
+        body.breakEnd = newBreakEnd ? buildISO(dateStr, newBreakEnd) : null;
+      }
+      if (newSite && newSite !== origSite) body.siteId = newSite;
+      if (newNotes !== origNotes) body.notes = newNotes;
+      if (newPresent !== origPresent) body.present = newPresent;
+
+      dbg('📦 BODY:', JSON.stringify(body, null, 2));
+
+      if (Object.keys(body).length === 0) {
+        dbgWarn('⚠️ BODY EMPTY — no field changed');
+        setSuccess('No changes to save');
+        closeEditModal();
+        setTimeout(() => setSuccess(''), 3000);
+        return;
+      }
+
+      dbg('🌐 Calling PUT /attendance/' + editRecord.id + '/edit-times');
+
+      const res = await ApiService.editAttendanceTimes(editRecord.id, body);
+
+      dbg('✅ API RESPONSE:', res);
+
+      // ⭐ OPTIMISTIC LOCAL UPDATE — apply the returned record immediately
+      if (res?.record) {
+        setLocalAttendanceOverride(prev => ({
+          ...prev,
+          [res.record.id]: res.record,
+        }));
+        dbg('💡 Applied optimistic override for record', res.record.id);
+      }
+
+      setSuccess(`Attendance updated (${res?.changes?.join(', ') || Object.keys(body).join(', ')})`);
+      closeEditModal();
+
+      // ⭐ REFRESH MUST NOT CRASH THE SUCCESS FLOW
+      try {
+        if (viewMode === 'teams') await loadTeamAttendance();
+        await refreshData();
+        dbg('🔄 refreshData OK');
+      } catch (refreshErr) {
+        dbgWarn('⚠️ refreshData failed — UI kept up-to-date by optimistic override:', refreshErr);
+        setError('Saved successfully, but reload failed. Please refresh the page (F5) to confirm.');
+        setTimeout(() => setSuccess(''), 4000);
+        setTimeout(() => setError(''), 8000);
+        dbg('💾 handleSaveEdit END — saved, refresh failed');
+        dbg('═══════════════════════════════════════════');
+        return;
+      }
+
+      setTimeout(() => setSuccess(''), 4000);
+      dbg('💾 handleSaveEdit END — success');
+      dbg('═══════════════════════════════════════════');
+    } catch (err) {
+      dbgErr('❌ handleSaveEdit FAILED:', err);
+      dbgErr('   message:', err?.message);
+      setError(err.message || 'Failed to update attendance');
+      dbg('═══════════════════════════════════════════');
+    } finally {
+      setEditLoading(false);
+    }
+  };
+
+  // ============================================
   // REPORT
   // ============================================
   const attendanceReport = useMemo(() => {
     if (!selectedMonth) return null;
-    const report = { month: selectedMonth, totalWorkers: 0, totalPresent: 0, totalAbsent: 0, totalHours: 0, totalOvertime: 0, totalWages: 0, workers: [] };
+    const cfg = settings || DEFAULT_SETTINGS;
+    const report = {
+      month: selectedMonth, totalWorkers: 0, totalPresent: 0, totalAbsent: 0,
+      totalHours: 0, totalOvertime: 0, totalWages: 0, workers: []
+    };
     let workers = data.workers || [];
     if (selectedReportWorkerId !== 'all') workers = workers.filter(w => w.id === selectedReportWorkerId);
+
     workers.forEach(worker => {
-      const attendances = (data.attendance || []).filter(a => a.workerId === worker.id && a.date && a.date.startsWith(selectedMonth));
-      const totalHours = attendances.reduce((s, a) => s + (a.totalHours || 0), 0);
-      const totalOvertime = attendances.reduce((s, a) => s + (a.overtimeHours || 0), 0);
-      const totalWages = attendances.reduce((s, a) => s + (a.wageEarned || 0), 0);
+      const attendances = mergedAttendance.filter(
+        a => a.workerId === worker.id && a.date && a.date.startsWith(selectedMonth)
+      );
+
+      // ⭐ Compute each record using settings-aware helper
+      let totalHours = 0, totalOvertime = 0, totalNormal = 0, totalBreak = 0, totalWages = 0;
+      const enrichedAttendances = attendances.map(a => {
+        const computed = computeHoursWithSettings(a, cfg);
+        const wage = computeWage(computed.normalHours, computed.overtimeHours, worker, cfg);
+        totalHours += computed.hoursWorked;
+        totalOvertime += computed.overtimeHours;
+        totalNormal += computed.normalHours;
+        totalBreak += computed.breakHours;
+        totalWages += wage;
+        return {
+          ...a,
+          totalHours: computed.hoursWorked,
+          overtimeHours: computed.overtimeHours,
+          normalHours: computed.normalHours,
+          breakHours: computed.breakHours,
+          wageEarned: wage,
+        };
+      });
+
       const presentDays = attendances.filter(a => a.present).length;
-      const totalDays = new Date(parseInt(selectedMonth.split('-')[0]), parseInt(selectedMonth.split('-')[1]), 0).getDate();
+      const totalDays = new Date(
+        parseInt(selectedMonth.split('-')[0]),
+        parseInt(selectedMonth.split('-')[1]),
+        0
+      ).getDate();
+
       const workerReport = {
-        worker, attendances, totalDays, presentDays, absentDays: totalDays - presentDays,
-        totalHours, totalOvertime, totalWages,
+        worker, attendances: enrichedAttendances,
+        totalDays, presentDays,
+        absentDays: totalDays - presentDays,
+        totalHours, totalOvertime, totalNormal, totalBreak, totalWages,
         attendanceRate: totalDays > 0 ? (presentDays / totalDays) * 100 : 0,
         dailyAverage: presentDays > 0 ? totalHours / presentDays : 0
       };
       report.workers.push(workerReport);
       report.totalWorkers++; report.totalPresent += presentDays;
       report.totalAbsent += workerReport.absentDays;
-      report.totalHours += totalHours; report.totalOvertime += totalOvertime; report.totalWages += totalWages;
+      report.totalHours += totalHours; report.totalOvertime += totalOvertime;
+      report.totalWages += totalWages;
     });
     return report;
-  }, [data.workers, data.attendance, selectedMonth, selectedReportWorkerId]);
+  }, [data.workers, mergedAttendance, selectedMonth, selectedReportWorkerId, settings]);
 
   // ============================================
-  // SALARY SLIP / REPORT (kept intact)
+  // SALARY SLIP — uses settings-aware OT rate
   // ============================================
   const generateSalarySlipHTML = (workerData) => {
     const worker = workerData.worker || workerData;
+    const cfg = settings || DEFAULT_SETTINGS;
+    const otMultiplier = Number(cfg.overtimeRate) || 1.5;
+
     const workerName = worker.name || workerData.workerName || 'Unknown';
     const workerRole = worker.role || workerData.role || 'N/A';
     const workerCpr = worker.cpr || 'N/A';
@@ -542,14 +1200,23 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     const advanceDeductions = workerData.advances || [];
     const totalLoanDeduction = workerData.totalLoanDeduction || 0;
     const totalAdvanceDeduction = workerData.totalAdvanceDeduction || 0;
-    const totalDeductions = workerData.totalDeductions || 0;
+
+    const deductionPct = Number(workerData.deductionPercentage || worker.deductionPercentage || 0);
+    const deductionEnabled = workerData.deductionEnabled ?? worker.deductionEnabled ?? false;
+    const percentageDeduction = Number(workerData.percentageDeduction || 0);
+
+    const totalDeductions = workerData.totalDeductions ||
+      (totalLoanDeduction + totalAdvanceDeduction + percentageDeduction);
     const netSalary = workerData.netSalary || (totalSalary - totalDeductions);
     const attendances = workerData.attendances || [];
     const monthName = Utils.getMonthName(selectedMonth);
     const year = selectedMonth.split('-')[0];
     const hasLoans = loanDeductions.length > 0 || totalLoanDeduction > 0;
     const hasAdvances = advanceDeductions.length > 0 || totalAdvanceDeduction > 0;
-    const primary = '#1a3c6e', secondary = '#c9a84c', light = '#e8edf3', muted = '#6a6a8a', border = '#d4d9e0', text = '#1a1a2e', danger = '#dc3545';
+    const hasPercentageDeduction = deductionEnabled && deductionPct > 0;
+
+    const primary = '#1a3c6e', secondary = '#c9a84c', light = '#e8edf3',
+      muted = '#6a6a8a', border = '#d4d9e0', text = '#1a1a2e', danger = '#dc3545';
 
     let attendanceRows = '';
     if (attendances.length > 0) {
@@ -588,7 +1255,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     .slip-table .text-success{ color:#22c55e!important; font-weight:600!important; }
     .slip-table .text-danger{ color:${danger}!important; font-weight:600!important; }
     .slip-table .text-warning{ color:#f59e0b!important; font-weight:600!important; }
-    .slip-totals{ margin:10px 0 10px auto!important; padding:12px 20px!important; background:${light}!important; max-width:400px!important; border:2px solid ${secondary}!important; border-radius:4px!important; }
+    .slip-totals{ margin:10px 0 10px auto!important; padding:12px 20px!important; background:${light}!important; max-width:420px!important; border:2px solid ${secondary}!important; border-radius:4px!important; }
     .slip-total-row{ display:flex!important; justify-content:space-between!important; padding:3px 0!important; font-size:13px!important; }
     .slip-total-row .lbl{ color:${muted}!important; }
     .slip-total-row .val{ font-weight:600!important; }
@@ -617,16 +1284,16 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             <div class="slip-info-item"><span class="label">Employee:</span><span class="value">${workerName}</span></div>
             <div class="slip-info-item"><span class="label">Role:</span><span class="value">${workerRole}</span></div>
             <div class="slip-info-item"><span class="label">CPR:</span><span class="value">${workerCpr}</span></div>
-            <div class="slip-info-item"><span class="label">Hourly Rate:</span><span class="value">${rate.toFixed(2)} BD</span></div>
+            <div class="slip-info-item"><span class="label">Hourly Rate:</span><span class="value">${rate.toFixed(3)} BD</span></div>
             <div class="slip-info-item"><span class="label">Total Days:</span><span class="value">${totalDays}</span></div>
             <div class="slip-info-item"><span class="label">Present Days:</span><span class="value">${presentDays}</span></div>
           </div>
-          <div class="slip-section-title">Attendance Summary</div>
+          <div class="slip-section-title">Earnings</div>
           <table class="slip-table">
             <thead><tr><th style="text-align:left;">Description</th><th>Hours</th><th>Rate</th><th>Amount (BD)</th></tr></thead>
             <tbody>
-              <tr><td style="text-align:left;">Normal Hours</td><td>${basicHours.toFixed(1)}</td><td>${rate.toFixed(2)}</td><td class="text-success">${basicSalary.toFixed(3)}</td></tr>
-              <tr><td style="text-align:left;">Overtime Hours (1.5x)</td><td>${overtimeHours.toFixed(1)}</td><td>${(rate * 1.5).toFixed(2)}</td><td class="text-warning">${overtimeSalary.toFixed(3)}</td></tr>
+              <tr><td style="text-align:left;">Normal Hours</td><td>${basicHours.toFixed(1)}</td><td>${rate.toFixed(3)}</td><td class="text-success">${basicSalary.toFixed(3)}</td></tr>
+              <tr><td style="text-align:left;">Overtime Hours (${otMultiplier}x)</td><td>${overtimeHours.toFixed(1)}</td><td>${(rate * otMultiplier).toFixed(3)}</td><td class="text-warning">${overtimeSalary.toFixed(3)}</td></tr>
               <tr style="font-weight:700;background:${primary}!important;color:#fff!important;"><td style="text-align:left;color:#fff!important;">Gross Salary</td><td colspan="2" style="color:#fff!important;">Total</td><td style="color:#fff!important;">${totalSalary.toFixed(3)}</td></tr>
             </tbody>
           </table>
@@ -637,11 +1304,22 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
               <tbody>${attendanceRows}</tbody>
             </table>
           ` : ''}
+          ${hasPercentageDeduction ? `
+            <div class="slip-section-title" style="color:${danger}!important;">Percentage Deduction (${deductionPct.toFixed(2)}%)</div>
+            <div class="slip-deductions-list">
+              <div class="deduction-item">
+                <span class="ref">Applied to gross salary</span>
+                <span class="amount">${percentageDeduction.toFixed(3)} BD</span>
+              </div>
+            </div>
+          ` : ''}
           ${hasLoans ? `<div class="slip-section-title" style="color:${danger}!important;">Loan Deductions</div><div class="slip-deductions-list">${loanDeductions.map(l => `<div class="deduction-item"><span class="ref">${l.loanNumber || l.reference || 'Loan'}</span><span class="amount">${(l.amount || 0).toFixed(3)} BD</span></div>`).join('')}${totalLoanDeduction > 0 ? `<div class="deduction-item" style="border-top:1px solid #fecaca!important;padding-top:4px!important;margin-top:4px!important;font-weight:700!important;"><span>Total Loan Deduction</span><span class="amount">${totalLoanDeduction.toFixed(3)} BD</span></div>` : ''}</div>` : ''}
           ${hasAdvances ? `<div class="slip-section-title" style="color:${danger}!important;">Advance Deductions</div><div class="slip-deductions-list">${advanceDeductions.map(a => `<div class="deduction-item"><span class="ref">${a.advanceNumber || a.reference || 'Advance'}</span><span class="amount">${(a.amount || 0).toFixed(3)} BD</span></div>`).join('')}${totalAdvanceDeduction > 0 ? `<div class="deduction-item" style="border-top:1px solid #fecaca!important;padding-top:4px!important;margin-top:4px!important;font-weight:700!important;"><span>Total Advance Deduction</span><span class="amount">${totalAdvanceDeduction.toFixed(3)} BD</span></div>` : ''}</div>` : ''}
-          ${totalDeductions > 0 ? `<div class="slip-section-title" style="color:${danger}!important;">Total Deductions</div><div class="slip-deductions-list"><div class="deduction-item" style="font-weight:700!important;font-size:14px!important;"><span>Total Deductions</span><span class="amount">${totalDeductions.toFixed(3)} BD</span></div></div>` : ''}
           <div class="slip-totals">
             <div class="slip-total-row"><span class="lbl">Gross Salary:</span><span class="val">${totalSalary.toFixed(3)} BD</span></div>
+            ${hasPercentageDeduction ? `<div class="slip-total-row deduction"><span class="lbl">Percentage Deduction (${deductionPct.toFixed(2)}%):</span><span class="val">- ${percentageDeduction.toFixed(3)} BD</span></div>` : ''}
+            ${totalLoanDeduction > 0 ? `<div class="slip-total-row deduction"><span class="lbl">Loan Deduction:</span><span class="val">- ${totalLoanDeduction.toFixed(3)} BD</span></div>` : ''}
+            ${totalAdvanceDeduction > 0 ? `<div class="slip-total-row deduction"><span class="lbl">Advance Deduction:</span><span class="val">- ${totalAdvanceDeduction.toFixed(3)} BD</span></div>` : ''}
             ${totalDeductions > 0 ? `<div class="slip-total-row deduction"><span class="lbl">Total Deductions:</span><span class="val">- ${totalDeductions.toFixed(3)} BD</span></div>` : ''}
             <div class="slip-total-row slip-grand"><span class="lbl">NET SALARY:</span><span class="val">${netSalary.toFixed(3)} BD</span></div>
             <div class="slip-words">${Utils.convertAmountToWords(netSalary)}</div>
@@ -665,12 +1343,16 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     printWindow.focus();
   };
 
+  // ============================================
+  // ATTENDANCE REPORT
+  // ============================================
   const generateAttendanceReportHTML = (report) => {
     const monthName = Utils.getMonthName(selectedMonth);
     const year = selectedMonth.split('-')[0];
-    const primary = '#1a3c6e', secondary = '#c9a84c', light = '#e8edf3', muted = '#6a6a8a', border = '#d4d9e0', text = '#1a1a2e';
+    const primary = '#1a3c6e', secondary = '#c9a84c', light = '#e8edf3',
+      muted = '#6a6a8a', border = '#d4d9e0', text = '#1a1a2e';
     const rows = report.workers.map((w, idx) => `
-      <tr><td>${idx + 1}</td><td style="text-align:left;">${w.worker.name}</td><td>${w.worker.role || 'N/A'}</td><td>${w.totalDays}</td><td class="text-success">${w.presentDays}</td><td class="text-danger">${w.absentDays}</td><td>${w.attendanceRate.toFixed(1)}%</td><td>${w.totalHours.toFixed(1)}h</td><td>${w.totalOvertime.toFixed(1)}h</td><td class="text-success">${Utils.formatCurrency(w.totalWages)}</td></tr>
+      <tr><td>${idx + 1}</td><td style="text-align:left;">${w.worker.name}</td><td>${w.worker.role || 'N/A'}</td><td>${w.totalDays}</td><td class="text-success">${w.presentDays}</td><td class="text-danger">${w.absentDays}</td><td>${w.attendanceRate.toFixed(1)}%</td><td>${w.totalHours.toFixed(1)}h</td><td>${w.totalOvertime.toFixed(1)}h</td><td class="text-success">${fmtBD(w.totalWages)}</td></tr>
     `).join('');
     return `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Attendance Report</title><style>
     *{margin:0!important;padding:0!important;box-sizing:border-box!important;}
@@ -710,7 +1392,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             <div class="rep-summary-card"><div class="rep-summary-label">Total Workers</div><div class="rep-summary-value">${report.totalWorkers}</div></div>
             <div class="rep-summary-card"><div class="rep-summary-label">Total Present</div><div class="rep-summary-value">${report.totalPresent}</div></div>
             <div class="rep-summary-card"><div class="rep-summary-label">Total Hours</div><div class="rep-summary-value">${report.totalHours.toFixed(1)}h</div></div>
-            <div class="rep-summary-card"><div class="rep-summary-label">Total Wages</div><div class="rep-summary-value">${Utils.formatCurrency(report.totalWages)}</div></div>
+            <div class="rep-summary-card"><div class="rep-summary-label">Total Wages (BD)</div><div class="rep-summary-value">${fmtBD(report.totalWages)}</div></div>
           </div>
           <table class="rep-table">
             <thead><tr><th>#</th><th style="text-align:left;">Worker</th><th>Role</th><th>Total Days</th><th>Present</th><th>Absent</th><th>Rate</th><th>Total Hours</th><th>OT Hours</th><th>Total Wages</th></tr></thead>
@@ -744,7 +1426,10 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       setLoading(prev => ({ ...prev, [workerId]: null }));
       setSuccess('Worker clocked in successfully');
       setTimeout(() => setSuccess(''), 5000);
-    } catch (err) { alert('Failed: ' + err.message); setLoading(prev => ({ ...prev, [workerId]: null })); }
+    } catch (err) {
+      setError('Clock in failed: ' + err.message);
+      setLoading(prev => ({ ...prev, [workerId]: null }));
+    }
   };
   const handleClockOut = async (workerId) => {
     setLoading(prev => ({ ...prev, [workerId]: 'clocking-out' }));
@@ -753,14 +1438,22 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       await new Promise(r => setTimeout(r, 500));
       await refreshData();
       setLoading(prev => ({ ...prev, [workerId]: null }));
-    } catch (err) { alert('Failed: ' + err.message); setLoading(prev => ({ ...prev, [workerId]: null })); }
+    } catch (err) {
+      setError('Clock out failed: ' + err.message);
+      setLoading(prev => ({ ...prev, [workerId]: null }));
+    }
   };
   const handleTeamCheckInAll = async (siteId) => {
     if (!selectedTeamId) return;
     setTeamActionLoading(true); setError(''); setSuccess('');
     try {
-      const response = await fetch(`${API_BASE_URL}/attendance/team/${selectedTeamId}/checkin-all`, {
-        method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      const response = await fetch(`${CONFIG.API_BASE}/attendance/team/${selectedTeamId}/checkin-all`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
+        },
         body: JSON.stringify({ date: selectedDate, siteId })
       });
       if (!response.ok) throw new Error('Failed to check in team');
@@ -774,8 +1467,13 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     if (!selectedTeamId) return;
     setTeamActionLoading(true); setError(''); setSuccess('');
     try {
-      const response = await fetch(`${API_BASE_URL}/attendance/team/${selectedTeamId}/checkout-all`, {
-        method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      const response = await fetch(`${CONFIG.API_BASE}/attendance/team/${selectedTeamId}/checkout-all`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
+        },
         body: JSON.stringify({ date: selectedDate })
       });
       if (!response.ok) throw new Error('Failed to check out team');
@@ -788,8 +1486,13 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const handleTeamWorkerCheckIn = async (workerId, siteId) => {
     setTeamActionLoading(true); setError(''); setSuccess('');
     try {
-      const response = await fetch(`${API_BASE_URL}/attendance/checkin`, {
-        method: 'POST', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
+      const response = await fetch(`${CONFIG.API_BASE}/attendance/checkin`, {
+        method: 'POST',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
+        },
         body: JSON.stringify({ workerId, teamId: selectedTeamId, siteId, date: selectedDate })
       });
       if (!response.ok) throw new Error('Failed to check in worker');
@@ -802,8 +1505,13 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const handleTeamWorkerCheckOut = async (attendanceId) => {
     setTeamActionLoading(true); setError(''); setSuccess('');
     try {
-      const response = await fetch(`${API_BASE_URL}/attendance/${attendanceId}/checkout`, {
-        method: 'PUT', headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' }
+      const response = await fetch(`${CONFIG.API_BASE}/attendance/${attendanceId}/checkout`, {
+        method: 'PUT',
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
+        }
       });
       if (!response.ok) throw new Error('Failed to check out worker');
       setSuccess('Worker checked out successfully');
@@ -890,6 +1598,11 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
           <CalendarDays size={13} /> Yesterday
         </button>
         <button
+          className={`am-date-filter-btn ${activeDateFilter === 'thisWeek' ? 'active' : ''}`}
+          onClick={() => handleDateFilterChange('thisWeek')}>
+          <CalendarDays size={13} /> This Week
+        </button>
+        <button
           className={`am-date-filter-btn ${activeDateFilter === 'thisMonth' ? 'active' : ''}`}
           onClick={() => handleDateFilterChange('thisMonth')}>
           <CalendarDays size={13} /> This Month
@@ -936,13 +1649,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         <Calendar size={12} />
         <span>
           {activeDateFilter === 'custom'
-            ? `${customDateFrom || '...'} → ${customDateTo || '...'}`
-            : activeDateFilter === 'thisMonth'
-              ? Utils.formatDate(activeDateRange.from) + ' → ' + Utils.formatDate(activeDateRange.to)
-              : activeDateFilter === 'lastMonth'
-                ? Utils.formatDate(activeDateRange.from) + ' → ' + Utils.formatDate(activeDateRange.to)
-                : Utils.formatDate(selectedDate)
-          }
+            ? `${Utils.formatDate(customDateFrom || '...')} → ${Utils.formatDate(customDateTo || '...')}`
+            : `${Utils.formatDate(activeDateRange.from)} → ${Utils.formatDate(activeDateRange.to)}`}
         </span>
       </div>
     </div>
@@ -995,7 +1703,6 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         </div>
       )}
 
-      {/* Row 1 — trend + donut */}
       <div className="am-grid-2-1">
         <div className="am-card">
           <div className="am-card-header">
@@ -1011,7 +1718,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             <div className="am-legend">
               <span><i style={{ background: '#10b981' }} />Present</span>
               <span><i style={{ background: '#3b82f6' }} />Hours</span>
-              <span><i style={{ background: '#f59e0b' }} />Wages</span>
+              <span><i style={{ background: '#f59e0b' }} />Wages (BD)</span>
             </div>
           </div>
           <ResponsiveContainer width="100%" height={300}>
@@ -1043,8 +1750,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                 <PieChartIcon size={16} />
               </span>
               <div>
-                <h4>Today's Status</h4>
-                <span>Worker distribution</span>
+                <h4>Status Distribution</h4>
+                <span>For selected period</span>
               </div>
             </div>
           </div>
@@ -1072,7 +1779,6 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         </div>
       </div>
 
-      {/* Row 2 — Top workers + Site breakdown */}
       <div className="am-grid-1-1">
         <div className="am-card">
           <div className="am-card-header">
@@ -1082,7 +1788,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
               </span>
               <div>
                 <h4>Top Workers by Hours</h4>
-                <span>Today's highest hours worked</span>
+                <span>Highest hours worked</span>
               </div>
             </div>
           </div>
@@ -1104,7 +1810,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                 <Bar dataKey="hours" name="Hours" fill="url(#amTopGrad)" radius={[0, 8, 8, 0]} barSize={20} />
               </BarChart>
             </ResponsiveContainer>
-          ) : <div className="am-empty-mini">No workers with hours today</div>}
+          ) : <div className="am-empty-mini">No workers with hours in this period</div>}
         </div>
 
         <div className="am-card">
@@ -1115,7 +1821,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
               </span>
               <div>
                 <h4>Workers by Site</h4>
-                <span>Today's distribution</span>
+                <span>Distribution</span>
               </div>
             </div>
           </div>
@@ -1142,7 +1848,6 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         </div>
       </div>
 
-      {/* Row 3 — Role distribution */}
       <div className="am-card">
         <div className="am-card-header">
           <div className="am-card-title">
@@ -1151,7 +1856,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             </span>
             <div>
               <h4>Workers by Role</h4>
-              <span>Today's present workers by role</span>
+              <span>Present workers by role</span>
             </div>
           </div>
         </div>
@@ -1182,8 +1887,34 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const renderWorkersTab = () => {
     const { total, page, items } = paginate(filteredTodayAttendance, workerPage, workerPerPage);
     if (page !== workerPage) setWorkerPage(page);
+    const isMultiDay = activeDateRange.from !== activeDateRange.to;
+    const cfg = settings || DEFAULT_SETTINGS;
+
     return (
       <div className="am-view">
+        {/* ⭐ Settings banner — shows what's currently applied */}
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 12,
+          padding: '8px 14px', background: 'rgba(59,130,246,0.06)',
+          border: '1px solid rgba(59,130,246,0.2)', borderRadius: 8,
+          fontSize: 12, color: '#1e40af',
+        }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <Clock size={12} /> Shift: <strong>{cfg.shiftStartTime} – {cfg.shiftEndTime}</strong> ({cfg.shiftHours}h)
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <Timer size={12} /> Break: <strong>{cfg.breakStartTime} – {cfg.breakEndTime}</strong> ({cfg.breakHours}h)
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <Flame size={12} /> OT: <strong>{cfg.overtimeRate}×</strong>
+            {cfg.overtimeEnabled ? ' enabled' : ' disabled'}
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+            <Target size={12} /> Thresholds: <strong>{cfg.earlyInThreshold}/{cfg.lateInThreshold}/{cfg.earlyOutThreshold}/{cfg.lateOutThreshold}m</strong>
+          </span>
+          <span style={{ marginLeft: 'auto', opacity: 0.7 }}>Edit in Settings tab</span>
+        </div>
+
         <div className="am-filters">
           <div className="am-search">
             <Search size={15} className="am-search-icon" />
@@ -1205,7 +1936,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             </select>
           </div>
           <span className="am-result-count">
-            Showing {filteredTodayAttendance.length} of {todayAttendance.length}
+            {isMultiDay ? 'Range totals · ' : ''}Showing {filteredTodayAttendance.length} of {todayAttendance.length}
           </span>
         </div>
 
@@ -1255,19 +1986,45 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                           <MapPin size={11} /> <span>{worker.siteName}</span>
                         </div>
                       )}
+
+                      {(worker.earlyIn || worker.lateIn || worker.lateOut || worker.earlyOut) && (
+                        <div className="am-attendance-flags">
+                          {worker.earlyIn && (
+                            <span className="am-flag early-in" title={`Threshold: ${cfg.earlyInThreshold} min before ${cfg.shiftStartTime}`}>
+                              <ArrowDownRight size={10} /> Early In
+                            </span>
+                          )}
+                          {worker.lateIn && (
+                            <span className="am-flag late-in" title={`${worker.lateInMinutes} min after ${cfg.shiftStartTime}`}>
+                              <ArrowUpRight size={10} /> Late In{worker.lateInMinutes > 0 ? ` +${worker.lateInMinutes}m` : ''}
+                            </span>
+                          )}
+                          {worker.lateOut && (
+                            <span className="am-flag late-out" title={`${worker.lateOutMinutes} min after ${cfg.shiftEndTime}`}>
+                              <ArrowUpRight size={10} /> Late Out{worker.lateOutMinutes > 0 ? ` +${worker.lateOutMinutes}m` : ''}
+                            </span>
+                          )}
+                          {worker.earlyOut && (
+                            <span className="am-flag early-out" title={`Threshold: ${cfg.earlyOutThreshold} min before ${cfg.shiftEndTime}`}>
+                              <Minus size={10} /> Early Out
+                            </span>
+                          )}
+                        </div>
+                      )}
+
                       <div className="am-worker-stats">
                         <div className="am-worker-stat">
                           <span className="am-worker-stat-label">Rate</span>
-                          <span className="am-worker-stat-value">{Utils.formatCurrencyShort(worker.dailyRate)}</span>
+                          <span className="am-worker-stat-value">{fmtBDShort(worker.dailyRate)}</span>
                         </div>
                         <div className="am-worker-stat">
                           <span className="am-worker-stat-label">Hours</span>
                           <span className="am-worker-stat-value">{worker.hoursWorked.toFixed(1)}h</span>
                         </div>
                         <div className="am-worker-stat">
-                          <span className="am-worker-stat-label">Wage</span>
+                          <span className="am-worker-stat-label">Wage (BD)</span>
                           <span className="am-worker-stat-value" style={{ color: worker.wageEarned > 0 ? '#047857' : undefined }}>
-                            {Utils.formatCurrencyShort(worker.wageEarned)}
+                            {fmtBDShort(worker.wageEarned)}
                           </span>
                         </div>
                       </div>
@@ -1275,6 +2032,16 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                         <div className="am-worker-times">
                           {worker.checkedInTime && <span><LogIn size={11} /> {Utils.formatTime(worker.checkedInTime)}</span>}
                           {worker.checkedOutTime && <span><LogOut size={11} /> {Utils.formatTime(worker.checkedOutTime)}</span>}
+                          {worker.breakStart && worker.breakEnd && (
+                            <span title={`Break: ${Utils.formatTime(worker.breakStart)} – ${Utils.formatTime(worker.breakEnd)}`}>
+                              <Timer size={11} /> Brk {worker.breakHours.toFixed(1)}h
+                            </span>
+                          )}
+                          {worker.overtimeHours > 0 && (
+                            <span style={{ color: '#d97706' }} title="Overtime hours">
+                              <Flame size={11} /> OT {worker.overtimeHours.toFixed(1)}h
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
@@ -1282,19 +2049,28 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                     <div className="am-worker-footer">
                       {isLoading === 'clocking-in' && <span className="am-loading-text">Clocking In...</span>}
                       {isLoading === 'clocking-out' && <span className="am-loading-text">Clocking Out...</span>}
-                      {!isLoading && worker.status === 'working' && (
-                        <button className="am-btn am-btn-out" onClick={() => handleClockOut(worker.id)}>
-                          <LogOut size={13} /> Clock Out
-                        </button>
-                      )}
-                      {!isLoading && worker.status === 'completed' && (
-                        <span className="am-done-text"><CheckCircle size={13} /> Completed</span>
-                      )}
-                      {!isLoading && (worker.status === 'absent' || worker.status === 'pending') && (
-                        <button className="am-btn am-btn-in"
-                          onClick={() => openSiteModal({ type: 'worker-clockin', workerId: worker.id })}>
-                          <LogIn size={13} /> Clock In
-                        </button>
+                      {!isLoading && (
+                        <>
+                          {worker.record && (
+                            <button className="am-btn am-btn-edit" onClick={() => openEditModal(worker.record, worker)} title="Edit times">
+                              <Edit size={13} /> Edit
+                            </button>
+                          )}
+                          {worker.status === 'working' && (
+                            <button className="am-btn am-btn-out" onClick={() => handleClockOut(worker.id)}>
+                              <LogOut size={13} /> Clock Out
+                            </button>
+                          )}
+                          {worker.status === 'completed' && (
+                            <span className="am-done-text"><CheckCircle size={13} /> Completed</span>
+                          )}
+                          {(worker.status === 'absent' || worker.status === 'pending') && (
+                            <button className="am-btn am-btn-in"
+                              onClick={() => openSiteModal({ type: 'worker-clockin', workerId: worker.id })}>
+                              <LogIn size={13} /> Clock In
+                            </button>
+                          )}
+                        </>
                       )}
                     </div>
                   </div>
@@ -1359,8 +2135,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
               <span className="value">{teamStats?.hours?.toFixed(1) || 0}h</span>
             </div>
             <div className="am-team-summary-item">
-              <span className="label"><DollarSign size={13} /> Wages</span>
-              <span className="value" style={{ color: '#047857' }}>{Utils.formatCurrencyShort(teamStats?.wages || 0)}</span>
+              <span className="label"><CircleDollarSign size={13} /> Wages (BD)</span>
+              <span className="value" style={{ color: '#047857' }}>{fmtBDShort(teamStats?.wages || 0)}</span>
             </div>
           </div>
         )}
@@ -1431,7 +2207,12 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                       <div className="am-member-times">
                         {member.siteName && <span className="am-member-site"><MapPin size={11} /> {member.siteName}</span>}
                         {member.hoursWorked > 0 && <span><Timer size={11} /> {member.hoursWorked.toFixed(1)}h</span>}
-                        {member.wageEarned > 0 && <span style={{ color: '#047857' }}><DollarSign size={11} /> {Utils.formatCurrencyShort(member.wageEarned)}</span>}
+                        {member.overtimeHours > 0 && <span style={{ color: '#d97706' }}><Flame size={11} /> OT {member.overtimeHours.toFixed(1)}h</span>}
+                        {member.wageEarned > 0 && <span style={{ color: '#047857' }}><CircleDollarSign size={11} /> {fmtBDShort(member.wageEarned)}</span>}
+                        {member.earlyIn && <span className="am-flag early-in"><ArrowDownRight size={10} /> Early In</span>}
+                        {member.lateIn && <span className="am-flag late-in"><ArrowUpRight size={10} /> Late In{member.lateInMinutes > 0 ? ` +${member.lateInMinutes}m` : ''}</span>}
+                        {member.lateOut && <span className="am-flag late-out"><ArrowUpRight size={10} /> Late Out{member.lateOutMinutes > 0 ? ` +${member.lateOutMinutes}m` : ''}</span>}
+                        {member.earlyOut && <span className="am-flag early-out"><Minus size={10} /> Early Out</span>}
                       </div>
                       <div className="am-member-actions">
                         {isAbsent && (
@@ -1449,6 +2230,13 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                         )}
                         {isCompleted && <span className="am-done-text"><CheckCircle size={12} /> Done</span>}
                         {isPending && <span className="am-pending-text"><Clock size={12} /> Pending</span>}
+                        {member.attendance && (
+                          <button className="am-btn-icon am-btn-icon-edit"
+                            onClick={() => openEditModal(member.attendance, worker)}
+                            title="Edit times">
+                            <Edit size={14} />
+                          </button>
+                        )}
                         <button className="am-btn-icon" onClick={() => toggleMemberExpand(memberId)}>
                           {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                         </button>
@@ -1458,11 +2246,13 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                       <div className="am-member-expanded">
                         <div className="am-expand-item"><User size={12} /><span><strong>ID:</strong> {worker.id}</span></div>
                         <div className="am-expand-item"><Briefcase size={12} /><span><strong>Role:</strong> {worker.role || 'N/A'}</span></div>
-                        <div className="am-expand-item"><DollarSign size={12} /><span><strong>Rate:</strong> {Utils.formatCurrency(worker.dailyRate)}</span></div>
+                        <div className="am-expand-item"><CircleDollarSign size={12} /><span><strong>Rate:</strong> {fmtBD(worker.dailyRate)}</span></div>
                         <div className="am-expand-item"><Phone size={12} /><span><strong>Phone:</strong> {worker.phone || 'N/A'}</span></div>
                         {member.siteName && <div className="am-expand-item"><Building2 size={12} /><span><strong>Site:</strong> {member.siteName}</span></div>}
                         {member.checkedIn && <div className="am-expand-item"><LogIn size={12} /><span><strong>In:</strong> {Utils.formatTime(member.checkedIn)}</span></div>}
                         {member.checkedOut && <div className="am-expand-item"><LogOut size={12} /><span><strong>Out:</strong> {Utils.formatTime(member.checkedOut)}</span></div>}
+                        {member.breakHours > 0 && <div className="am-expand-item"><Timer size={12} /><span><strong>Break:</strong> {member.breakHours.toFixed(2)}h</span></div>}
+                        {member.overtimeHours > 0 && <div className="am-expand-item"><Flame size={12} /><span><strong>OT:</strong> {member.overtimeHours.toFixed(2)}h</span></div>}
                       </div>
                     )}
                   </div>
@@ -1484,6 +2274,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     const rows = reportData?.workers || [];
     const { total, page, items } = paginate(rows, reportPage, reportPerPage);
     if (page !== reportPage) setReportPage(page);
+    const cfg = settings || DEFAULT_SETTINGS;
 
     return (
       <div className="am-view">
@@ -1515,7 +2306,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
           </button>
           <button className={`am-report-tab ${reportViewMode === 'salary' ? 'active' : ''}`}
             onClick={() => { setReportViewMode('salary'); setTimeout(loadSalaryReport, 100); }}>
-            <DollarSign size={14} /> Salary Report
+            <CircleDollarSign size={14} /> Salary Report (BD)
           </button>
         </div>
 
@@ -1553,8 +2344,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                   <span className="value">{attendanceReport.totalHours.toFixed(1)}h</span>
                 </div>
                 <div className="am-report-summary-item">
-                  <span className="label"><DollarSign size={13} /> Wages</span>
-                  <span className="value" style={{ color: '#047857' }}>{Utils.formatCurrencyShort(attendanceReport.totalWages)}</span>
+                  <span className="label"><CircleDollarSign size={13} /> Wages (BD)</span>
+                  <span className="value" style={{ color: '#047857' }}>{fmtBDShort(attendanceReport.totalWages)}</span>
                 </div>
               </div>
 
@@ -1569,7 +2360,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                       <th className="right">Rate</th>
                       <th className="right">Hours</th>
                       <th className="right">OT</th>
-                      <th className="right">Wages</th>
+                      <th className="right">Wages (BD)</th>
                       <th className="center">Action</th>
                     </tr>
                   </thead>
@@ -1592,20 +2383,36 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                         </td>
                         <td className="right">{w.totalHours.toFixed(1)}h</td>
                         <td className="right">{w.totalOvertime.toFixed(1)}h</td>
-                        <td className="right am-td-green">{Utils.formatCurrencyShort(w.totalWages)}</td>
+                        <td className="right am-td-green">{fmtBDShort(w.totalWages)}</td>
                         <td className="center">
                           <button className="am-btn-small" onClick={() => {
+                            const hourlyRate = w.worker.hourlyRate
+                              || (w.worker.dailyRate && cfg.shiftHours ? w.worker.dailyRate / cfg.shiftHours : 0);
+                            const basicHours = w.totalNormal || (w.totalHours - w.totalOvertime);
+                            const basicSalary = basicHours * hourlyRate;
+                            const overtimeSalary = w.totalOvertime * hourlyRate * cfg.overtimeRate;
+                            const totalSalary = basicSalary + overtimeSalary;
+
+                            const pct = Number(w.worker.deductionPercentage || 0);
+                            const enabled = !!w.worker.deductionEnabled;
+                            const percentageDeduction = (enabled && pct > 0) ? (totalSalary * (pct / 100)) : 0;
+                            const totalDeductions = percentageDeduction;
+                            const netSalary = totalSalary - totalDeductions;
+
                             const salaryData = {
                               ...w,
-                              basicHours: w.totalHours - w.totalOvertime,
-                              basicSalary: (w.totalHours - w.totalOvertime) * (w.worker.hourlyRate || 0),
-                              overtimeSalary: w.totalOvertime * (w.worker.hourlyRate || 0) * 1.5,
-                              totalSalary: (w.totalHours - w.totalOvertime) * (w.worker.hourlyRate || 0) + w.totalOvertime * (w.worker.hourlyRate || 0) * 1.5,
-                              rate: w.worker.hourlyRate || 0,
+                              basicHours,
+                              basicSalary,
+                              overtimeSalary,
+                              totalSalary,
+                              rate: hourlyRate,
                               loans: [], advances: [],
                               totalLoanDeduction: 0, totalAdvanceDeduction: 0,
-                              totalDeductions: w.worker.advancePayment || 0,
-                              netSalary: ((w.totalHours - w.totalOvertime) * (w.worker.hourlyRate || 0) + w.totalOvertime * (w.worker.hourlyRate || 0) * 1.5) - (w.worker.advancePayment || 0)
+                              deductionPercentage: pct,
+                              deductionEnabled: enabled,
+                              percentageDeduction,
+                              totalDeductions,
+                              netSalary,
                             };
                             handlePrintSalarySlip(salaryData);
                           }}>
@@ -1639,20 +2446,26 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                 <span className="value">{salaryReportData.summary?.totalWorkers || 0}</span>
               </div>
               <div className="am-report-summary-item">
-                <span className="label"><DollarSign size={13} /> Gross</span>
-                <span className="value">{Utils.formatCurrencyShort(salaryReportData.summary?.totalGrossSalary || 0)}</span>
+                <span className="label"><CircleDollarSign size={13} /> Gross</span>
+                <span className="value">{fmtBDShort(salaryReportData.summary?.totalGrossSalary || 0)}</span>
+              </div>
+              <div className="am-report-summary-item">
+                <span className="label"><Percent size={13} /> % Deduct</span>
+                <span className="value" style={{ color: '#7c3aed' }}>
+                  {fmtBDShort(salaryReportData.summary?.totalPercentageDeduction || 0)}
+                </span>
               </div>
               <div className="am-report-summary-item">
                 <span className="label"><Shield size={13} /> Loan</span>
-                <span className="value" style={{ color: '#b91c1c' }}>{Utils.formatCurrencyShort(salaryReportData.summary?.totalLoanDeduction || 0)}</span>
+                <span className="value" style={{ color: '#b91c1c' }}>{fmtBDShort(salaryReportData.summary?.totalLoanDeduction || 0)}</span>
               </div>
               <div className="am-report-summary-item">
                 <span className="label"><Wallet size={13} /> Advance</span>
-                <span className="value" style={{ color: '#b45309' }}>{Utils.formatCurrencyShort(salaryReportData.summary?.totalAdvanceDeduction || 0)}</span>
+                <span className="value" style={{ color: '#b45309' }}>{fmtBDShort(salaryReportData.summary?.totalAdvanceDeduction || 0)}</span>
               </div>
               <div className="am-report-summary-item">
-                <span className="label"><CheckCircle size={13} /> Net</span>
-                <span className="value" style={{ color: '#047857' }}>{Utils.formatCurrencyShort(salaryReportData.summary?.totalNetSalary || 0)}</span>
+                <span className="label"><CheckCircle size={13} /> Net (BD)</span>
+                <span className="value" style={{ color: '#047857' }}>{fmtBDShort(salaryReportData.summary?.totalNetSalary || 0)}</span>
               </div>
             </div>
 
@@ -1666,39 +2479,261 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                     <th className="right">Normal</th>
                     <th className="right">OT</th>
                     <th className="right">Gross</th>
+                    <th className="right">% Deduct</th>
                     <th className="right">Loan</th>
                     <th className="right">Advance</th>
-                    <th className="right">Deductions</th>
-                    <th className="right">Net</th>
+                    <th className="right">Total Deduct</th>
+                    <th className="right">Net (BD)</th>
                     <th className="center">Action</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {items.map((w, i) => (
-                    <tr key={w.workerId || i} style={{ animationDelay: `${Math.min(i * 30, 400)}ms` }}>
-                      <td><strong>{w.workerName}</strong></td>
-                      <td>{w.role || 'N/A'}</td>
-                      <td className="right">{w.attendance?.presentDays || 0}/{w.attendance?.totalDays || 0}</td>
-                      <td className="right">{w.attendance?.normalHours?.toFixed(1) || '0.0'}h</td>
-                      <td className="right">{w.attendance?.overtimeHours?.toFixed(1) || '0.0'}h</td>
-                      <td className="right am-td-green">{Utils.formatCurrencyShort(w.salary?.grossSalary || 0)}</td>
-                      <td className="right am-td-red">{w.deductions?.totalLoanDeduction > 0 ? Utils.formatCurrencyShort(w.deductions.totalLoanDeduction) : '—'}</td>
-                      <td className="right am-td-amber">{w.deductions?.totalAdvanceDeduction > 0 ? Utils.formatCurrencyShort(w.deductions.totalAdvanceDeduction) : '—'}</td>
-                      <td className="right am-td-red">{Utils.formatCurrencyShort(w.deductions?.totalDeductions || 0)}</td>
-                      <td className="right am-td-green"><strong>{Utils.formatCurrencyShort(w.netSalary || 0)}</strong></td>
-                      <td className="center">
-                        <button className="am-btn-small" onClick={() => handlePrintSalarySlip(w)}>
-                          <Printer size={12} /> Slip
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {items.map((w, i) => {
+                    const pctDeduction = w.deductions?.percentageDeduction || w.percentageDeduction || 0;
+                    const pctEnabled = w.deductions?.deductionEnabled ?? w.deductionEnabled;
+                    const pctValue = w.deductions?.deductionPercentage ?? w.deductionPercentage;
+                    return (
+                      <tr key={w.workerId || i} style={{ animationDelay: `${Math.min(i * 30, 400)}ms` }}>
+                        <td><strong>{w.workerName}</strong></td>
+                        <td>{w.role || 'N/A'}</td>
+                        <td className="right">{w.attendance?.presentDays || 0}/{w.attendance?.totalDays || 0}</td>
+                        <td className="right">{w.attendance?.normalHours?.toFixed(1) || '0.0'}h</td>
+                        <td className="right">{w.attendance?.overtimeHours?.toFixed(1) || '0.0'}h</td>
+                        <td className="right am-td-green">{fmtBDShort(w.salary?.grossSalary || 0)}</td>
+                        <td className="right" style={{ color: pctEnabled && pctValue > 0 ? '#7c3aed' : '#94a3b8' }}>
+                          {pctEnabled && pctValue > 0
+                            ? <span className="am-pct-deduct" title={`${Number(pctValue).toFixed(2)}%`}>
+                                {fmtBDShort(pctDeduction)}
+                              </span>
+                            : '—'}
+                        </td>
+                        <td className="right am-td-red">
+                          {w.deductions?.totalLoanDeduction > 0 ? fmtBDShort(w.deductions.totalLoanDeduction) : '—'}
+                        </td>
+                        <td className="right am-td-amber">
+                          {w.deductions?.totalAdvanceDeduction > 0 ? fmtBDShort(w.deductions.totalAdvanceDeduction) : '—'}
+                        </td>
+                        <td className="right am-td-red">{fmtBDShort(w.deductions?.totalDeductions || 0)}</td>
+                        <td className="right am-td-green"><strong>{fmtBDShort(w.netSalary || 0)}</strong></td>
+                        <td className="center">
+                          <button className="am-btn-small" onClick={() => handlePrintSalarySlip(w)}>
+                            <Printer size={12} /> Slip
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
             {renderPaginationBar(reportPage, total, reportPerPage, setReportPerPage, setReportPage, rows.length)}
           </>
         )}
+      </div>
+    );
+  };
+
+  // ============================================
+  // SETTINGS TAB
+  // ============================================
+  const renderSettingsTab = () => {
+    if (settingsLoading || !settingsForm) {
+      return (
+        <div className="am-loading">
+          <div className="am-loading-spinner" />
+          Loading settings...
+        </div>
+      );
+    }
+
+    const update = (patch) => setSettingsForm(prev => ({ ...prev, ...patch }));
+
+    return (
+      <div className="am-view">
+        <div className="am-settings-grid">
+
+          {/* Shift Window */}
+          <div className="am-card am-settings-card">
+            <div className="am-card-header">
+              <div className="am-card-title">
+                <span className="am-card-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
+                  <Clock size={16} />
+                </span>
+                <div>
+                  <h4>Shift Window</h4>
+                  <span>Expected daily work hours</span>
+                </div>
+              </div>
+            </div>
+            <div className="am-settings-form">
+              <div className="am-settings-field">
+                <label>Shift Start Time</label>
+                <input type="time" className="am-input"
+                  value={settingsForm.shiftStartTime || '07:00'}
+                  onChange={(e) => update({ shiftStartTime: e.target.value })} />
+              </div>
+              <div className="am-settings-field">
+                <label>Shift End Time</label>
+                <input type="time" className="am-input"
+                  value={settingsForm.shiftEndTime || '17:00'}
+                  onChange={(e) => update({ shiftEndTime: e.target.value })} />
+              </div>
+              <div className="am-settings-field">
+                <label>Shift Hours / Day</label>
+                <input type="number" step="0.25" min="0" className="am-input"
+                  value={settingsForm.shiftHours}
+                  onChange={(e) => update({ shiftHours: parseFloat(e.target.value) || 0 })} />
+              </div>
+            </div>
+          </div>
+
+          {/* Break Times */}
+          <div className="am-card am-settings-card">
+            <div className="am-card-header">
+              <div className="am-card-title">
+                <span className="am-card-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
+                  <Timer size={16} />
+                </span>
+                <div>
+                  <h4>Break Times</h4>
+                  <span>Daily break period</span>
+                </div>
+              </div>
+            </div>
+            <div className="am-settings-form">
+              <div className="am-settings-field">
+                <label>Break Start</label>
+                <input type="time" className="am-input"
+                  value={settingsForm.breakStartTime || '12:00'}
+                  onChange={(e) => update({ breakStartTime: e.target.value })} />
+              </div>
+              <div className="am-settings-field">
+                <label>Break End</label>
+                <input type="time" className="am-input"
+                  value={settingsForm.breakEndTime || '13:00'}
+                  onChange={(e) => update({ breakEndTime: e.target.value })} />
+              </div>
+              <div className="am-settings-field">
+                <label>Break Hours</label>
+                <input type="number" step="0.25" min="0" className="am-input"
+                  value={settingsForm.breakHours}
+                  onChange={(e) => update({ breakHours: parseFloat(e.target.value) || 0 })} />
+              </div>
+            </div>
+          </div>
+
+          {/* Overtime */}
+          <div className="am-card am-settings-card">
+            <div className="am-card-header">
+              <div className="am-card-title">
+                <span className="am-card-icon" style={{ background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>
+                  <Flame size={16} />
+                </span>
+                <div>
+                  <h4>Overtime</h4>
+                  <span>Extra hours pay rate</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className={`am-toggle ${settingsForm.overtimeEnabled ? 'on' : 'off'}`}
+                onClick={() => update({ overtimeEnabled: !settingsForm.overtimeEnabled })}
+              >
+                {settingsForm.overtimeEnabled ? 'Enabled' : 'Disabled'}
+              </button>
+            </div>
+            <div className="am-settings-form">
+              <div className="am-settings-field">
+                <label>Overtime Rate (multiplier)</label>
+                <input type="number" step="0.1" min="1" className="am-input"
+                  value={settingsForm.overtimeRate}
+                  disabled={!settingsForm.overtimeEnabled}
+                  onChange={(e) => update({ overtimeRate: parseFloat(e.target.value) || 1 })} />
+              </div>
+              <div className="am-settings-hint">
+                <Info size={13} />
+                <span>
+                  Rate × hourly wage for hours worked beyond shift. Default: 1.5×
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Early / Late Thresholds */}
+          <div className="am-card am-settings-card am-settings-card-wide">
+            <div className="am-card-header">
+              <div className="am-card-title">
+                <span className="am-card-icon" style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}>
+                  <Target size={16} />
+                </span>
+                <div>
+                  <h4>Early / Late Thresholds</h4>
+                  <span>Minutes beyond shift that flag a record</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="am-settings-form am-settings-form-4">
+              <div className="am-settings-field">
+                <label><ArrowDownRight size={12} /> Early In</label>
+                <input type="number" min="0" className="am-input"
+                  value={settingsForm.earlyInThreshold}
+                  onChange={(e) => update({ earlyInThreshold: parseInt(e.target.value) || 0 })} />
+                <span className="am-settings-unit">min</span>
+              </div>
+              <div className="am-settings-field">
+                <label><ArrowUpRight size={12} /> Late In</label>
+                <input type="number" min="0" className="am-input"
+                  value={settingsForm.lateInThreshold}
+                  onChange={(e) => update({ lateInThreshold: parseInt(e.target.value) || 0 })} />
+                <span className="am-settings-unit">min</span>
+              </div>
+              <div className="am-settings-field">
+                <label><Minus size={12} /> Early Out</label>
+                <input type="number" min="0" className="am-input"
+                  value={settingsForm.earlyOutThreshold}
+                  onChange={(e) => update({ earlyOutThreshold: parseInt(e.target.value) || 0 })} />
+                <span className="am-settings-unit">min</span>
+              </div>
+              <div className="am-settings-field">
+                <label><ArrowUpRight size={12} /> Late Out</label>
+                <input type="number" min="0" className="am-input"
+                  value={settingsForm.lateOutThreshold}
+                  onChange={(e) => update({ lateOutThreshold: parseInt(e.target.value) || 0 })} />
+                <span className="am-settings-unit">min</span>
+              </div>
+            </div>
+
+            <div className="am-settings-flags-row">
+              {[
+                { key: 'countEarlyIn',  label: 'Count Early In' },
+                { key: 'countLateIn',   label: 'Count Late In' },
+                { key: 'countEarlyOut', label: 'Count Early Out' },
+                { key: 'countLateOut',  label: 'Count Late Out' },
+              ].map(f => (
+                <button
+                  key={f.key}
+                  type="button"
+                  className={`am-flag-toggle ${settingsForm[f.key] ? 'on' : 'off'}`}
+                  onClick={() => update({ [f.key]: !settingsForm[f.key] })}
+                >
+                  <span className="am-flag-toggle-dot" />
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+        </div>
+
+        <div className="am-settings-actions">
+          <button className="am-btn am-btn-secondary" onClick={handleResetSettings} disabled={settingsSaving}>
+            <RotateCcw size={14} /> Reset
+          </button>
+          <button className="am-btn am-btn-primary" onClick={handleSaveSettings} disabled={settingsSaving}>
+            <Save size={14} /> {settingsSaving ? 'Saving...' : 'Save Settings'}
+          </button>
+        </div>
       </div>
     );
   };
@@ -1756,12 +2791,172 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   };
 
   // ============================================
+  // EDIT ATTENDANCE MODAL
+  // ============================================
+  const renderEditModal = () => {
+    if (!showEditModal || !editRecord) return null;
+    const worker = editRecord._worker || {};
+    const rawDate = editRecord.date || '';
+    const dateStr = normalizeDate(rawDate);
+    const cfg = settings || DEFAULT_SETTINGS;
+
+    // ⭐ Preview using settings-aware computation
+    const preview = (() => {
+      if (!editForm.checkedIn || !editForm.checkedOut) {
+        return { hours: 0, overtime: 0, normal: 0, breakH: 0, wage: 0 };
+      }
+      const inISO = buildISO(dateStr, editForm.checkedIn);
+      const outISO = buildISO(dateStr, editForm.checkedOut);
+      const fakeRecord = {
+        checkedIn: inISO,
+        checkedOut: outISO,
+        breakStart: editForm.breakStart ? buildISO(dateStr, editForm.breakStart) : null,
+        breakEnd: editForm.breakEnd ? buildISO(dateStr, editForm.breakEnd) : null,
+        date: dateStr,
+      };
+      const computed = computeHoursWithSettings(fakeRecord, cfg);
+      const wage = computeWage(computed.normalHours, computed.overtimeHours, worker, cfg);
+      return {
+        hours: computed.hoursWorked,
+        overtime: computed.overtimeHours,
+        normal: computed.normalHours,
+        breakH: computed.breakHours,
+        wage,
+      };
+    })();
+
+    return (
+      <ModalPortal>
+        <div className="am-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) closeEditModal(); }}>
+          <div className="am-modal-content am-edit-modal" onClick={e => e.stopPropagation()}>
+            <div className="am-modal-header" style={{ background: 'linear-gradient(135deg, #15dd9b, #10b981)' }}>
+              <div className="am-modal-header-left">
+                <div className="am-modal-icon"><Edit size={18} /></div>
+                <div>
+                  <h3>Edit Attendance Times</h3>
+                  <p className="am-modal-sub">
+                    {worker.name || 'Worker'} · {Utils.formatDate(dateStr)}
+                  </p>
+                </div>
+              </div>
+              <button className="am-modal-close" onClick={closeEditModal}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="am-modal-body">
+              <div className="am-edit-grid">
+                <div className="am-edit-field">
+                  <label><LogIn size={12} /> Check-In Time</label>
+                  <input type="time" value={editForm.checkedIn}
+                    onChange={(e) => setEditForm({ ...editForm, checkedIn: e.target.value })}
+                    className="am-input" />
+                </div>
+                <div className="am-edit-field">
+                  <label><LogOut size={12} /> Check-Out Time</label>
+                  <input type="time" value={editForm.checkedOut}
+                    onChange={(e) => setEditForm({ ...editForm, checkedOut: e.target.value })}
+                    className="am-input" />
+                </div>
+                <div className="am-edit-field">
+                  <label><Timer size={12} /> Break Start</label>
+                  <input type="time" value={editForm.breakStart}
+                    onChange={(e) => setEditForm({ ...editForm, breakStart: e.target.value })}
+                    className="am-input" />
+                </div>
+                <div className="am-edit-field">
+                  <label><Timer size={12} /> Break End</label>
+                  <input type="time" value={editForm.breakEnd}
+                    onChange={(e) => setEditForm({ ...editForm, breakEnd: e.target.value })}
+                    className="am-input" />
+                </div>
+                <div className="am-edit-field">
+                  <label><Building2 size={12} /> Site</label>
+                  <select value={editForm.siteId}
+                    onChange={(e) => setEditForm({ ...editForm, siteId: e.target.value })}
+                    className="am-select">
+                    <option value="">— No site —</option>
+                    {sites.map(s => (
+                      <option key={s.id} value={s.id}>{s.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="am-edit-field">
+                  <label><CheckCircle size={12} /> Present</label>
+                  <div className="am-toggle-wrap">
+                    <button type="button"
+                      className={`am-toggle ${editForm.present ? 'on' : 'off'}`}
+                      onClick={() => setEditForm({ ...editForm, present: !editForm.present })}>
+                      {editForm.present ? 'Present' : 'Absent'}
+                    </button>
+                  </div>
+                </div>
+                <div className="am-edit-field am-edit-full">
+                  <label><FileText size={12} /> Notes</label>
+                  <textarea value={editForm.notes}
+                    onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
+                    className="am-input" rows={2} placeholder="Optional notes" />
+                </div>
+              </div>
+
+              <div className="am-edit-preview">
+                <div className="am-edit-preview-item">
+                  <span>Normal</span>
+                  <strong>{preview.normal.toFixed(2)} h</strong>
+                </div>
+                <div className="am-edit-preview-item">
+                  <span>Break</span>
+                  <strong>{preview.breakH.toFixed(2)} h</strong>
+                </div>
+                <div className="am-edit-preview-item">
+                  <span>OT</span>
+                  <strong style={{ color: preview.overtime > 0 ? '#d97706' : undefined }}>
+                    {preview.overtime.toFixed(2)} h
+                  </strong>
+                </div>
+                <div className="am-edit-preview-item">
+                  <span>Total</span>
+                  <strong>{preview.hours.toFixed(2)} h</strong>
+                </div>
+                <div className="am-edit-preview-item">
+                  <span>Wage (BD)</span>
+                  <strong style={{ color: '#047857' }}>{fmtBD(preview.wage)}</strong>
+                </div>
+              </div>
+
+              <div style={{
+                fontSize: 11, color: '#6b7280', marginTop: 8,
+                padding: '6px 10px', background: 'rgba(139,92,246,0.06)',
+                borderRadius: 6, borderLeft: '3px solid #8b5cf6',
+              }}>
+                <Info size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                Using settings: shift {cfg.shiftStartTime}–{cfg.shiftEndTime} ({cfg.shiftHours}h),
+                break {cfg.breakStartTime}–{cfg.breakEndTime} ({cfg.breakHours}h),
+                OT {cfg.overtimeRate}×
+              </div>
+
+              <div className="am-edit-actions">
+                <button className="am-btn am-btn-primary" onClick={handleSaveEdit} disabled={editLoading}>
+                  {editLoading ? 'Saving...' : <><Save size={14} /> Save Changes</>}
+                </button>
+                <button className="am-btn am-btn-secondary" onClick={closeEditModal} disabled={editLoading}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </ModalPortal>
+    );
+  };
+
+  // ============================================
   // ROW TOOLTIPS
   // ============================================
   const renderWorkerTooltip = () => {
     if (!hoveredWorker) return null;
     const worker = todayAttendance.find(w => w.id === hoveredWorker);
     if (!worker) return null;
+    const cfg = settings || DEFAULT_SETTINGS;
     return (
       <div className="am-row-tooltip" style={{ position: 'fixed', left: workerTooltipPos.x, top: workerTooltipPos.y, zIndex: 9998 }}>
         <div className="am-row-tooltip-title"><User size={13} /> {worker.name}</div>
@@ -1770,11 +2965,27 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         <div className="am-row-tooltip-row"><Clock size={11} /><span>Status:</span><strong style={{ textTransform: 'capitalize' }}>{worker.status}</strong></div>
         {worker.checkedInTime && <div className="am-row-tooltip-row"><LogIn size={11} /><span>In:</span><strong>{Utils.formatTime(worker.checkedInTime)}</strong></div>}
         {worker.checkedOutTime && <div className="am-row-tooltip-row"><LogOut size={11} /><span>Out:</span><strong>{Utils.formatTime(worker.checkedOutTime)}</strong></div>}
+        {worker.breakStart && worker.breakEnd && (
+          <div className="am-row-tooltip-row">
+            <Timer size={11} /><span>Break:</span>
+            <strong>{Utils.formatTime(worker.breakStart)} – {Utils.formatTime(worker.breakEnd)} ({worker.breakHours.toFixed(2)}h)</strong>
+          </div>
+        )}
         {worker.hoursWorked > 0 && <div className="am-row-tooltip-row"><Timer size={11} /><span>Hours:</span><strong>{worker.hoursWorked.toFixed(2)}h</strong></div>}
-        {worker.wageEarned > 0 && <div className="am-row-tooltip-row"><DollarSign size={11} /><span>Wage:</span><strong style={{ color: '#047857' }}>{Utils.formatCurrency(worker.wageEarned)}</strong></div>}
+        {worker.overtimeHours > 0 && <div className="am-row-tooltip-row"><Flame size={11} /><span>OT:</span><strong style={{ color: '#d97706' }}>{worker.overtimeHours.toFixed(2)}h</strong></div>}
+        {worker.wageEarned > 0 && <div className="am-row-tooltip-row"><CircleDollarSign size={11} /><span>Wage:</span><strong style={{ color: '#047857' }}>{fmtBD(worker.wageEarned)}</strong></div>}
+        {worker.earlyIn && <div className="am-row-tooltip-row"><ArrowDownRight size={11} /><span>Flag:</span><strong style={{ color: '#0284c7' }}>Early In</strong></div>}
+        {worker.lateIn && <div className="am-row-tooltip-row"><ArrowUpRight size={11} /><span>Flag:</span><strong style={{ color: '#d97706' }}>Late In +{worker.lateInMinutes}m</strong></div>}
+        {worker.lateOut && <div className="am-row-tooltip-row"><ArrowUpRight size={11} /><span>Flag:</span><strong style={{ color: '#7c3aed' }}>Late Out +{worker.lateOutMinutes}m</strong></div>}
+        {worker.earlyOut && <div className="am-row-tooltip-row"><Minus size={11} /><span>Flag:</span><strong style={{ color: '#dc2626' }}>Early Out</strong></div>}
+        <div className="am-row-tooltip-row" style={{ opacity: 0.7, borderTop: '1px solid rgba(148,163,184,0.3)', marginTop: 4, paddingTop: 4 }}>
+          <Info size={11} /><span>Settings:</span>
+          <strong style={{ fontSize: 10 }}>{cfg.shiftStartTime}–{cfg.shiftEndTime} · {cfg.shiftHours}h · OT {cfg.overtimeRate}×</strong>
+        </div>
       </div>
     );
   };
+
   const renderMemberTooltip = () => {
     if (!hoveredMember) return null;
     const member = (teamAttendance?.members || []).find(m => (m.id || m.worker?.id) === hoveredMember);
@@ -1787,6 +2998,11 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         <div className="am-row-tooltip-row"><Building2 size={11} /><span>Site:</span><strong style={{ color: member.siteName ? '#047857' : '#b91c1c' }}>{member.siteName || 'Not assigned'}</strong></div>
         {member.checkedIn && <div className="am-row-tooltip-row"><LogIn size={11} /><span>In:</span><strong>{Utils.formatTime(member.checkedIn)}</strong></div>}
         {member.checkedOut && <div className="am-row-tooltip-row"><LogOut size={11} /><span>Out:</span><strong>{Utils.formatTime(member.checkedOut)}</strong></div>}
+        {member.breakHours > 0 && <div className="am-row-tooltip-row"><Timer size={11} /><span>Break:</span><strong>{member.breakHours.toFixed(2)}h</strong></div>}
+        {member.overtimeHours > 0 && <div className="am-row-tooltip-row"><Flame size={11} /><span>OT:</span><strong>{member.overtimeHours.toFixed(2)}h</strong></div>}
+        {member.earlyIn && <div className="am-row-tooltip-row"><ArrowDownRight size={11} /><span>Flag:</span><strong style={{ color: '#0284c7' }}>Early In</strong></div>}
+        {member.lateIn && <div className="am-row-tooltip-row"><ArrowUpRight size={11} /><span>Flag:</span><strong style={{ color: '#d97706' }}>Late In{member.lateInMinutes > 0 ? ` +${member.lateInMinutes}m` : ''}</strong></div>}
+        {member.lateOut && <div className="am-row-tooltip-row"><ArrowUpRight size={11} /><span>Flag:</span><strong style={{ color: '#7c3aed' }}>Late Out{member.lateOutMinutes > 0 ? ` +${member.lateOutMinutes}m` : ''}</strong></div>}
       </div>
     );
   };
@@ -1802,7 +3018,6 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         <div className="am-orb am-orb-3" />
       </div>
 
-      {/* Header */}
       <div className="am-header">
         <div className="am-header-left">
           <div className="am-header-icon">
@@ -1812,7 +3027,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
           <div>
             <h2>Attendance &amp; Time Tracking</h2>
             <p className="am-header-subtitle">
-              {dayStats.present} present · {dayStats.working} working · {dayStats.totalHours.toFixed(1)}h logged
+              {dayStats.present} present · {dayStats.working} working · {dayStats.totalHours.toFixed(1)}h logged · {fmtBD(dayStats.totalWages)}
             </p>
           </div>
         </div>
@@ -1823,13 +3038,13 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="am-tabs">
         {[
           { id: 'overview', label: 'Overview', icon: BarChart3 },
           { id: 'workers', label: 'Workers', icon: Users, badge: dayStats.totalWorkers },
           { id: 'teams', label: 'Teams', icon: Users2 },
-          { id: 'reports', label: 'Reports', icon: FileText }
+          { id: 'reports', label: 'Reports', icon: FileText },
+          { id: 'settings', label: 'Settings', icon: Sliders },
         ].map(t => {
           const Icon = t.icon;
           return (
@@ -1843,31 +3058,30 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         })}
       </div>
 
-      {/* Date filters (not in reports) */}
-      {viewMode !== 'reports' && renderDateFilterBar()}
+      {/* Date filter — hide on settings tab */}
+      {viewMode !== 'settings' && renderDateFilterBar()}
 
-      {/* Date selector (not in reports or overview) */}
-      {viewMode !== 'reports' && viewMode !== 'overview' && (
+      {/* Explicit date picker for Teams tab */}
+      {viewMode === 'teams' && (
         <div className="am-date-bar">
           <label><CalendarDays size={14} /> Select Date:</label>
           <input type="date" value={selectedDate}
-            onChange={e => { setSelectedDate(e.target.value); setActiveDateFilter('custom'); setTimeout(() => refreshData(), 100); }}
+            onChange={e => { setSelectedDate(e.target.value); setActiveDateFilter('custom'); setCustomDateFrom(e.target.value); setCustomDateTo(e.target.value); }}
             className="am-input" />
         </div>
       )}
 
-      {/* Messages */}
       {error && <div className="am-message error"><AlertCircle size={15} /> {error}</div>}
       {success && <div className="am-message success"><CheckCircle size={15} /> {success}</div>}
 
-      {/* View */}
       {viewMode === 'overview' && renderOverviewTab()}
       {viewMode === 'workers' && renderWorkersTab()}
       {viewMode === 'teams' && renderTeamsTab()}
       {viewMode === 'reports' && renderReportsTab()}
+      {viewMode === 'settings' && renderSettingsTab()}
 
-      {/* Modals & tooltips */}
       {renderSiteModal()}
+      {renderEditModal()}
       {renderWorkerTooltip()}
       {renderMemberTooltip()}
     </div>

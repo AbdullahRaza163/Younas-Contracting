@@ -1,54 +1,13 @@
 // src/components/WorkersManagerComponent.jsx
 import React, { useState, useMemo, useEffect } from 'react';
 import {
-  HardHat,
-  Edit,
-  Trash2,
-  Plus,
-  X,
-  Save,
-  Search,
-  Users,
-  UserCheck,
-  UserX,
-  Clock,
-  DollarSign,
-  Phone,
-  Mail,
-  MapPin,
-  Calendar,
-  TrendingUp,
-  TrendingDown,
-  Award,
-  Shield,
-  Briefcase,
-  Eye,
-  RefreshCw,
-  ChevronDown,
-  ChevronUp,
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  AlertCircle,
-  CheckCircle,
-  LayoutDashboard,
-  User,
-  UserPlus,
-  Crown,
-  Activity,
-  Timer,
-  Info,
-  Hash,
-  Layers,
-  Sparkles,
-  Zap,
-  FileText,
-  Target,
-  Star,
-  CircleDot,
-  Sun,
-  Moon
+  HardHat, Edit, Trash2, Plus, X, Save, Search, Users, UserCheck, UserX,
+  Clock, DollarSign, Phone, Mail, MapPin, Calendar, TrendingUp, TrendingDown,
+  Award, Shield, Briefcase, Eye, RefreshCw, ChevronDown, ChevronUp,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, AlertCircle,
+  CheckCircle, LayoutDashboard, User, UserPlus, Crown, Activity, Timer,
+  Info, Hash, Layers, Sparkles, Zap, FileText, Target, Star, CircleDot,
+  Sun, Moon, Percent, ToggleLeft, ToggleRight, Calculator
 } from 'lucide-react';
 import Utils from '../utils/Utils';
 import { useTheme } from '../context/ThemeContext';
@@ -65,16 +24,15 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [deductionFilter, setDeductionFilter] = useState('all'); // all | with | without
   const [expandedWorkers, setExpandedWorkers] = useState({});
   const [hoveredCard, setHoveredCard] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [mounted, setMounted] = useState(false);
   const [toast, setToast] = useState(null);
 
-  // Theme — shared with TopBar via ThemeContext
   const { theme, toggleTheme, isDark } = useTheme();
 
-  // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(9);
 
@@ -89,7 +47,10 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     emergencyPhone: '',
     skills: '',
     experience: '',
-    notes: ''
+    notes: '',
+    // ⭐ NEW deduction fields
+    deductionEnabled: false,
+    deductionPercentage: ''
   });
 
   useEffect(() => {
@@ -125,20 +86,22 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
       );
     }
 
-    if (roleFilter !== 'all') {
-      filtered = filtered.filter(w => w.role === roleFilter);
-    }
+    if (roleFilter !== 'all') filtered = filtered.filter(w => w.role === roleFilter);
 
     if (statusFilter !== 'all') {
-      if (statusFilter === 'active') {
-        filtered = filtered.filter(w => w.status !== 'inactive');
-      } else {
-        filtered = filtered.filter(w => w.status === 'inactive');
-      }
+      if (statusFilter === 'active') filtered = filtered.filter(w => w.status !== 'inactive');
+      else filtered = filtered.filter(w => w.status === 'inactive');
+    }
+
+    // ⭐ Deduction filter
+    if (deductionFilter === 'with') {
+      filtered = filtered.filter(w => w.deductionEnabled && Number(w.deductionPercentage) > 0);
+    } else if (deductionFilter === 'without') {
+      filtered = filtered.filter(w => !w.deductionEnabled || Number(w.deductionPercentage) === 0);
     }
 
     return filtered;
-  }, [workers, searchTerm, roleFilter, statusFilter]);
+  }, [workers, searchTerm, roleFilter, statusFilter, deductionFilter]);
 
   // ============================================
   // PAGINATION
@@ -151,13 +114,8 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     return filteredWorkers.slice(startIndex, endIndex);
   }, [filteredWorkers, currentPage, itemsPerPage]);
 
-  useEffect(() => {
-    setCurrentPage(1);
-  }, [searchTerm, roleFilter, statusFilter, itemsPerPage]);
-
-  useEffect(() => {
-    if (currentPage > totalPages) setCurrentPage(totalPages);
-  }, [currentPage, totalPages]);
+  useEffect(() => { setCurrentPage(1); }, [searchTerm, roleFilter, statusFilter, deductionFilter, itemsPerPage]);
+  useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
 
   const goToPage = (page) => {
     const validPage = Math.max(1, Math.min(page, totalPages));
@@ -169,9 +127,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     const maxVisible = 5;
     let start = Math.max(1, currentPage - 2);
     let end = Math.min(totalPages, start + maxVisible - 1);
-    if (end - start < maxVisible - 1) {
-      start = Math.max(1, end - maxVisible + 1);
-    }
+    if (end - start < maxVisible - 1) start = Math.max(1, end - maxVisible + 1);
     for (let i = start; i <= end; i++) pages.push(i);
     return pages;
   };
@@ -192,7 +148,21 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     const avgRate = total > 0 ? totalDailyCost / total : 0;
     const totalRoles = roles.length - 1;
 
-    return { total, active, inactive, totalDailyCost, avgRate, totalRoles };
+    // ⭐ Deduction stats
+    const withDeduction = workers.filter(w => w.deductionEnabled && Number(w.deductionPercentage) > 0);
+    const deductionCount = withDeduction.length;
+    const avgDeductionPct = deductionCount > 0
+      ? withDeduction.reduce((s, w) => s + Number(w.deductionPercentage || 0), 0) / deductionCount
+      : 0;
+    const totalDeductionImpact = withDeduction.reduce((s, w) => {
+      const pct = Math.max(0, Math.min(100, Number(w.deductionPercentage) || 0));
+      return s + (w.dailyRate || 0) * (pct / 100);
+    }, 0);
+
+    return {
+      total, active, inactive, totalDailyCost, avgRate, totalRoles,
+      deductionCount, avgDeductionPct, totalDeductionImpact
+    };
   }, [workers, roles]);
 
   const cardDetails = {
@@ -211,12 +181,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
         { label: 'Active Workers', value: stats.active },
         { label: 'Total Workers', value: stats.total },
         { label: 'Inactive', value: stats.inactive },
-        {
-          label: 'Active Rate',
-          value: stats.total > 0
-            ? `${((stats.active / stats.total) * 100).toFixed(1)}%`
-            : '0%'
-        }
+        { label: 'Active Rate', value: stats.total > 0 ? `${((stats.active / stats.total) * 100).toFixed(1)}%` : '0%' }
       ]
     },
     cost: {
@@ -228,18 +193,22 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
         { label: 'Monthly Estimate', value: Utils.formatCurrency(stats.totalDailyCost * 26) }
       ]
     },
+    deduction: {
+      title: 'Salary Deductions',
+      details: [
+        { label: 'Workers with Deduction', value: stats.deductionCount },
+        { label: 'Average Deduction %', value: `${stats.avgDeductionPct.toFixed(1)}%` },
+        { label: 'Daily Impact', value: Utils.formatCurrency(stats.totalDeductionImpact) },
+        { label: 'Monthly Impact (26d)', value: Utils.formatCurrency(stats.totalDeductionImpact * 26) }
+      ]
+    },
     inactive: {
       title: 'Inactive Workers',
       details: [
         { label: 'Inactive', value: stats.inactive },
         { label: 'Active', value: stats.active },
         { label: 'Total Workers', value: stats.total },
-        {
-          label: 'Inactive Rate',
-          value: stats.total > 0
-            ? `${((stats.inactive / stats.total) * 100).toFixed(1)}%`
-            : '0%'
-        }
+        { label: 'Inactive Rate', value: stats.total > 0 ? `${((stats.inactive / stats.total) * 100).toFixed(1)}%` : '0%' }
       ]
     }
   };
@@ -256,12 +225,8 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   const getWorkerStats = (workerId) => {
     const workerAttendance = data.attendance?.filter(a => a.workerId === workerId) || [];
     const totalHours = workerAttendance.reduce((sum, a) => {
-      if (a.checkedIn && a.checkedOut) {
-        return sum + Utils.calculateHoursWorked(a.checkedIn, a.checkedOut);
-      }
-      if (typeof a.totalHours === 'number' && a.totalHours > 0) {
-        return sum + a.totalHours;
-      }
+      if (a.checkedIn && a.checkedOut) return sum + Utils.calculateHoursWorked(a.checkedIn, a.checkedOut);
+      if (typeof a.totalHours === 'number' && a.totalHours > 0) return sum + a.totalHours;
       return sum;
     }, 0);
 
@@ -283,17 +248,9 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   // ============================================
   const resetForm = () => {
     setFormData({
-      name: '',
-      role: '',
-      dailyRate: '',
-      phone: '',
-      email: '',
-      address: '',
-      emergencyContact: '',
-      emergencyPhone: '',
-      skills: '',
-      experience: '',
-      notes: ''
+      name: '', role: '', dailyRate: '', phone: '', email: '', address: '',
+      emergencyContact: '', emergencyPhone: '', skills: '', experience: '', notes: '',
+      deductionEnabled: false, deductionPercentage: ''
     });
     setEditingId(null);
   };
@@ -305,11 +262,24 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
       return;
     }
 
+    // ⭐ Validate deduction percentage
+    const pct = parseFloat(formData.deductionPercentage) || 0;
+    if (formData.deductionEnabled && (pct < 0 || pct > 100)) {
+      showToast('Deduction % must be between 0 and 100', 'error');
+      return;
+    }
+
+    const payload = {
+      ...formData,
+      deductionPercentage: formData.deductionEnabled ? pct : 0,
+      deductionEnabled: !!formData.deductionEnabled
+    };
+
     if (editingId) {
-      updateWorker(editingId, formData);
+      updateWorker(editingId, payload);
       showToast('Worker updated');
     } else {
-      addWorker(formData);
+      addWorker(payload);
       showToast('Worker added');
     }
 
@@ -330,7 +300,9 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
       emergencyPhone: worker.emergencyPhone || '',
       skills: worker.skills || '',
       experience: worker.experience || '',
-      notes: worker.notes || ''
+      notes: worker.notes || '',
+      deductionEnabled: !!worker.deductionEnabled,
+      deductionPercentage: worker.deductionPercentage ? String(worker.deductionPercentage) : ''
     });
     setShowForm(true);
   };
@@ -349,12 +321,21 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     setSearchTerm('');
     setRoleFilter('all');
     setStatusFilter('all');
+    setDeductionFilter('all');
   };
 
   const hasActiveFilters =
     searchTerm.trim() !== '' ||
     roleFilter !== 'all' ||
-    statusFilter !== 'all';
+    statusFilter !== 'all' ||
+    deductionFilter !== 'all';
+
+  // ⭐ Compute effective daily rate after deduction
+  const getEffectiveDailyRate = (worker) => {
+    if (!worker.deductionEnabled) return worker.dailyRate || 0;
+    const pct = Math.max(0, Math.min(100, Number(worker.deductionPercentage) || 0));
+    return (worker.dailyRate || 0) * (1 - pct / 100);
+  };
 
   // ============================================
   // ROLE COLORS
@@ -378,11 +359,12 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     const workerStats = getWorkerStats(worker.id);
     const roleStyle = getRoleStyle(worker.role);
     const isActive = worker.status !== 'inactive';
+    const hasDeduction = worker.deductionEnabled && Number(worker.deductionPercentage) > 0;
 
     return (
       <div
         key={worker.id}
-        className="wk-card"
+        className={`wk-card ${hasDeduction ? 'wk-card-with-deduction' : ''}`}
         style={{ animationDelay: `${Math.min(index * 60, 480)}ms` }}
       >
         <div className="wk-card-accent" style={{ background: roleStyle.gradient }} />
@@ -407,6 +389,22 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
             <span className="wk-rate-unit">/day</span>
           </div>
         </div>
+
+        {/* ⭐ Deduction badge — only if enabled */}
+        {hasDeduction && (
+          <div className="wk-deduction-banner">
+            <div className="wk-deduction-badge">
+              <Percent size={11} />
+              <span>Deduction Applied</span>
+              <strong>{Number(worker.deductionPercentage).toFixed(2)}%</strong>
+            </div>
+            <div className="wk-deduction-net">
+              <Calculator size={11} />
+              <span>Net daily</span>
+              <strong>{Utils.formatCurrencyShort(getEffectiveDailyRate(worker))}</strong>
+            </div>
+          </div>
+        )}
 
         <div className="wk-card-body">
           <div className="wk-mini-stats">
@@ -549,6 +547,20 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                   </div>
                 </div>
               )}
+
+              {/* ⭐ Deduction info in expanded section */}
+              <div className={`wk-expanded-item wk-expanded-full wk-expanded-deduction ${hasDeduction ? 'active' : 'inactive'}`}>
+                {hasDeduction ? <ToggleRight size={13} /> : <ToggleLeft size={13} />}
+                <div>
+                  <span className="wk-expanded-label">Salary Deduction</span>
+                  <span className="wk-expanded-value">
+                    {hasDeduction
+                      ? `${Number(worker.deductionPercentage).toFixed(2)}% will be deducted from salary`
+                      : 'No deduction'}
+                  </span>
+                </div>
+              </div>
+
               {worker.notes && (
                 <div className="wk-expanded-item wk-expanded-full">
                   <Info size={13} />
@@ -574,6 +586,9 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     const workerStats = getWorkerStats(w.id);
     const roleStyle = getRoleStyle(w.role);
     const isActive = w.status !== 'inactive';
+    const hasDeduction = w.deductionEnabled && Number(w.deductionPercentage) > 0;
+    const effectiveRate = getEffectiveDailyRate(w);
+    const dailyDeductionAmount = (w.dailyRate || 0) - effectiveRate;
 
     return (
       <div className="wk-modal-overlay" onClick={() => setShowDetailModal(false)}>
@@ -653,6 +668,45 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                   <span className="wk-detail-stat-label">Daily Rate</span>
                   <span className="wk-detail-stat-value">{Utils.formatCurrency(w.dailyRate || 0)}</span>
                 </div>
+              </div>
+            </div>
+
+            {/* ⭐ Deduction card in detail modal */}
+            <div className={`wk-detail-deduction-card ${hasDeduction ? 'active' : ''}`}>
+              <div className="wk-detail-deduction-icon">
+                {hasDeduction ? <ToggleRight size={22} /> : <ToggleLeft size={22} />}
+              </div>
+              <div className="wk-detail-deduction-content">
+                <div className="wk-detail-deduction-title">
+                  Salary Deduction
+                  <span className={`wk-detail-deduction-state ${hasDeduction ? 'on' : 'off'}`}>
+                    {hasDeduction ? 'ENABLED' : 'DISABLED'}
+                  </span>
+                </div>
+                {hasDeduction ? (
+                  <div className="wk-detail-deduction-body">
+                    <div className="wk-detail-deduction-row">
+                      <span>Percentage</span>
+                      <strong>{Number(w.deductionPercentage).toFixed(2)}%</strong>
+                    </div>
+                    <div className="wk-detail-deduction-row">
+                      <span>Gross daily rate</span>
+                      <strong>{Utils.formatCurrency(w.dailyRate || 0)}</strong>
+                    </div>
+                    <div className="wk-detail-deduction-row deduction">
+                      <span>Daily deduction</span>
+                      <strong>- {Utils.formatCurrency(dailyDeductionAmount)}</strong>
+                    </div>
+                    <div className="wk-detail-deduction-row net">
+                      <span>Effective daily rate</span>
+                      <strong>{Utils.formatCurrency(effectiveRate)}</strong>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="wk-detail-deduction-empty">
+                    No deduction is applied to this worker's salary.
+                  </div>
+                )}
               </div>
             </div>
 
@@ -771,7 +825,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   };
 
   // ============================================
-  // RENDER FORM MODAL
+  // RENDER FORM MODAL (with deduction fields)
   // ============================================
   const renderFormModal = () => (
     <div
@@ -919,6 +973,80 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               </div>
             </div>
 
+            {/* ⭐ DEDUCTION SECTION */}
+            <div className={`wk-form-deduction-block ${formData.deductionEnabled ? 'active' : ''}`}>
+              <div className="wk-form-deduction-header">
+                <div className="wk-form-deduction-header-left">
+                  <div className="wk-form-deduction-icon">
+                    <Percent size={16} />
+                  </div>
+                  <div>
+                    <div className="wk-form-deduction-title">Salary Deduction</div>
+                    <div className="wk-form-deduction-subtitle">
+                      {formData.deductionEnabled
+                        ? 'Deduction will be applied to this worker\'s salary'
+                        : 'No deduction applied'}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className={`wk-deduction-toggle ${formData.deductionEnabled ? 'on' : 'off'}`}
+                  onClick={() => setFormData({ ...formData, deductionEnabled: !formData.deductionEnabled })}
+                  aria-label={formData.deductionEnabled ? 'Disable deduction' : 'Enable deduction'}
+                >
+                  {formData.deductionEnabled ? <ToggleRight size={26} /> : <ToggleLeft size={26} />}
+                </button>
+              </div>
+
+              {formData.deductionEnabled && (
+                <div className="wk-form-deduction-body">
+                  <div className="wk-form-group">
+                    <label><Percent size={12} /> Deduction Percentage (0–100)</label>
+                    <div className="wk-form-percent-input">
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        max="100"
+                        value={formData.deductionPercentage}
+                        onChange={e => setFormData({ ...formData, deductionPercentage: e.target.value })}
+                        placeholder="e.g., 5"
+                        className="wk-form-input"
+                      />
+                      <span className="wk-form-percent-suffix">%</span>
+                    </div>
+                  </div>
+
+                  {/* Live preview */}
+                  {parseFloat(formData.dailyRate) > 0 && parseFloat(formData.deductionPercentage) > 0 && (
+                    <div className="wk-form-deduction-preview">
+                      <div className="wk-preview-row">
+                        <span>Gross daily rate</span>
+                        <strong>{Utils.formatCurrency(parseFloat(formData.dailyRate))}</strong>
+                      </div>
+                      <div className="wk-preview-row deduction">
+                        <span>Deduction ({parseFloat(formData.deductionPercentage).toFixed(2)}%)</span>
+                        <strong>
+                          - {Utils.formatCurrency(
+                            parseFloat(formData.dailyRate) * (parseFloat(formData.deductionPercentage) / 100)
+                          )}
+                        </strong>
+                      </div>
+                      <div className="wk-preview-row net">
+                        <span>Net daily rate</span>
+                        <strong>
+                          {Utils.formatCurrency(
+                            parseFloat(formData.dailyRate) * (1 - parseFloat(formData.deductionPercentage) / 100)
+                          )}
+                        </strong>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
             <div className="wk-form-group">
               <label><FileText size={12} /> Notes</label>
               <textarea
@@ -949,7 +1077,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   );
 
   // ============================================
-  // STAT CARDS
+  // STAT CARDS (now 5 cards including deduction)
   // ============================================
   const statItems = [
     {
@@ -983,6 +1111,19 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
       color: '#f59e0b',
       bg: 'rgba(245, 158, 11, 0.12)',
       accent: 'linear-gradient(90deg, #f59e0b, #fbbf24)'
+    },
+    // ⭐ NEW deduction stat card
+    {
+      id: 'deduction',
+      icon: Percent,
+      label: 'With Deduction',
+      value: stats.deductionCount,
+      meta: stats.deductionCount > 0
+        ? `avg ${stats.avgDeductionPct.toFixed(1)}% deducted`
+        : 'no deductions',
+      color: '#8b5cf6',
+      bg: 'rgba(139, 92, 246, 0.12)',
+      accent: 'linear-gradient(90deg, #8b5cf6, #a78bfa)'
     },
     {
       id: 'inactive',
@@ -1088,20 +1229,10 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
           </div>
 
           <div className="wk-pagination-buttons">
-            <button
-              className="wk-page-btn"
-              onClick={() => goToPage(1)}
-              disabled={currentPage === 1}
-              title="First page"
-            >
+            <button className="wk-page-btn" onClick={() => goToPage(1)} disabled={currentPage === 1} title="First page">
               <ChevronsLeft size={15} />
             </button>
-            <button
-              className="wk-page-btn"
-              onClick={() => goToPage(currentPage - 1)}
-              disabled={currentPage === 1}
-              title="Previous page"
-            >
+            <button className="wk-page-btn" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1} title="Previous page">
               <ChevronLeft size={15} />
             </button>
 
@@ -1115,20 +1246,10 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               </button>
             ))}
 
-            <button
-              className="wk-page-btn"
-              onClick={() => goToPage(currentPage + 1)}
-              disabled={currentPage === totalPages}
-              title="Next page"
-            >
+            <button className="wk-page-btn" onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages} title="Next page">
               <ChevronRight size={15} />
             </button>
-            <button
-              className="wk-page-btn"
-              onClick={() => goToPage(totalPages)}
-              disabled={currentPage === totalPages}
-              title="Last page"
-            >
+            <button className="wk-page-btn" onClick={() => goToPage(totalPages)} disabled={currentPage === totalPages} title="Last page">
               <ChevronsRight size={15} />
             </button>
           </div>
@@ -1164,7 +1285,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
           <div>
             <h2>Workers</h2>
             <p className="wk-header-subtitle">
-              {stats.total} worker{stats.total !== 1 ? 's' : ''} · {stats.active} active · {stats.totalRoles} role{stats.totalRoles !== 1 ? 's' : ''}
+              {stats.total} worker{stats.total !== 1 ? 's' : ''} · {stats.active} active · {stats.totalRoles} role{stats.totalRoles !== 1 ? 's' : ''} · {stats.deductionCount} with deduction
             </p>
           </div>
         </div>
@@ -1184,7 +1305,6 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
             )}
           </div>
 
-          {/* Theme toggle — reads/writes the shared ThemeContext used by TopBar */}
           <button
             type="button"
             className="wk-btn-ghost wk-theme-toggle"
@@ -1235,6 +1355,20 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               </button>
             );
           })}
+        </div>
+
+        {/* ⭐ Deduction filter */}
+        <div className="wk-deduction-filter">
+          <Percent size={13} className="wk-deduction-filter-icon" />
+          <select
+            value={deductionFilter}
+            onChange={(e) => setDeductionFilter(e.target.value)}
+            className="wk-deduction-select"
+          >
+            <option value="all">All Deductions</option>
+            <option value="with">With Deduction ({stats.deductionCount})</option>
+            <option value="without">Without Deduction ({stats.total - stats.deductionCount})</option>
+          </select>
         </div>
 
         {roles.length > 1 && (

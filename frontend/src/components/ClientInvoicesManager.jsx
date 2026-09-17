@@ -1,27 +1,26 @@
-// src/components/InvoicesManagerComponent.jsx
+// src/components/ClientInvoicesManager.jsx
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  Edit, Trash2, FileText, Download, Eye, Printer, X, Save, Plus, Minus,
-  Search, RefreshCw, DollarSign, Calendar, Building2, User, MapPin,
-  CreditCard, Receipt, AlertCircle, CheckCircle, TrendingUp, TrendingDown,
-  LayoutDashboard, Users, Briefcase, Award, Star, Gauge, Timer, Activity,
-  Zap, Shield, Crown, Sparkles, ChevronLeft, ChevronRight, ChevronsLeft,
-  ChevronsRight, Filter, Info, Clock, Send, MoreHorizontal, Layers,
-  Wallet, Percent, CircleDollarSign, BarChart3, PieChart as PieChartIcon,
-  LineChart as LineChartIcon, Flame, Target, Minus as MinusIcon, Crown as CrownIcon,
-  Package, Phone, Tag
+  Edit, Trash2, FileText, Eye, Printer, X, Save, Plus,
+  Search, RefreshCw, DollarSign, Calendar,
+  Receipt, AlertCircle, CheckCircle, TrendingUp, TrendingDown,
+  LayoutDashboard, Info, Clock, Send, Layers,
+  CircleDollarSign, PieChart as PieChartIcon,
+  LineChart as LineChartIcon, Crown as CrownIcon, Minus as MinusIcon,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Sparkles,
+  Building2, User, Phone, MapPin, Package, Tag
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend, ComposedChart,
-  Area, AreaChart, Line
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, ComposedChart, Area
 } from 'recharts';
 import Utils from '../utils/Utils';
-import './InvoicesManager.css';
+import './ClientInvoicesManager.css';
 import letterheadHeader from '../assets/letterhead-header.png';
 import letterheadFooter from '../assets/letterhead-footer.png';
 import background from '../assets/background.png';
+import useClientInvoices from '../hooks/useClientInvoices';
 import useUnits from '../hooks/useUnits';
 import ApiService from '../services/ApiService';
 
@@ -39,13 +38,13 @@ const ModalPortal = ({ children }) => {
 const ChartTooltip = ({ active, payload, label, formatter }) => {
   if (!active || !payload || !payload.length) return null;
   return (
-    <div className="inv-chart-tooltip">
-      {label && <div className="inv-chart-tooltip-label">{label}</div>}
+    <div className="cinv-chart-tooltip">
+      {label && <div className="cinv-chart-tooltip-label">{label}</div>}
       {payload.map((p, i) => (
-        <div key={i} className="inv-chart-tooltip-row">
-          <span className="inv-chart-tooltip-dot" style={{ background: p.color || p.fill || p.payload?.color }} />
-          <span className="inv-chart-tooltip-name">{p.name}</span>
-          <span className="inv-chart-tooltip-val">
+        <div key={i} className="cinv-chart-tooltip-row">
+          <span className="cinv-chart-tooltip-dot" style={{ background: p.color || p.fill || p.payload?.color }} />
+          <span className="cinv-chart-tooltip-name">{p.name}</span>
+          <span className="cinv-chart-tooltip-val">
             {formatter ? formatter(p.value, p.name) : p.value}
           </span>
         </div>
@@ -57,25 +56,31 @@ const ChartTooltip = ({ active, payload, label, formatter }) => {
 // ============================================
 // MAIN COMPONENT
 // ============================================
-const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoice }) => {
-  const [editingId, setEditingId] = useState(null);
-  const [viewingInvoice, setViewingInvoice] = useState(null);
-  const [showForm, setShowForm] = useState(false);
-  const printRef = useRef();
-  const [hoveredCard, setHoveredCard] = useState(null);
-  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
-  const [mounted, setMounted] = useState(false);
-  const [viewMode, setViewMode] = useState('overview');
+const ClientInvoicesManager = ({ showLoader, hideLoader }) => {
+  const {
+    invoices,
+    loading,
+    addInvoice,
+    updateInvoice,
+    deleteInvoice,
+    refresh,
+    getNextNumber,
+  } = useClientInvoices({
+    // Pass loader callbacks so the hook can trigger the global loader
+    onLoaderStart: showLoader,
+    onLoaderEnd: hideLoader,
+  });
 
-  // ============================================
-  // ⭐ CLIENTS + UNITS + ITEMS
-  // ============================================
+  // ... (rest of component unchanged)
+
+  // ---------- Units hook (isolated) ----------
   const { units: allUnits } = useUnits();
 
+  // ---------- Clients list ----------
   const [clients, setClients] = useState([]);
   const [clientsLoading, setClientsLoading] = useState(false);
 
+  // ---------- ⭐ Items list (from Items table) ----------
   const [items, setItems] = useState([]);
   const [itemsLoading, setItemsLoading] = useState(false);
 
@@ -88,7 +93,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
         const list = await ApiService.getClients();
         if (!cancelled) setClients(Array.isArray(list) ? list : []);
       } catch (err) {
-        console.error('[Invoices] failed to load clients:', err);
+        console.error('[ClientInvoices] failed to load clients:', err);
         if (!cancelled) setClients([]);
       } finally {
         if (!cancelled) setClientsLoading(false);
@@ -97,29 +102,37 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     return () => { cancelled = true; };
   }, []);
 
-  // ⭐ Load items once (fallback to data.items if API fails)
+  // ⭐ Load items once
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setItemsLoading(true);
       try {
         const list = await ApiService.getItems();
-        if (!cancelled && Array.isArray(list) && list.length > 0) {
-          setItems(list);
-        } else if (!cancelled) {
-          setItems(data.items || []);
-        }
+        if (!cancelled) setItems(Array.isArray(list) ? list : []);
       } catch (err) {
-        console.error('[Invoices] failed to load items:', err);
-        if (!cancelled) setItems(data.items || []);
+        console.error('[ClientInvoices] failed to load items:', err);
+        if (!cancelled) setItems([]);
       } finally {
         if (!cancelled) setItemsLoading(false);
       }
     })();
     return () => { cancelled = true; };
-  }, [data.items]);
+  }, []);
 
-  // Invoice search/filter states
+  // ============================================
+  // STATE
+  // ============================================
+  const [editingId, setEditingId] = useState(null);
+  const [viewingInvoice, setViewingInvoice] = useState(null);
+  const [showForm, setShowForm] = useState(false);
+  const [hoveredCard, setHoveredCard] = useState(null);
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
+  const [mounted, setMounted] = useState(false);
+  const [viewMode, setViewMode] = useState('overview');
+
+  // Filters
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState('all');
   const [invoiceDateFrom, setInvoiceDateFrom] = useState('');
@@ -128,32 +141,20 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
-  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setMounted(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
-
-  // Generate invoice number
-  const generateInvoiceNumber = () => {
-    const year = new Date().getFullYear();
-    const count = (data.invoices || []).length + 1;
-    return `INV-${year}-${String(count).padStart(4, '0')}`;
-  };
-
+  // Form state
   const [formData, setFormData] = useState({
-    invoiceNumber: generateInvoiceNumber(),
-    clientId: '',                     // ⭐ NEW — selected client ID
-    siteId: '',
+    invoiceNumber: '',
+    clientId: '',
+    siteName: '',
     clientName: '', clientAddress: '', clientCrn: '',
     invoiceDate: Utils.today(),
     dueDate: Utils.addDays(Utils.today(), 30),
-    subtotal: '', vatRate: 0, invoiceType: 'simple', status: 'draft',
+    vatRate: 0, invoiceType: 'simple', status: 'draft',
     items: [], notes: '', subject: '', cpr: '', contactPerson: ''
   });
 
-  // ⭐ Item form now has `itemId` for source tracking
+  // ⭐ Item form now has `itemId` to track selected item from the Items dropdown
   const [itemForm, setItemForm] = useState({
     itemId: '',
     description: '',
@@ -163,11 +164,13 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     total: ''
   });
 
-  // ⭐ Item picker state
+  // ⭐ Item search state for the item picker
   const [itemSearchTerm, setItemSearchTerm] = useState('');
   const [showItemPicker, setShowItemPicker] = useState(false);
 
-  // ⭐ Active units from Units table (fallback to defaults if empty)
+  // ============================================
+  // ⭐ Active units from Units table
+  // ============================================
   const activeUnits = useMemo(
     () => allUnits
       .filter(u => u.isActive)
@@ -194,7 +197,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     ];
   }, [activeUnits]);
 
-  // ⭐ Filtered items for the picker
+  // ⭐ Filtered items list for the picker dropdown
   const filteredItems = useMemo(() => {
     if (!itemSearchTerm.trim()) return items.slice(0, 50);
     const q = itemSearchTerm.trim().toLowerCase();
@@ -207,8 +210,22 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
       .slice(0, 50);
   }, [items, itemSearchTerm]);
 
+  useEffect(() => {
+    const id = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(id);
+  }, []);
+
+  // Fetch next invoice number when opening form (new invoice only)
+  useEffect(() => {
+    if (showForm && !editingId && !formData.invoiceNumber) {
+      getNextNumber().then(num => {
+        if (num) setFormData(prev => ({ ...prev, invoiceNumber: num }));
+      });
+    }
+  }, [showForm, editingId, formData.invoiceNumber, getNextNumber]);
+
   // ============================================
-  // ⭐ CLIENT PICKER HANDLER
+  // CLIENT PICKER HANDLER
   // ============================================
   const handleClientSelect = (clientId) => {
     if (!clientId) {
@@ -250,6 +267,11 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
         c.cprNumber ||
         prev.cpr ||
         '',
+      siteName:
+        c.siteName ||
+        c.site ||
+        prev.siteName ||
+        '',
     }));
   };
 
@@ -265,6 +287,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     const it = items.find(x => x.id === itemId);
     if (!it) return;
 
+    // Determine the unit: prefer the item's unit if it exists in our units list
     let unitName = it.unit || '';
     if (unitName) {
       const match = commonUnits.find(u => u.name === unitName);
@@ -273,6 +296,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
       unitName = commonUnits[0]?.name || 'SQ.M';
     }
 
+    // Determine price: try several field names
     const price =
       it.unitPrice ??
       it.price ??
@@ -294,14 +318,14 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   // ============================================
   // STATS
   // ============================================
-  const totalInvoices = (data.invoices || []).length;
-  const paidInvoices = (data.invoices || []).filter(i => i.status === 'paid').length;
-  const overdueInvoices = (data.invoices || []).filter(i => i.status === 'overdue').length;
-  const draftInvoices = (data.invoices || []).filter(i => i.status === 'draft').length;
-  const sentInvoices = (data.invoices || []).filter(i => i.status === 'sent').length;
-  const totalAmount = (data.invoices || []).reduce((sum, i) => sum + (i.totalAmount || 0), 0);
-  const paidAmount = (data.invoices || []).filter(i => i.status === 'paid').reduce((s, i) => s + (i.totalAmount || 0), 0);
-  const overdueAmount = (data.invoices || []).filter(i => i.status === 'overdue').reduce((s, i) => s + (i.totalAmount || 0), 0);
+  const totalInvoices = invoices.length;
+  const paidInvoices = invoices.filter(i => i.status === 'paid').length;
+  const overdueInvoices = invoices.filter(i => i.status === 'overdue').length;
+  const draftInvoices = invoices.filter(i => i.status === 'draft').length;
+  const sentInvoices = invoices.filter(i => i.status === 'sent').length;
+  const totalAmount = invoices.reduce((sum, i) => sum + (i.totalAmount || 0), 0);
+  const paidAmount = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + (i.totalAmount || 0), 0);
+  const overdueAmount = invoices.filter(i => i.status === 'overdue').reduce((s, i) => s + (i.totalAmount || 0), 0);
   const avgInvoice = totalInvoices > 0 ? totalAmount / totalInvoices : 0;
 
   const kpiItems = [
@@ -352,7 +376,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     amount: { title: 'Total Amount', details: [
       { label: 'Total', value: Utils.formatCurrency(totalAmount) },
       { label: 'Average', value: Utils.formatCurrency(avgInvoice) },
-      { label: 'Max', value: totalInvoices > 0 ? Utils.formatCurrency(Math.max(...(data.invoices || []).map(i => i.totalAmount || 0))) : '0' },
+      { label: 'Max', value: totalInvoices > 0 ? Utils.formatCurrency(Math.max(...invoices.map(i => i.totalAmount || 0))) : '0' },
       { label: 'Paid', value: Utils.formatCurrency(paidAmount) }
     ]}
   };
@@ -364,22 +388,22 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   const handleCardLeave = () => setHoveredCard(null);
 
   // ============================================
-  // FILTERED + PAGINATION
+  // FILTERS + PAGINATION
   // ============================================
   const filteredInvoices = useMemo(() => {
-    let invoices = data.invoices || [];
+    let list = invoices;
     if (invoiceSearchTerm) {
       const search = invoiceSearchTerm.toLowerCase();
-      invoices = invoices.filter(inv =>
+      list = list.filter(inv =>
         (inv.invoiceNumber && inv.invoiceNumber.toLowerCase().includes(search)) ||
         (inv.clientName && inv.clientName.toLowerCase().includes(search))
       );
     }
-    if (invoiceStatusFilter !== 'all') invoices = invoices.filter(inv => inv.status === invoiceStatusFilter);
-    if (invoiceDateFrom) invoices = invoices.filter(inv => inv.invoiceDate >= invoiceDateFrom);
-    if (invoiceDateTo) invoices = invoices.filter(inv => inv.invoiceDate <= invoiceDateTo);
-    return invoices.sort((a, b) => new Date(b.invoiceDate) - new Date(a.invoiceDate));
-  }, [data.invoices, invoiceSearchTerm, invoiceStatusFilter, invoiceDateFrom, invoiceDateTo]);
+    if (invoiceStatusFilter !== 'all') list = list.filter(inv => inv.status === invoiceStatusFilter);
+    if (invoiceDateFrom) list = list.filter(inv => inv.invoiceDate >= invoiceDateFrom);
+    if (invoiceDateTo) list = list.filter(inv => inv.invoiceDate <= invoiceDateTo);
+    return list.sort((a, b) => new Date(b.invoiceDate) - new Date(a.invoiceDate));
+  }, [invoices, invoiceSearchTerm, invoiceStatusFilter, invoiceDateFrom, invoiceDateTo]);
 
   const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / itemsPerPage));
   const paginatedInvoices = useMemo(() => {
@@ -387,7 +411,9 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     return filteredInvoices.slice(start, start + itemsPerPage);
   }, [filteredInvoices, currentPage, itemsPerPage]);
 
-  useEffect(() => { setCurrentPage(1); }, [invoiceSearchTerm, invoiceStatusFilter, invoiceDateFrom, invoiceDateTo, itemsPerPage, viewMode]);
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [invoiceSearchTerm, invoiceStatusFilter, invoiceDateFrom, invoiceDateTo, itemsPerPage, viewMode]);
 
   const goToPage = (p) => setCurrentPage(Math.max(1, Math.min(p, totalPages)));
   const getPageNumbers = () => {
@@ -398,12 +424,6 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     for (let i = start; i <= end; i++) pages.push(i);
     return pages;
   };
-
-  useEffect(() => {
-    if (!editingId) {
-      setFormData(prev => ({ ...prev, invoiceNumber: generateInvoiceNumber() }));
-    }
-  }, [data.invoices, editingId]);
 
   // ============================================
   // CHART DATA
@@ -422,9 +442,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
       const label = d.toLocaleString('en-US', { month: 'short' });
-      const monthInvoices = (data.invoices || []).filter(inv =>
-        inv.invoiceDate && inv.invoiceDate.startsWith(key)
-      );
+      const monthInvoices = invoices.filter(inv => inv.invoiceDate && inv.invoiceDate.startsWith(key));
       const total = monthInvoices.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
       const paid = monthInvoices
         .filter(inv => inv.status === 'paid')
@@ -432,11 +450,11 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
       months.push({ label, total, paid, count: monthInvoices.length });
     }
     return months;
-  }, [data.invoices]);
+  }, [invoices]);
 
   const topClientsData = useMemo(() => {
     const map = {};
-    (data.invoices || []).forEach(inv => {
+    invoices.forEach(inv => {
       const key = inv.clientName || 'Unknown';
       if (!map[key]) map[key] = { name: key, total: 0, count: 0 };
       map[key].total += (inv.totalAmount || 0);
@@ -451,11 +469,11 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
         value: c.total,
         count: c.count
       }));
-  }, [data.invoices]);
+  }, [invoices]);
 
   const statusAmountData = useMemo(() => {
     const map = { paid: 0, sent: 0, draft: 0, overdue: 0 };
-    (data.invoices || []).forEach(inv => {
+    invoices.forEach(inv => {
       if (map[inv.status] !== undefined) map[inv.status] += (inv.totalAmount || 0);
     });
     return [
@@ -464,7 +482,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
       { name: 'Draft', value: map.draft, color: '#f59e0b' },
       { name: 'Overdue', value: map.overdue, color: '#ef4444' }
     ].filter(d => d.value > 0);
-  }, [data.invoices]);
+  }, [invoices]);
 
   // ============================================
   // ITEM HELPERS
@@ -475,9 +493,11 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     const unitPrice = parseFloat(itemForm.unitPrice) || 0;
     const newItem = {
       id: Date.now().toString(),
-      itemId: itemForm.itemId || null,       // ⭐ source item
+      itemId: itemForm.itemId || null,           // ⭐ track source item
       description: itemForm.description,
-      quantity, unit: itemForm.unit || 'SQ.M', unitPrice,
+      quantity,
+      unit: itemForm.unit || 'SQ.M',
+      unitPrice,
       total: quantity * unitPrice
     };
     setFormData(prev => ({ ...prev, items: [...prev.items, newItem] }));
@@ -506,36 +526,38 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   // ============================================
   // CRUD
   // ============================================
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.clientName) { alert('Client name is required'); return; }
     const invoice = {
       ...formData,
-      invoiceNumber: formData.invoiceNumber || generateInvoiceNumber(),
       subtotal: calculateTotals.subtotal,
       vatAmount: calculateTotals.vatAmount,
       totalAmount: calculateTotals.total,
       amountInWords: Utils.convertAmountToWords(calculateTotals.total)
     };
-    if (editingId) {
-      updateInvoice(editingId, invoice);
-      setEditingId(null);
-    } else {
-      addInvoice(invoice);
+    try {
+      if (editingId) {
+        await updateInvoice(editingId, invoice);
+      } else {
+        await addInvoice(invoice);
+      }
+      resetForm();
+      setShowForm(false);
+    } catch (err) {
+      alert('Failed to save invoice: ' + (err.message || 'Unknown error'));
     }
-    resetForm();
-    setShowForm(false);
   };
 
   const resetForm = () => {
     setFormData({
-      invoiceNumber: generateInvoiceNumber(),
+      invoiceNumber: '',
       clientId: '',
-      siteId: '',
+      siteName: '',
       clientName: '', clientAddress: '', clientCrn: '',
       invoiceDate: Utils.today(),
       dueDate: Utils.addDays(Utils.today(), 30),
-      subtotal: '', vatRate: 0, invoiceType: 'simple', status: 'draft',
+      vatRate: 0, invoiceType: 'simple', status: 'draft',
       items: [], notes: '', subject: '', cpr: '', contactPerson: ''
     });
     setEditingId(null);
@@ -559,13 +581,12 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     setFormData({
       invoiceNumber: invoice.invoiceNumber || '',
       clientId: invoice.clientId || matched?.id || '',
-      siteId: invoice.siteId || '',
+      siteName: invoice.siteName || '',
       clientName: invoice.clientName || '',
       clientAddress: invoice.clientAddress || '',
       clientCrn: invoice.clientCrn || '',
       invoiceDate: invoice.invoiceDate || Utils.today(),
       dueDate: invoice.dueDate || Utils.addDays(Utils.today(), 30),
-      subtotal: invoice.subtotal || '',
       vatRate: invoice.vatRate || 0,
       invoiceType: invoice.invoiceType || 'simple',
       status: invoice.status || 'draft',
@@ -588,7 +609,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     const c = config[status] || config.draft;
     const Icon = c.icon;
     return (
-      <span className={`inv-status ${status}`}>
+      <span className={`cinv-status ${status}`}>
         <Icon size={11} /> {c.label}
       </span>
     );
@@ -598,104 +619,99 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   // PRINT TEMPLATE
   // ============================================
   const generateInvoiceHTML = (invoice) => {
-    const companyPhone = data.companyPhone || '+973 37099957';
     const items = invoice.items || [];
     const subtotal = items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0);
     const vatAmount = invoice.invoiceType === 'vat' ? subtotal * (parseFloat(invoice.vatRate) / 100) : 0;
     const total = subtotal + vatAmount;
-    const primary = '#1a3c6e';
-    const secondary = '#c9a84c';
-    const light = '#e8edf3';
-    const muted = '#6a6a8a';
-    const border = '#d4d9e0';
-    const text = '#1a1a2e';
+    const primary = '#1a3c6e', secondary = '#c9a84c', light = '#e8edf3',
+      muted = '#6a6a8a', border = '#d4d9e0', text = '#1a1a2e';
 
     return `
 <!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Invoice ${invoice.invoiceNumber}</title>
+  <title>Client Invoice ${invoice.invoiceNumber}</title>
   <style>
     * { margin: 0 !important; padding: 0 !important; border: 0 !important; box-sizing: border-box !important; }
     html, body { width: 100% !important; height: 100% !important; background: #ffffff !important;
       font-family: 'Times New Roman', Arial, serif !important; color: ${text} !important; }
-    .inv-container { width: 100% !important; display: flex !important; flex-direction: column !important;
+    .cinv-print-container { width: 100% !important; display: flex !important; flex-direction: column !important;
       min-height: 100vh !important; position: relative !important; background: #ffffff !important; }
-    .inv-background { position: fixed !important; inset: 0 !important; z-index: 0 !important;
+    .cinv-print-background { position: fixed !important; inset: 0 !important; z-index: 0 !important;
       pointer-events: none !important; display: flex !important; justify-content: center !important;
       align-items: center !important; opacity: 0.08 !important; }
-    .inv-background img { width: 70% !important; max-width: 600px !important; height: auto !important; }
-    .inv-content-wrapper { position: relative !important; z-index: 1 !important; display: flex !important;
+    .cinv-print-background img { width: 70% !important; max-width: 600px !important; height: auto !important; }
+    .cinv-print-content-wrapper { position: relative !important; z-index: 1 !important; display: flex !important;
       flex-direction: column !important; min-height: 100vh !important; width: 100% !important; }
-    .inv-header-img img, .inv-footer-img img { width: 100% !important; height: auto !important; display: block !important; }
-    .inv-content-section { flex: 1 !important; padding: 8px 30px 12px !important; }
-    .inv-top { display: flex !important; justify-content: space-between !important; align-items: flex-start !important;
+    .cinv-print-header-img img, .cinv-print-footer-img img { width: 100% !important; height: auto !important; display: block !important; }
+    .cinv-print-content-section { flex: 1 !important; padding: 8px 30px 12px !important; }
+    .cinv-print-top { display: flex !important; justify-content: space-between !important; align-items: flex-start !important;
       margin: 0 0 12px 0 !important; padding: 10px 14px !important; border-bottom: 2px solid ${primary} !important; }
-    .inv-bill-to h3 { font-size: 12px !important; font-weight: 700 !important; color: ${primary} !important;
+    .cinv-print-bill-to h3 { font-size: 12px !important; font-weight: 700 !important; color: ${primary} !important;
       margin: 0 0 4px 0 !important; text-transform: uppercase !important; letter-spacing: 1px !important; }
-    .inv-client-name { font-weight: 700 !important; font-size: 15px !important; color: ${primary} !important; margin: 0 0 3px 0 !important; }
-    .inv-client-detail { font-size: 12px !important; color: ${muted} !important; margin: 1px 0 !important; line-height: 1.4 !important; }
-    .inv-right { text-align: right !important; }
-    .inv-title { font-size: 24px !important; font-weight: 800 !important; color: ${primary} !important; letter-spacing: 2px !important; }
-    .inv-number { font-size: 14px !important; color: ${muted} !important; font-weight: 600 !important; }
-    .inv-detail { font-size: 12px !important; color: ${muted} !important; margin: 1px 0 !important; }
-    .inv-detail strong { color: ${primary} !important; }
-    .inv-status { display: inline-block !important; padding: 3px 14px !important; border-radius: 20px !important;
+    .cinv-print-client-name { font-weight: 700 !important; font-size: 15px !important; color: ${primary} !important; margin: 0 0 3px 0 !important; }
+    .cinv-print-client-detail { font-size: 12px !important; color: ${muted} !important; margin: 1px 0 !important; line-height: 1.4 !important; }
+    .cinv-print-right { text-align: right !important; }
+    .cinv-print-title { font-size: 24px !important; font-weight: 800 !important; color: ${primary} !important; letter-spacing: 2px !important; }
+    .cinv-print-number { font-size: 14px !important; color: ${muted} !important; font-weight: 600 !important; }
+    .cinv-print-detail { font-size: 12px !important; color: ${muted} !important; margin: 1px 0 !important; }
+    .cinv-print-detail strong { color: ${primary} !important; }
+    .cinv-print-status { display: inline-block !important; padding: 3px 14px !important; border-radius: 20px !important;
       font-size: 10px !important; font-weight: 700 !important; text-transform: uppercase !important; margin-top: 3px !important; color: #ffffff !important; }
-    .inv-status-paid { background: #22c55e !important; }
-    .inv-status-draft { background: #f59e0b !important; }
-    .inv-status-sent { background: #3b82f6 !important; }
-    .inv-status-overdue { background: #ef4444 !important; }
-    .inv-subject { margin: 8px 0 10px 0 !important; padding: 6px 0 !important; font-size: 13px !important;
+    .cinv-print-status-paid { background: #22c55e !important; }
+    .cinv-print-status-draft { background: #f59e0b !important; }
+    .cinv-print-status-sent { background: #3b82f6 !important; }
+    .cinv-print-status-overdue { background: #ef4444 !important; }
+    .cinv-print-subject { margin: 8px 0 10px 0 !important; padding: 6px 0 !important; font-size: 13px !important;
       font-weight: 600 !important; color: ${primary} !important; border-bottom: 1px solid ${border} !important; }
-    .inv-salutation { margin: 6px 0 10px 0 !important; font-size: 13px !important; color: ${text} !important; }
-    .inv-table { width: 100% !important; border-collapse: collapse !important; margin: 10px 0 !important; font-size: 12px !important; background: #ffffff !important; }
-    .inv-table thead { background: ${primary} !important; }
-    .inv-table th { color: #ffffff !important; padding: 8px 10px !important; text-align: center !important;
+    .cinv-print-salutation { margin: 6px 0 10px 0 !important; font-size: 13px !important; color: ${text} !important; }
+    .cinv-print-table { width: 100% !important; border-collapse: collapse !important; margin: 10px 0 !important; font-size: 12px !important; background: #ffffff !important; }
+    .cinv-print-table thead { background: ${primary} !important; }
+    .cinv-print-table th { color: #ffffff !important; padding: 8px 10px !important; text-align: center !important;
       font-size: 11px !important; text-transform: uppercase !important; font-weight: 700 !important; letter-spacing: 0.5px !important; }
-    .inv-table td { padding: 6px 10px !important; border-bottom: 1px solid ${border} !important; text-align: center !important; }
-    .inv-totals { margin: 10px 0 10px auto !important; padding: 10px 16px !important; background: ${light} !important;
+    .cinv-print-table td { padding: 6px 10px !important; border-bottom: 1px solid ${border} !important; text-align: center !important; }
+    .cinv-print-totals { margin: 10px 0 10px auto !important; padding: 10px 16px !important; background: ${light} !important;
       max-width: 320px !important; border: 2px solid ${secondary} !important; }
-    .inv-total-row { display: flex !important; justify-content: space-between !important; padding: 3px 0 !important; font-size: 13px !important; }
-    .inv-grand { border-top: 2px solid ${secondary} !important; margin-top: 4px !important; padding-top: 8px !important;
+    .cinv-print-total-row { display: flex !important; justify-content: space-between !important; padding: 3px 0 !important; font-size: 13px !important; }
+    .cinv-print-grand { border-top: 2px solid ${secondary} !important; margin-top: 4px !important; padding-top: 8px !important;
       font-size: 18px !important; font-weight: 800 !important; }
-    .inv-words { font-size: 11px !important; color: ${muted} !important; font-style: italic !important;
+    .cinv-print-words { font-size: 11px !important; color: ${muted} !important; font-style: italic !important;
       border-top: 1px solid ${border} !important; margin-top: 6px !important; padding-top: 6px !important; text-align: center !important; }
-    .inv-notes { padding: 8px 14px !important; border: 1px solid ${border} !important; border-left: 4px solid ${secondary} !important;
+    .cinv-print-notes { padding: 8px 14px !important; border: 1px solid ${border} !important; border-left: 4px solid ${secondary} !important;
       margin: 10px 0 !important; font-size: 12px !important; color: ${muted} !important; background: #fafafa !important; }
-    .inv-signature { margin-top: 20px !important; padding-top: 10px !important; border-top: 1px solid ${border} !important; text-align: right !important; }
+    .cinv-print-signature { margin-top: 20px !important; padding-top: 10px !important; border-top: 1px solid ${border} !important; text-align: right !important; }
     @media print { @page { margin: 0 !important; size: A4 !important; }
       html, body { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; } }
   </style>
 </head>
 <body>
-  <div class="inv-container">
-    <div class="inv-background"><img src='${background}' alt="bg" /></div>
-    <div class="inv-content-wrapper">
-      <div class="inv-header-img"><img src="${letterheadHeader}" alt="Header" /></div>
-      <div class="inv-content-section">
-        <div class="inv-top">
-          <div class="inv-bill-to">
+  <div class="cinv-print-container">
+    <div class="cinv-print-background"><img src='${background}' alt="bg" /></div>
+    <div class="cinv-print-content-wrapper">
+      <div class="cinv-print-header-img"><img src="${letterheadHeader}" alt="Header" /></div>
+      <div class="cinv-print-content-section">
+        <div class="cinv-print-top">
+          <div class="cinv-print-bill-to">
             <h3>To,</h3>
-            <div class="inv-client-name">${invoice.clientName || ''}</div>
-            ${invoice.clientAddress ? `<div class="inv-client-detail">${invoice.clientAddress}</div>` : ''}
-            ${invoice.clientCrn ? `<div class="inv-client-detail">CRN: ${invoice.clientCrn}</div>` : ''}
+            <div class="cinv-print-client-name">${invoice.clientName || ''}</div>
+            ${invoice.clientAddress ? `<div class="cinv-print-client-detail">${invoice.clientAddress}</div>` : ''}
+            ${invoice.clientCrn ? `<div class="cinv-print-client-detail">CRN: ${invoice.clientCrn}</div>` : ''}
           </div>
-          <div class="inv-right">
-            <div class="inv-title">INVOICE</div>
-            <div class="inv-number">#${invoice.invoiceNumber || 'DRAFT'}</div>
-            <div class="inv-detail"><strong>Date:</strong> ${Utils.formatDate(invoice.invoiceDate)}</div>
-            <div class="inv-detail"><strong>Due:</strong> ${Utils.formatDate(invoice.dueDate)}</div>
-            <div class="inv-status inv-status-${invoice.status || 'draft'}">${(invoice.status || 'draft').toUpperCase()}</div>
+          <div class="cinv-print-right">
+            <div class="cinv-print-title">CLIENT INVOICE</div>
+            <div class="cinv-print-number">#${invoice.invoiceNumber || 'DRAFT'}</div>
+            <div class="cinv-print-detail"><strong>Date:</strong> ${Utils.formatDate(invoice.invoiceDate)}</div>
+            <div class="cinv-print-detail"><strong>Due:</strong> ${Utils.formatDate(invoice.dueDate)}</div>
+            <div class="cinv-print-status cinv-print-status-${invoice.status || 'draft'}">${(invoice.status || 'draft').toUpperCase()}</div>
           </div>
         </div>
-        ${invoice.subject ? `<div class="inv-subject">Subject: ${invoice.subject}</div>` : ''}
-        <div class="inv-salutation">Dear Sir,</div>
-        <div class="inv-salutation" style="margin-top:-6px !important;font-weight:400 !important;">
+        ${invoice.subject ? `<div class="cinv-print-subject">Subject: ${invoice.subject}</div>` : ''}
+        <div class="cinv-print-salutation">Dear Sir,</div>
+        <div class="cinv-print-salutation" style="margin-top:-6px !important;font-weight:400 !important;">
           We are pleased to submit our Invoice for the below mentioned work as follows.
         </div>
-        <table class="inv-table">
+        <table class="cinv-print-table">
           <thead><tr><th>Sr. No.</th><th>Description</th><th>Qty</th><th>Unit</th><th>Rate</th><th>Total</th></tr></thead>
           <tbody>
             ${items.length === 0
@@ -711,23 +727,22 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
               </tr>`).join('')}
           </tbody>
         </table>
-        <div class="inv-totals">
-          <div class="inv-total-row"><span>Subtotal:</span><span>${Utils.formatCurrencyShort(subtotal)}</span></div>
-          ${invoice.invoiceType === 'vat' ? `<div class="inv-total-row"><span>VAT (${invoice.vatRate || 10}%):</span><span>${Utils.formatCurrencyShort(vatAmount)}</span></div>` : ''}
-          <div class="inv-total-row inv-grand"><span>TOTAL:</span><span>${Utils.formatCurrencyShort(total)}</span></div>
-          <div class="inv-words">${Utils.convertAmountToWords(total)}</div>
+        <div class="cinv-print-totals">
+          <div class="cinv-print-total-row"><span>Subtotal:</span><span>${Utils.formatCurrencyShort(subtotal)}</span></div>
+          ${invoice.invoiceType === 'vat' ? `<div class="cinv-print-total-row"><span>VAT (${invoice.vatRate || 10}%):</span><span>${Utils.formatCurrencyShort(vatAmount)}</span></div>` : ''}
+          <div class="cinv-print-total-row cinv-print-grand"><span>TOTAL:</span><span>${Utils.formatCurrencyShort(total)}</span></div>
+          <div class="cinv-print-words">${Utils.convertAmountToWords(total)}</div>
         </div>
-        ${invoice.notes ? `<div class="inv-notes"><strong>Note:</strong> ${invoice.notes}</div>` : ''}
-        <div class="inv-signature">
+        ${invoice.notes ? `<div class="cinv-print-notes"><strong>Note:</strong> ${invoice.notes}</div>` : ''}
+        <div class="cinv-print-signature">
           <div style="font-weight:700;font-size:14px;color:${primary};">Yours faithfully,</div>
           <div style="margin-top:10px;">
-            <div style="font-weight:700;font-size:14px;color:${primary};">${invoice.contactPerson || 'Riffat Afza'}</div>
-            <div style="font-size:12px;color:${muted};">${invoice.cpr || 'CPR No. 570713994'}</div>
-            <div style="font-size:12px;color:${muted};">Mob. ${companyPhone}</div>
+            <div style="font-weight:700;font-size:14px;color:${primary};">${invoice.contactPerson || ''}</div>
+            <div style="font-size:12px;color:${muted};">${invoice.cpr || ''}</div>
           </div>
         </div>
       </div>
-      <div class="inv-footer-img"><img src="${letterheadFooter}" alt="Footer" /></div>
+      <div class="cinv-print-footer-img"><img src="${letterheadFooter}" alt="Footer" /></div>
     </div>
   </div>
   <script>window.onload = function(){ window.print(); };<\/script>
@@ -747,25 +762,25 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   // OVERVIEW TAB
   // ============================================
   const renderOverviewTab = () => (
-    <div className="inv-view">
-      <div className="inv-kpi-grid">
+    <div className="cinv-view">
+      <div className="cinv-kpi-grid">
         {kpiItems.map(item => {
           const Icon = item.icon;
           return (
-            <div key={item.id} className="inv-kpi-card"
+            <div key={item.id} className="cinv-kpi-card"
               onMouseEnter={(e) => handleCardHover(item.id, e)}
               onMouseLeave={handleCardLeave}
               onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}>
-              <div className="inv-kpi-accent" style={{ background: item.accent }} />
-              <div className="inv-kpi-icon" style={{ background: `${item.color}1f`, color: item.color }}>
+              <div className="cinv-kpi-accent" style={{ background: item.accent }} />
+              <div className="cinv-kpi-icon" style={{ background: `${item.color}1f`, color: item.color }}>
                 <Icon size={20} />
               </div>
-              <div className="inv-kpi-content">
-                <span className="inv-kpi-label">{item.label}</span>
-                <span className="inv-kpi-value">{item.value}</span>
-                <span className="inv-kpi-meta">{item.meta}</span>
+              <div className="cinv-kpi-content">
+                <span className="cinv-kpi-label">{item.label}</span>
+                <span className="cinv-kpi-value">{item.value}</span>
+                <span className="cinv-kpi-meta">{item.meta}</span>
               </div>
-              <div className={`inv-kpi-trend ${item.trend}`}>
+              <div className={`cinv-kpi-trend ${item.trend}`}>
                 {item.trend === 'up' && <TrendingUp size={15} />}
                 {item.trend === 'down' && <TrendingDown size={15} />}
                 {item.trend === 'flat' && <MinusIcon size={15} />}
@@ -776,35 +791,35 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
       </div>
 
       {hoveredCard && cardDetails[hoveredCard] && (
-        <div className="inv-hover-tooltip"
+        <div className="cinv-hover-tooltip"
           style={{ position: 'fixed', left: tooltipPosition.x, top: tooltipPosition.y, zIndex: 9999 }}>
-          <div className="inv-tooltip-header"><strong>{cardDetails[hoveredCard].title}</strong></div>
-          <div className="inv-tooltip-body">
+          <div className="cinv-tooltip-header"><strong>{cardDetails[hoveredCard].title}</strong></div>
+          <div className="cinv-tooltip-body">
             {cardDetails[hoveredCard].details.map((d, i) => (
-              <div key={i} className="inv-tooltip-row">
-                <span className="inv-tooltip-label">{d.label}</span>
-                <span className="inv-tooltip-value">{d.value}</span>
+              <div key={i} className="cinv-tooltip-row">
+                <span className="cinv-tooltip-label">{d.label}</span>
+                <span className="cinv-tooltip-value">{d.value}</span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      <div className="inv-grid-1-1">
-        <div className="inv-card-panel">
-          <div className="inv-card-panel-header">
-            <div className="inv-card-panel-title">
-              <span className="inv-card-panel-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
+      <div className="cinv-grid-1-1">
+        <div className="cinv-card-panel">
+          <div className="cinv-card-panel-header">
+            <div className="cinv-card-panel-title">
+              <span className="cinv-card-panel-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
                 <PieChartIcon size={16} />
               </span>
               <div>
-                <h4>Invoices by Status</h4>
-                <span>{totalInvoices} total invoices</span>
+                <h4>Client Invoices by Status</h4>
+                <span>{totalInvoices} total</span>
               </div>
             </div>
           </div>
           {statusChartData.length > 0 ? (
-            <div className="inv-donut-wrap">
+            <div className="cinv-donut-wrap">
               <ResponsiveContainer width="100%" height={230}>
                 <PieChart>
                   <Pie data={statusChartData} dataKey="value" nameKey="name"
@@ -814,23 +829,23 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                   <ReTooltip content={<ChartTooltip />} />
                 </PieChart>
               </ResponsiveContainer>
-              <div className="inv-donut-legend">
+              <div className="cinv-donut-legend">
                 {statusChartData.map((d, i) => (
-                  <div key={i} className="inv-donut-item">
-                    <span className="inv-donut-dot" style={{ background: d.color }} />
-                    <span className="inv-donut-name">{d.name}</span>
-                    <span className="inv-donut-val">{d.value}</span>
+                  <div key={i} className="cinv-donut-item">
+                    <span className="cinv-donut-dot" style={{ background: d.color }} />
+                    <span className="cinv-donut-name">{d.name}</span>
+                    <span className="cinv-donut-val">{d.value}</span>
                   </div>
                 ))}
               </div>
             </div>
-          ) : <div className="inv-empty-mini">No invoices</div>}
+          ) : <div className="cinv-empty-mini">No invoices</div>}
         </div>
 
-        <div className="inv-card-panel">
-          <div className="inv-card-panel-header">
-            <div className="inv-card-panel-title">
-              <span className="inv-card-panel-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
+        <div className="cinv-card-panel">
+          <div className="cinv-card-panel-header">
+            <div className="cinv-card-panel-title">
+              <span className="cinv-card-panel-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
                 <CircleDollarSign size={16} />
               </span>
               <div>
@@ -840,7 +855,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
             </div>
           </div>
           {statusAmountData.length > 0 ? (
-            <div className="inv-donut-wrap">
+            <div className="cinv-donut-wrap">
               <ResponsiveContainer width="100%" height={230}>
                 <PieChart>
                   <Pie data={statusAmountData} dataKey="value" nameKey="name"
@@ -850,32 +865,32 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                   <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />} />
                 </PieChart>
               </ResponsiveContainer>
-              <div className="inv-donut-legend">
+              <div className="cinv-donut-legend">
                 {statusAmountData.map((d, i) => (
-                  <div key={i} className="inv-donut-item">
-                    <span className="inv-donut-dot" style={{ background: d.color }} />
-                    <span className="inv-donut-name">{d.name}</span>
-                    <span className="inv-donut-val">{Utils.formatCurrencyShort(d.value)}</span>
+                  <div key={i} className="cinv-donut-item">
+                    <span className="cinv-donut-dot" style={{ background: d.color }} />
+                    <span className="cinv-donut-name">{d.name}</span>
+                    <span className="cinv-donut-val">{Utils.formatCurrencyShort(d.value)}</span>
                   </div>
                 ))}
               </div>
             </div>
-          ) : <div className="inv-empty-mini">No amounts</div>}
+          ) : <div className="cinv-empty-mini">No amounts</div>}
         </div>
       </div>
 
-      <div className="inv-card-panel">
-        <div className="inv-card-panel-header">
-          <div className="inv-card-panel-title">
-            <span className="inv-card-panel-icon" style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}>
+      <div className="cinv-card-panel">
+        <div className="cinv-card-panel-header">
+          <div className="cinv-card-panel-title">
+            <span className="cinv-card-panel-icon" style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}>
               <LineChartIcon size={16} />
             </span>
             <div>
-              <h4>12-Month Invoice Trend</h4>
+              <h4>12-Month Client Invoice Trend</h4>
               <span>Total vs Paid by month</span>
             </div>
           </div>
-          <div className="inv-legend">
+          <div className="cinv-legend">
             <span><i style={{ background: '#10b981' }} />Paid</span>
             <span><i style={{ background: '#3b82f6' }} />Total</span>
           </div>
@@ -883,11 +898,11 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
         <ResponsiveContainer width="100%" height={300}>
           <ComposedChart data={monthlyTrendData}>
             <defs>
-              <linearGradient id="invTotalGrad" x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id="cinvTotalGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.35} />
                 <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
               </linearGradient>
-              <linearGradient id="invPaidGrad" x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id="cinvPaidGrad" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0%" stopColor="#10b981" stopOpacity={0.35} />
                 <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
               </linearGradient>
@@ -898,18 +913,18 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
               tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
             <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />} />
             <Area type="monotone" dataKey="total" stroke="#3b82f6" strokeWidth={2.5}
-              fill="url(#invTotalGrad)" name="Total" />
+              fill="url(#cinvTotalGrad)" name="Total" />
             <Area type="monotone" dataKey="paid" stroke="#10b981" strokeWidth={2.5}
-              fill="url(#invPaidGrad)" name="Paid" />
+              fill="url(#cinvPaidGrad)" name="Paid" />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
 
       {topClientsData.length > 0 && (
-        <div className="inv-card-panel">
-          <div className="inv-card-panel-header">
-            <div className="inv-card-panel-title">
-              <span className="inv-card-panel-icon" style={{ background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>
+        <div className="cinv-card-panel">
+          <div className="cinv-card-panel-header">
+            <div className="cinv-card-panel-title">
+              <span className="cinv-card-panel-icon" style={{ background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>
                 <CrownIcon size={16} />
               </span>
               <div>
@@ -921,7 +936,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={topClientsData} layout="vertical" margin={{ left: 10, right: 20 }}>
               <defs>
-                <linearGradient id="invTopClients" x1="0" y1="0" x2="1" y2="0">
+                <linearGradient id="cinvTopClients" x1="0" y1="0" x2="1" y2="0">
                   <stop offset="0%" stopColor="#8b5cf6" stopOpacity={0.7} />
                   <stop offset="100%" stopColor="#8b5cf6" stopOpacity={1} />
                 </linearGradient>
@@ -933,7 +948,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                 tickLine={false} axisLine={false} width={120} />
               <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />}
                 cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
-              <Bar dataKey="value" name="Amount" fill="url(#invTopClients)" radius={[0, 8, 8, 0]} barSize={22} />
+              <Bar dataKey="value" name="Amount" fill="url(#cinvTopClients)" radius={[0, 8, 8, 0]} barSize={22} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -945,24 +960,24 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   // INVOICES TAB
   // ============================================
   const renderInvoicesTab = () => (
-    <div className="inv-view">
-      <div className="inv-filters">
-        <div className="inv-search-box">
-          <Search size={15} className="inv-search-icon" />
+    <div className="cinv-view">
+      <div className="cinv-filters">
+        <div className="cinv-search-box">
+          <Search size={15} className="cinv-search-icon" />
           <input type="text" value={invoiceSearchTerm}
             onChange={e => setInvoiceSearchTerm(e.target.value)}
             placeholder="Search by invoice # or client..."
-            className="inv-search-input" />
+            className="cinv-search-input" />
           {invoiceSearchTerm && (
-            <button className="inv-clear-search" onClick={() => setInvoiceSearchTerm('')}>
+            <button className="cinv-clear-search" onClick={() => setInvoiceSearchTerm('')}>
               <X size={13} />
             </button>
           )}
         </div>
-        <div className="inv-filter-group">
+        <div className="cinv-filter-group">
           <select value={invoiceStatusFilter}
             onChange={e => setInvoiceStatusFilter(e.target.value)}
-            className="inv-filter-select">
+            className="cinv-filter-select">
             <option value="all">All Status</option>
             <option value="draft">Draft</option>
             <option value="sent">Sent</option>
@@ -971,84 +986,84 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
           </select>
           <input type="date" value={invoiceDateFrom}
             onChange={e => setInvoiceDateFrom(e.target.value)}
-            className="inv-filter-date" />
+            className="cinv-filter-date" />
           <input type="date" value={invoiceDateTo}
             onChange={e => setInvoiceDateTo(e.target.value)}
-            className="inv-filter-date" />
+            className="cinv-filter-date" />
         </div>
         {(invoiceSearchTerm || invoiceStatusFilter !== 'all' || invoiceDateFrom || invoiceDateTo) && (
-          <button className="inv-btn-clear" onClick={() => {
+          <button className="cinv-btn-clear" onClick={() => {
             setInvoiceSearchTerm(''); setInvoiceStatusFilter('all');
             setInvoiceDateFrom(''); setInvoiceDateTo('');
           }}>
             <X size={13} /> Clear
           </button>
         )}
-        <span className="inv-result-count">
+        <span className="cinv-result-count">
           Showing {filteredInvoices.length} of {totalInvoices}
         </span>
-        <button className="inv-btn-primary" onClick={openAddModal}>
-          <Plus size={14} /> New Invoice
+        <button className="cinv-btn-primary" onClick={openAddModal}>
+          <Plus size={14} /> New Client Invoice
         </button>
       </div>
 
       {filteredInvoices.length === 0 ? (
-        <div className="inv-empty">
-          <div className="inv-empty-icon"><FileText size={40} /></div>
-          <h3>No Invoices Found</h3>
-          <p>Try adjusting your filters or create a new invoice.</p>
-          <button className="inv-btn-primary" onClick={openAddModal}>
-            <Plus size={14} /> Create Invoice
+        <div className="cinv-empty">
+          <div className="cinv-empty-icon"><FileText size={40} /></div>
+          <h3>No Client Invoices Found</h3>
+          <p>Try adjusting your filters or create a new client invoice.</p>
+          <button className="cinv-btn-primary" onClick={openAddModal}>
+            <Plus size={14} /> Create Client Invoice
           </button>
         </div>
       ) : (
         <>
-          <div className="inv-cards-grid">
+          <div className="cinv-cards-grid">
             {paginatedInvoices.map((invoice, index) => (
-              <div key={invoice.id} className="inv-card"
+              <div key={invoice.id} className="cinv-card"
                 style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}>
-                <div className="inv-card-accent" style={{
+                <div className="cinv-card-accent" style={{
                   background: invoice.status === 'paid' ? 'linear-gradient(90deg,#10b981,#34d399)'
                     : invoice.status === 'overdue' ? 'linear-gradient(90deg,#ef4444,#f87171)'
                     : invoice.status === 'sent' ? 'linear-gradient(90deg,#8b5cf6,#a78bfa)'
                     : 'linear-gradient(90deg,#f59e0b,#fbbf24)'
                 }} />
-                <div className="inv-card-header">
-                  <div className="inv-card-number">
+                <div className="cinv-card-header">
+                  <div className="cinv-card-number">
                     <FileText size={12} />
                     {invoice.invoiceNumber || 'Draft'}
                   </div>
                   {getStatusBadge(invoice.status)}
                 </div>
-                <div className="inv-card-body">
-                  <div className="inv-card-client">{invoice.clientName}</div>
-                  <div className="inv-card-amount">
+                <div className="cinv-card-body">
+                  <div className="cinv-card-client">{invoice.clientName}</div>
+                  <div className="cinv-card-amount">
                     {Utils.formatCurrency(invoice.totalAmount || invoice.subtotal || 0)}
                   </div>
-                  <div className="inv-card-meta">
-                    <span className="inv-card-meta-item">
+                  <div className="cinv-card-meta">
+                    <span className="cinv-card-meta-item">
                       <Calendar size={11} /> {Utils.formatDate(invoice.invoiceDate)}
                     </span>
-                    <span className="inv-card-meta-item">
+                    <span className="cinv-card-meta-item">
                       <Receipt size={11} /> {invoice.items?.length || 0} items
                     </span>
                   </div>
                 </div>
-                <div className="inv-card-footer">
-                  <div className="inv-card-actions">
-                    <button className="inv-icon-btn inv-icon-view" title="View"
+                <div className="cinv-card-footer">
+                  <div className="cinv-card-actions">
+                    <button className="cinv-icon-btn cinv-icon-view" title="View"
                       onClick={() => setViewingInvoice(invoice)}>
                       <Eye size={14} />
                     </button>
-                    <button className="inv-icon-btn inv-icon-print" title="Print"
+                    <button className="cinv-icon-btn cinv-icon-print" title="Print"
                       onClick={() => handlePrintInvoice(invoice)}>
                       <Printer size={14} />
                     </button>
-                    <button className="inv-icon-btn inv-icon-edit" title="Edit"
+                    <button className="cinv-icon-btn cinv-icon-edit" title="Edit"
                       onClick={() => openEditModal(invoice)}>
                       <Edit size={14} />
                     </button>
-                    <button className="inv-icon-btn inv-icon-danger" title="Delete"
+                    <button className="cinv-icon-btn cinv-icon-danger" title="Delete"
                       onClick={() => setShowDeleteConfirm(invoice.id)}>
                       <Trash2 size={14} />
                     </button>
@@ -1058,36 +1073,36 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
             ))}
           </div>
 
-          <div className="inv-pagination">
-            <div className="inv-pagination-info">
+          <div className="cinv-pagination">
+            <div className="cinv-pagination-info">
               Showing <strong>{((currentPage - 1) * itemsPerPage) + 1}</strong>–
               <strong>{Math.min(currentPage * itemsPerPage, filteredInvoices.length)}</strong> of{' '}
               <strong>{filteredInvoices.length}</strong>
             </div>
-            <div className="inv-pagination-controls">
-              <div className="inv-pagination-items">
+            <div className="cinv-pagination-controls">
+              <div className="cinv-pagination-items">
                 <span>Show:</span>
                 <select value={itemsPerPage}
                   onChange={(e) => { setItemsPerPage(Number(e.target.value)); setCurrentPage(1); }}
-                  className="inv-pagination-select">
+                  className="cinv-pagination-select">
                   {[6, 9, 10, 12, 18, 24, 48].map(n => <option key={n} value={n}>{n}</option>)}
                 </select>
               </div>
-              <div className="inv-pagination-buttons">
-                <button className="inv-page-btn" onClick={() => goToPage(1)} disabled={currentPage === 1}>
+              <div className="cinv-pagination-buttons">
+                <button className="cinv-page-btn" onClick={() => goToPage(1)} disabled={currentPage === 1}>
                   <ChevronsLeft size={13} />
                 </button>
-                <button className="inv-page-btn" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1}>
+                <button className="cinv-page-btn" onClick={() => goToPage(currentPage - 1)} disabled={currentPage === 1}>
                   <ChevronLeft size={13} />
                 </button>
                 {getPageNumbers().map(p => (
-                  <button key={p} className={`inv-page-btn ${p === currentPage ? 'active' : ''}`}
+                  <button key={p} className={`cinv-page-btn ${p === currentPage ? 'active' : ''}`}
                     onClick={() => goToPage(p)}>{p}</button>
                 ))}
-                <button className="inv-page-btn" onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}>
+                <button className="cinv-page-btn" onClick={() => goToPage(currentPage + 1)} disabled={currentPage === totalPages}>
                   <ChevronRight size={13} />
                 </button>
-                <button className="inv-page-btn" onClick={() => goToPage(totalPages)} disabled={currentPage === totalPages}>
+                <button className="cinv-page-btn" onClick={() => goToPage(totalPages)} disabled={currentPage === totalPages}>
                   <ChevronsRight size={13} />
                 </button>
               </div>
@@ -1099,7 +1114,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   );
 
   // ============================================
-  // VIEW INVOICE MODAL
+  // VIEW MODAL
   // ============================================
   const ViewInvoiceModal = ({ invoice, onClose }) => {
     if (!invoice) return null;
@@ -1109,45 +1124,45 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     const total = subtotal + vatAmount;
     return (
       <ModalPortal>
-        <div className="inv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-          <div className="inv-modal" onClick={e => e.stopPropagation()}>
-            <div className="inv-modal-header" style={{ background: 'linear-gradient(135deg, #0b1a12, #1f3a2c)' }}>
-              <div className="inv-modal-header-left">
-                <div className="inv-modal-icon"><FileText size={18} /></div>
+        <div className="cinv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+          <div className="cinv-modal" onClick={e => e.stopPropagation()}>
+            <div className="cinv-modal-header" style={{ background: 'linear-gradient(135deg, #0b1a12, #1f3a2c)' }}>
+              <div className="cinv-modal-header-left">
+                <div className="cinv-modal-icon"><FileText size={18} /></div>
                 <div>
-                  <h3>Invoice Preview</h3>
-                  <p className="inv-modal-sub">#{invoice.invoiceNumber} · {invoice.clientName}</p>
+                  <h3>Client Invoice Preview</h3>
+                  <p className="cinv-modal-sub">#{invoice.invoiceNumber} · {invoice.clientName}</p>
                 </div>
               </div>
-              <div className="inv-modal-actions">
-                <button className="inv-btn-ghost-light" onClick={() => handlePrintInvoice(invoice)}>
+              <div className="cinv-modal-actions">
+                <button className="cinv-btn-ghost-light" onClick={() => handlePrintInvoice(invoice)}>
                   <Printer size={14} /> Print
                 </button>
-                <button className="inv-modal-close" onClick={onClose}>
+                <button className="cinv-modal-close" onClick={onClose}>
                   <X size={18} />
                 </button>
               </div>
             </div>
-            <div className="inv-modal-body inv-preview-body">
-              <img src={letterheadHeader} alt="Header" className="inv-preview-letterhead" />
-              <div className="inv-preview-content">
-                <div className="inv-preview-top">
+            <div className="cinv-modal-body cinv-preview-body">
+              <img src={letterheadHeader} alt="Header" className="cinv-preview-letterhead" />
+              <div className="cinv-preview-content">
+                <div className="cinv-preview-top">
                   <div>
-                    <div className="inv-preview-label">To,</div>
-                    <div className="inv-preview-client">{invoice.clientName}</div>
-                    {invoice.clientAddress && <div className="inv-preview-detail">{invoice.clientAddress}</div>}
-                    {invoice.clientCrn && <div className="inv-preview-detail">CRN: {invoice.clientCrn}</div>}
+                    <div className="cinv-preview-label">To,</div>
+                    <div className="cinv-preview-client">{invoice.clientName}</div>
+                    {invoice.clientAddress && <div className="cinv-preview-detail">{invoice.clientAddress}</div>}
+                    {invoice.clientCrn && <div className="cinv-preview-detail">CRN: {invoice.clientCrn}</div>}
                   </div>
-                  <div className="inv-preview-right">
-                    <div className="inv-preview-title">INVOICE</div>
-                    <div className="inv-preview-number">#{invoice.invoiceNumber}</div>
-                    <div className="inv-preview-detail"><strong>Date:</strong> {Utils.formatDate(invoice.invoiceDate)}</div>
-                    <div className="inv-preview-detail"><strong>Due:</strong> {Utils.formatDate(invoice.dueDate)}</div>
-                    <div className="inv-preview-status">{getStatusBadge(invoice.status)}</div>
+                  <div className="cinv-preview-right">
+                    <div className="cinv-preview-title">CLIENT INVOICE</div>
+                    <div className="cinv-preview-number">#{invoice.invoiceNumber}</div>
+                    <div className="cinv-preview-detail"><strong>Date:</strong> {Utils.formatDate(invoice.invoiceDate)}</div>
+                    <div className="cinv-preview-detail"><strong>Due:</strong> {Utils.formatDate(invoice.dueDate)}</div>
+                    <div className="cinv-preview-status">{getStatusBadge(invoice.status)}</div>
                   </div>
                 </div>
-                {invoice.subject && <div className="inv-preview-subject">Subject: {invoice.subject}</div>}
-                <table className="inv-preview-table">
+                {invoice.subject && <div className="cinv-preview-subject">Subject: {invoice.subject}</div>}
+                <table className="cinv-preview-table">
                   <thead>
                     <tr>
                       <th>Sr.</th><th>Description</th><th>Qty</th><th>Unit</th><th>Rate</th><th>Total</th>
@@ -1168,17 +1183,17 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                     ))}
                   </tbody>
                 </table>
-                <div className="inv-preview-totals">
-                  <div className="inv-preview-total-row"><span>Subtotal:</span><span>{Utils.formatCurrencyShort(subtotal)}</span></div>
+                <div className="cinv-preview-totals">
+                  <div className="cinv-preview-total-row"><span>Subtotal:</span><span>{Utils.formatCurrencyShort(subtotal)}</span></div>
                   {invoice.invoiceType === 'vat' && (
-                    <div className="inv-preview-total-row"><span>VAT ({invoice.vatRate}%):</span><span>{Utils.formatCurrencyShort(vatAmount)}</span></div>
+                    <div className="cinv-preview-total-row"><span>VAT ({invoice.vatRate}%):</span><span>{Utils.formatCurrencyShort(vatAmount)}</span></div>
                   )}
-                  <div className="inv-preview-grand"><span>TOTAL:</span><span>{Utils.formatCurrencyShort(total)}</span></div>
-                  <div className="inv-preview-words">{Utils.convertAmountToWords(total)}</div>
+                  <div className="cinv-preview-grand"><span>TOTAL:</span><span>{Utils.formatCurrencyShort(total)}</span></div>
+                  <div className="cinv-preview-words">{Utils.convertAmountToWords(total)}</div>
                 </div>
-                {invoice.notes && <div className="inv-preview-notes"><strong>Note:</strong> {invoice.notes}</div>}
+                {invoice.notes && <div className="cinv-preview-notes"><strong>Note:</strong> {invoice.notes}</div>}
               </div>
-              <img src={letterheadFooter} alt="Footer" className="inv-preview-letterhead" />
+              <img src={letterheadFooter} alt="Footer" className="cinv-preview-letterhead" />
             </div>
           </div>
         </div>
@@ -1187,7 +1202,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   };
 
   // ============================================
-  // FORM MODAL — ⭐ UPDATED with client + item + unit dropdowns
+  // FORM MODAL
   // ============================================
   const renderFormModal = () => {
     const selectedClient = formData.clientId
@@ -1200,47 +1215,47 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
 
     return (
       <ModalPortal>
-        <div className="inv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowForm(false); resetForm(); } }}>
-          <div className="inv-modal inv-modal-lg" onClick={e => e.stopPropagation()}>
-            <div className="inv-modal-header" style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
-              <div className="inv-modal-header-left">
-                <div className="inv-modal-icon">
+        <div className="cinv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowForm(false); resetForm(); } }}>
+          <div className="cinv-modal cinv-modal-lg" onClick={e => e.stopPropagation()}>
+            <div className="cinv-modal-header" style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+              <div className="cinv-modal-header-left">
+                <div className="cinv-modal-icon">
                   {editingId ? <Edit size={18} /> : <Plus size={18} />}
                 </div>
                 <div>
-                  <h3>{editingId ? 'Edit Invoice' : 'New Invoice'}</h3>
-                  <p className="inv-modal-sub">{editingId ? 'Update invoice details' : 'Create a new invoice'}</p>
+                  <h3>{editingId ? 'Edit Client Invoice' : 'New Client Invoice'}</h3>
+                  <p className="cinv-modal-sub">{editingId ? 'Update invoice details' : 'Create a new client invoice'}</p>
                 </div>
               </div>
-              <button className="inv-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
+              <button className="cinv-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
                 <X size={18} />
               </button>
             </div>
-            <div className="inv-modal-body">
+            <div className="cinv-modal-body">
               <form onSubmit={handleSubmit}>
-                <div className="inv-form-row">
-                  <div className="inv-form-group">
+                <div className="cinv-form-row">
+                  <div className="cinv-form-group">
                     <label>Invoice No</label>
                     <input type="text" value={formData.invoiceNumber} disabled
-                      className="inv-form-input inv-disabled" />
-                    <small className="inv-hint">Auto-generated</small>
+                      className="cinv-form-input cinv-disabled" />
+                    <small className="cinv-hint">Auto-generated</small>
                   </div>
 
                   {/* ⭐ CLIENT DROPDOWN */}
-                  <div className="inv-form-group">
-                    <label><Building2 size={12} /> Client <span className="inv-required">*</span></label>
+                  <div className="cinv-form-group">
+                    <label><Building2 size={12} /> Client <span className="cinv-required">*</span></label>
                     <select
                       value={formData.clientId || ''}
                       required
                       onChange={e => handleClientSelect(e.target.value)}
-                      className="inv-form-select"
+                      className="cinv-form-select"
                       disabled={clientsLoading}
                     >
                       <option value="">
                         {clientsLoading
                           ? 'Loading clients…'
                           : clients.length === 0
-                            ? 'No clients — type manually below'
+                            ? 'No clients — enter manually below'
                             : 'Select a client…'}
                       </option>
                       {clients.map(c => (
@@ -1250,8 +1265,13 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                       ))}
                     </select>
                     {clients.length > 0 && (
-                      <small className="inv-hint">
+                      <small className="cinv-hint">
                         <Info size={10} /> Selecting a client auto-fills address, CRN, contact &amp; CPR
+                      </small>
+                    )}
+                    {clients.length === 0 && !clientsLoading && (
+                      <small className="cinv-hint" style={{ color: '#b45309' }}>
+                        <AlertCircle size={10} /> No clients found — type client details manually below
                       </small>
                     )}
                   </div>
@@ -1259,13 +1279,13 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
 
                 {/* ⭐ Client preview */}
                 {selectedClient && (
-                  <div className="inv-client-preview">
-                    <div className="inv-client-preview-avatar">
+                  <div className="cinv-client-preview">
+                    <div className="cinv-client-preview-avatar">
                       {(selectedClient.name || '?').charAt(0).toUpperCase()}
                     </div>
-                    <div className="inv-client-preview-info">
-                      <div className="inv-client-preview-name">{selectedClient.name}</div>
-                      <div className="inv-client-preview-meta">
+                    <div className="cinv-client-preview-info">
+                      <div className="cinv-client-preview-name">{selectedClient.name}</div>
+                      <div className="cinv-client-preview-meta">
                         {selectedClient.crn && (
                           <span><Building2 size={10} /> CRN: {selectedClient.crn}</span>
                         )}
@@ -1283,9 +1303,9 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                   </div>
                 )}
 
-                <div className="inv-form-row">
-                  <div className="inv-form-group">
-                    <label>Client Name <span className="inv-required">*</span></label>
+                <div className="cinv-form-row">
+                  <div className="cinv-form-group">
+                    <label>Client Name <span className="cinv-required">*</span></label>
                     <input
                       type="text"
                       value={formData.clientName}
@@ -1293,10 +1313,10 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                       readOnly={!!formData.clientId}
                       onChange={e => setFormData({ ...formData, clientName: e.target.value })}
                       placeholder={formData.clientId ? 'Auto-filled from selected client' : 'Type client name'}
-                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`}
+                      className={`cinv-form-input ${formData.clientId ? 'cinv-disabled' : ''}`}
                     />
                   </div>
-                  <div className="inv-form-group">
+                  <div className="cinv-form-group">
                     <label>Client Address</label>
                     <input
                       type="text"
@@ -1304,13 +1324,13 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                       readOnly={!!formData.clientId}
                       onChange={e => setFormData({ ...formData, clientAddress: e.target.value })}
                       placeholder="Client address"
-                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`}
+                      className={`cinv-form-input ${formData.clientId ? 'cinv-disabled' : ''}`}
                     />
                   </div>
                 </div>
 
-                <div className="inv-form-row">
-                  <div className="inv-form-group">
+                <div className="cinv-form-row">
+                  <div className="cinv-form-group">
                     <label>Client CRN</label>
                     <input
                       type="text"
@@ -1318,10 +1338,10 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                       readOnly={!!formData.clientId}
                       onChange={e => setFormData({ ...formData, clientCrn: e.target.value })}
                       placeholder="Commercial Registration #"
-                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`}
+                      className={`cinv-form-input ${formData.clientId ? 'cinv-disabled' : ''}`}
                     />
                   </div>
-                  <div className="inv-form-group">
+                  <div className="cinv-form-group">
                     <label>Contact Person</label>
                     <input
                       type="text"
@@ -1329,13 +1349,13 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                       readOnly={!!formData.clientId}
                       onChange={e => setFormData({ ...formData, contactPerson: e.target.value })}
                       placeholder="Contact person name"
-                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`}
+                      className={`cinv-form-input ${formData.clientId ? 'cinv-disabled' : ''}`}
                     />
                   </div>
                 </div>
 
-                <div className="inv-form-row">
-                  <div className="inv-form-group">
+                <div className="cinv-form-row">
+                  <div className="cinv-form-group">
                     <label>CPR No.</label>
                     <input
                       type="text"
@@ -1343,66 +1363,69 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                       readOnly={!!formData.clientId}
                       onChange={e => setFormData({ ...formData, cpr: e.target.value })}
                       placeholder="CPR Number"
-                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`}
+                      className={`cinv-form-input ${formData.clientId ? 'cinv-disabled' : ''}`}
                     />
                   </div>
-                  <div className="inv-form-group">
-                    <label>Site</label>
-                    <select value={formData.siteId}
-                      onChange={e => setFormData({ ...formData, siteId: e.target.value })}
-                      className="inv-form-select">
-                      <option value="">Select Site</option>
-                      {(data.sites || []).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
+                  <div className="cinv-form-group">
+                    <label>Site Name (free text)</label>
+                    <input type="text" value={formData.siteName}
+                      onChange={e => setFormData({ ...formData, siteName: e.target.value })}
+                      placeholder="Site name"
+                      className="cinv-form-input" />
                   </div>
                 </div>
 
-                <div className="inv-form-row">
-                  <div className="inv-form-group">
+                <div className="cinv-form-row">
+                  <div className="cinv-form-group">
                     <label>Status</label>
                     <select value={formData.status}
                       onChange={e => setFormData({ ...formData, status: e.target.value })}
-                      className="inv-form-select">
+                      className="cinv-form-select">
                       <option value="draft">Draft</option>
                       <option value="sent">Sent</option>
                       <option value="paid">Paid</option>
                       <option value="overdue">Overdue</option>
                     </select>
                   </div>
-                  <div className="inv-form-group">
+                  <div className="cinv-form-group">
                     <label>Invoice Type</label>
                     <select value={formData.invoiceType}
-                      onChange={e => setFormData({ ...formData, invoiceType: e.target.value, vatRate: e.target.value === 'simple' ? 0 : formData.vatRate || 10 })}
-                      className="inv-form-select">
+                      onChange={e => setFormData({
+                        ...formData,
+                        invoiceType: e.target.value,
+                        vatRate: e.target.value === 'simple' ? 0 : (formData.vatRate || 10)
+                      })}
+                      className="cinv-form-select">
                       <option value="simple">Simple (No VAT)</option>
                       <option value="vat">With VAT</option>
                     </select>
                   </div>
                 </div>
 
-                <div className="inv-form-row">
-                  <div className="inv-form-group">
+                <div className="cinv-form-row">
+                  <div className="cinv-form-group">
                     <label>Invoice Date</label>
                     <input type="date" value={formData.invoiceDate}
                       onChange={e => setFormData({ ...formData, invoiceDate: e.target.value })}
-                      className="inv-form-input" />
+                      className="cinv-form-input" />
                   </div>
-                  <div className="inv-form-group">
+                  <div className="cinv-form-group">
                     <label>Due Date</label>
                     <input type="date" value={formData.dueDate}
                       onChange={e => setFormData({ ...formData, dueDate: e.target.value })}
-                      className="inv-form-input" />
+                      className="cinv-form-input" />
                   </div>
                 </div>
 
-                <div className="inv-form-row">
-                  <div className="inv-form-group">
+                <div className="cinv-form-row">
+                  <div className="cinv-form-group">
                     <label>Subject</label>
                     <input type="text" value={formData.subject}
                       onChange={e => setFormData({ ...formData, subject: e.target.value })}
-                      placeholder="Subject of invoice" className="inv-form-input" />
+                      placeholder="Subject of invoice"
+                      className="cinv-form-input" />
                   </div>
-                  <div className="inv-form-group">
+                  <div className="cinv-form-group">
                     <label>VAT Rate (%)</label>
                     <input
                       type="number"
@@ -1410,27 +1433,33 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                       value={formData.vatRate}
                       disabled={formData.invoiceType !== 'vat'}
                       onChange={e => setFormData({ ...formData, vatRate: parseFloat(e.target.value) || 0 })}
-                      className={`inv-form-input ${formData.invoiceType !== 'vat' ? 'inv-disabled' : ''}`}
+                      className={`cinv-form-input ${formData.invoiceType !== 'vat' ? 'cinv-disabled' : ''}`}
                     />
                   </div>
                 </div>
 
-                <div className="inv-items-section">
-                  <div className="inv-section-title">
+                <div className="cinv-items-section">
+                  <div className="cinv-section-title">
                     <Receipt size={14} /> Invoice Items
                   </div>
 
-                  <div className="inv-item-form-grid">
-                    {/* ⭐ ITEM PICKER */}
-                    <div className="inv-form-group" style={{ position: 'relative' }}>
-                      <label><Package size={11} /> Item</label>
-                      <div className="inv-item-combobox">
+                  {/* ⭐ ITEM PICKER + item form */}
+                  <div className="cinv-item-form-grid">
+                    {/* Item picker (combobox-style) */}
+                    <div className="cinv-form-group" style={{ position: 'relative' }}>
+                      <label><Package size={11} /> Item (from Items table)</label>
+                      <div className="cinv-item-combobox">
                         <input
                           type="text"
-                          value={selectedItem ? selectedItem.name : itemForm.description}
+                          value={
+                            selectedItem
+                              ? selectedItem.name
+                              : itemForm.description
+                          }
                           onChange={e => {
                             setItemSearchTerm(e.target.value);
                             setShowItemPicker(true);
+                            // If user is typing, clear itemId and use as free text
                             setItemForm(prev => ({
                               ...prev,
                               itemId: '',
@@ -1446,13 +1475,13 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                                 ? 'No items — type description'
                                 : 'Search item name or SKU…'
                           }
-                          className="inv-form-input"
+                          className="cinv-form-input"
                           disabled={itemsLoading}
                         />
                         {selectedItem && (
                           <button
                             type="button"
-                            className="inv-clear-item"
+                            className="cinv-clear-item"
                             onClick={() => {
                               setItemForm(prev => ({ ...prev, itemId: '', description: '' }));
                               setItemSearchTerm('');
@@ -1465,22 +1494,22 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                       </div>
 
                       {showItemPicker && !itemsLoading && items.length > 0 && (
-                        <div className="inv-item-picker">
-                          <div className="inv-item-picker-header">
+                        <div className="cinv-item-picker">
+                          <div className="cinv-item-picker-header">
                             <Package size={12} /> {filteredItems.length} item{filteredItems.length !== 1 ? 's' : ''}
                             {itemSearchTerm && ` matching "${itemSearchTerm}"`}
                           </div>
                           {filteredItems.length === 0 ? (
-                            <div className="inv-item-picker-empty">
+                            <div className="cinv-item-picker-empty">
                               No items match — you can type a custom description instead
                             </div>
                           ) : (
-                            <div className="inv-item-picker-list">
+                            <div className="cinv-item-picker-list">
                               {filteredItems.map(it => (
                                 <button
                                   key={it.id}
                                   type="button"
-                                  className="inv-item-picker-row"
+                                  className="cinv-item-picker-row"
                                   onMouseDown={(e) => {
                                     e.preventDefault();
                                     handleItemSelect(it.id);
@@ -1488,15 +1517,15 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                                     setItemSearchTerm('');
                                   }}
                                 >
-                                  <div className="inv-item-picker-info">
-                                    <div className="inv-item-picker-name">{it.name}</div>
-                                    <div className="inv-item-picker-meta">
-                                      {it.sku && <span className="inv-item-picker-sku">SKU: {it.sku}</span>}
+                                  <div className="cinv-item-picker-info">
+                                    <div className="cinv-item-picker-name">{it.name}</div>
+                                    <div className="cinv-item-picker-meta">
+                                      {it.sku && <span className="cinv-item-picker-sku">SKU: {it.sku}</span>}
                                       {it.category && <span><Tag size={9} /> {it.category}</span>}
                                       {it.unit && <span>Unit: {it.unit}</span>}
                                     </div>
                                   </div>
-                                  <div className="inv-item-picker-price">
+                                  <div className="cinv-item-picker-price">
                                     {Utils.formatCurrency(it.unitPrice || it.price || 0)}
                                   </div>
                                 </button>
@@ -1507,17 +1536,18 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                       )}
                     </div>
 
-                    <div className="inv-form-group">
+                    <div className="cinv-form-group">
                       <label>Qty</label>
                       <input type="number" step="0.01" value={itemForm.quantity}
                         onChange={e => setItemForm({ ...itemForm, quantity: e.target.value })}
-                        placeholder="Qty" className="inv-form-input" />
+                        placeholder="Qty"
+                        className="cinv-form-input" />
                     </div>
-                    <div className="inv-form-group">
+                    <div className="cinv-form-group">
                       <label>Unit</label>
                       <select value={itemForm.unit}
                         onChange={e => setItemForm({ ...itemForm, unit: e.target.value })}
-                        className="inv-form-select">
+                        className="cinv-form-select">
                         {commonUnits.map(u => (
                           <option key={u.id || u.name} value={u.name}>
                             {u.name}{u.symbol ? ` (${u.symbol})` : ''}
@@ -1525,86 +1555,88 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                         ))}
                       </select>
                     </div>
-                    <div className="inv-form-group">
+                    <div className="cinv-form-group">
                       <label>Unit Price</label>
                       <input type="number" step="0.001" value={itemForm.unitPrice}
                         onChange={e => setItemForm({ ...itemForm, unitPrice: e.target.value })}
-                        placeholder="Price" className="inv-form-input" />
+                        placeholder="Price"
+                        className="cinv-form-input" />
                     </div>
-                    <button type="button" className="inv-btn-add-item" onClick={handleItemAdd}>
+                    <button type="button" className="cinv-btn-add-item" onClick={handleItemAdd}>
                       <Plus size={14} /> Add
                     </button>
                   </div>
 
                   {/* ⭐ Selected item preview */}
                   {selectedItem && (
-                    <div className="inv-item-preview">
+                    <div className="cinv-item-preview">
                       <Package size={12} />
-                      <span className="inv-item-preview-name">{selectedItem.name}</span>
+                      <span className="cinv-item-preview-name">{selectedItem.name}</span>
                       {selectedItem.sku && (
-                        <span className="inv-item-preview-sku">SKU: {selectedItem.sku}</span>
+                        <span className="cinv-item-preview-sku">SKU: {selectedItem.sku}</span>
                       )}
                       {selectedItem.category && (
-                        <span className="inv-item-preview-cat">{selectedItem.category}</span>
+                        <span className="cinv-item-preview-cat">{selectedItem.category}</span>
                       )}
                     </div>
                   )}
 
-                  <div className="inv-items-list">
+                  <div className="cinv-items-list">
                     {formData.items.map(item => (
-                      <div key={item.id} className="inv-item-row">
-                        <span className="inv-item-desc">
+                      <div key={item.id} className="cinv-item-row">
+                        <span className="cinv-item-desc">
                           {item.itemId && <Package size={10} style={{ marginRight: 4, verticalAlign: 'middle', opacity: 0.5 }} />}
                           {item.description}
                         </span>
-                        <span className="inv-item-qty">{item.quantity} × {item.unit}</span>
-                        <span className="inv-item-price">{Utils.formatCurrencyShort(item.unitPrice)}</span>
-                        <span className="inv-item-total">{Utils.formatCurrency(item.total)}</span>
-                        <button type="button" className="inv-btn-remove"
+                        <span className="cinv-item-qty">{item.quantity} × {item.unit}</span>
+                        <span className="cinv-item-price">{Utils.formatCurrencyShort(item.unitPrice)}</span>
+                        <span className="cinv-item-total">{Utils.formatCurrency(item.total)}</span>
+                        <button type="button" className="cinv-btn-remove"
                           onClick={() => handleItemRemove(item.id)}>
                           <X size={12} />
                         </button>
                       </div>
                     ))}
                     {formData.items.length === 0 && (
-                      <div className="inv-empty-items">No items added yet</div>
+                      <div className="cinv-empty-items">No items added yet</div>
                     )}
                   </div>
                 </div>
 
-                <div className="inv-totals-section">
-                  <div className="inv-total-row-calc">
+                <div className="cinv-totals-section">
+                  <div className="cinv-total-row-calc">
                     <span>Subtotal:</span>
                     <span>{Utils.formatCurrency(calculateTotals.subtotal)}</span>
                   </div>
                   {formData.invoiceType === 'vat' && (
-                    <div className="inv-total-row-calc">
+                    <div className="cinv-total-row-calc">
                       <span>VAT ({formData.vatRate}%):</span>
                       <span>{Utils.formatCurrency(calculateTotals.vatAmount)}</span>
                     </div>
                   )}
-                  <div className="inv-total-row-calc inv-grand-total">
+                  <div className="cinv-total-row-calc cinv-grand-total">
                     <span>Total:</span>
                     <span>{Utils.formatCurrency(calculateTotals.total)}</span>
                   </div>
-                  <div className="inv-amount-words">
+                  <div className="cinv-amount-words">
                     {Utils.convertAmountToWords(calculateTotals.total)}
                   </div>
                 </div>
 
-                <div className="inv-form-group">
+                <div className="cinv-form-group">
                   <label>Notes</label>
                   <textarea value={formData.notes}
                     onChange={e => setFormData({ ...formData, notes: e.target.value })}
                     placeholder="Invoice notes (will appear on invoice)"
-                    rows="2" className="inv-form-textarea" />
+                    rows="2"
+                    className="cinv-form-textarea" />
                 </div>
 
-                <div className="inv-form-actions">
-                  <button type="submit" className="inv-btn-primary" disabled={loading}>
+                <div className="cinv-form-actions">
+                  <button type="submit" className="cinv-btn-primary">
                     <Save size={14} /> {editingId ? 'Update Invoice' : 'Create Invoice'}
                   </button>
-                  <button type="button" className="inv-btn-secondary"
+                  <button type="button" className="cinv-btn-secondary"
                     onClick={() => { setShowForm(false); resetForm(); }}>
                     Cancel
                   </button>
@@ -1624,33 +1656,33 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     if (!showDeleteConfirm) return null;
     return (
       <ModalPortal>
-        <div className="inv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowDeleteConfirm(null); }}>
-          <div className="inv-modal inv-delete-modal" onClick={e => e.stopPropagation()}>
-            <div className="inv-modal-header" style={{ background: 'linear-gradient(135deg, #ef4444, #b91c1c)' }}>
-              <div className="inv-modal-header-left">
-                <div className="inv-modal-icon"><Trash2 size={18} /></div>
+        <div className="cinv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowDeleteConfirm(null); }}>
+          <div className="cinv-modal cinv-delete-modal" onClick={e => e.stopPropagation()}>
+            <div className="cinv-modal-header" style={{ background: 'linear-gradient(135deg, #ef4444, #b91c1c)' }}>
+              <div className="cinv-modal-header-left">
+                <div className="cinv-modal-icon"><Trash2 size={18} /></div>
                 <div>
-                  <h3>Delete Invoice</h3>
-                  <p className="inv-modal-sub">This action cannot be undone</p>
+                  <h3>Delete Client Invoice</h3>
+                  <p className="cinv-modal-sub">This action cannot be undone</p>
                 </div>
               </div>
-              <button className="inv-modal-close" onClick={() => setShowDeleteConfirm(null)}>
+              <button className="cinv-modal-close" onClick={() => setShowDeleteConfirm(null)}>
                 <X size={18} />
               </button>
             </div>
-            <div className="inv-modal-body">
-              <div className="inv-delete-content">
-                <div className="inv-delete-icon"><AlertCircle size={40} /></div>
-                <p className="inv-delete-text">Are you sure you want to delete this invoice?</p>
-                <p className="inv-delete-subtext">This action cannot be undone.</p>
-                <div className="inv-delete-actions">
-                  <button className="inv-btn-danger" onClick={() => {
-                    deleteInvoice(showDeleteConfirm);
+            <div className="cinv-modal-body">
+              <div className="cinv-delete-content">
+                <div className="cinv-delete-icon"><AlertCircle size={40} /></div>
+                <p className="cinv-delete-text">Are you sure you want to delete this client invoice?</p>
+                <p className="cinv-delete-subtext">This action cannot be undone.</p>
+                <div className="cinv-delete-actions">
+                  <button className="cinv-btn-danger" onClick={async () => {
+                    try { await deleteInvoice(showDeleteConfirm); } catch (e) { alert(e.message); }
                     setShowDeleteConfirm(null);
                   }}>
                     <Trash2 size={14} /> Delete
                   </button>
-                  <button className="inv-btn-secondary" onClick={() => setShowDeleteConfirm(null)}>
+                  <button className="cinv-btn-secondary" onClick={() => setShowDeleteConfirm(null)}>
                     Cancel
                   </button>
                 </div>
@@ -1666,54 +1698,60 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   // MAIN RENDER
   // ============================================
   return (
-    <div className={`inv-root ${mounted ? 'is-mounted' : ''}`}>
-      <div className="inv-ambient">
-        <div className="inv-orb inv-orb-1" />
-        <div className="inv-orb inv-orb-2" />
-        <div className="inv-orb inv-orb-3" />
+    <div className={`cinv-root ${mounted ? 'is-mounted' : ''}`}>
+      <div className="cinv-ambient">
+        <div className="cinv-orb cinv-orb-1" />
+        <div className="cinv-orb cinv-orb-2" />
+        <div className="cinv-orb cinv-orb-3" />
       </div>
 
-      <div className="inv-header">
-        <div className="inv-header-left">
-          <div className="inv-header-icon-wrapper">
+      <div className="cinv-header">
+        <div className="cinv-header-left">
+          <div className="cinv-header-icon-wrapper">
             <FileText size={22} />
-            <span className="inv-header-badge"><Sparkles size={10} /> INVOICES</span>
+            <span className="cinv-header-badge"><Sparkles size={10} /> CLIENT INVOICES</span>
           </div>
           <div>
-            <h2>Invoice Management</h2>
-            <p className="inv-header-subtitle">
-              {totalInvoices} invoices · {paidInvoices} paid · {Utils.formatCurrencyShort(totalAmount)} total
+            <h2>Client Invoice Management</h2>
+            <p className="cinv-header-subtitle">
+              {totalInvoices} client invoices · {paidInvoices} paid · {Utils.formatCurrencyShort(totalAmount)} total
             </p>
           </div>
         </div>
-        <div className="inv-header-right">
-          <button className="inv-btn-ghost" onClick={() => window.location.reload()}>
+        <div className="cinv-header-right">
+          <button className="cinv-btn-ghost" onClick={() => refresh()}>
             <RefreshCw size={14} /> Refresh
           </button>
-          <button className="inv-btn-primary" onClick={openAddModal}>
-            <Plus size={14} /> New Invoice
+          <button className="cinv-btn-primary" onClick={openAddModal}>
+            <Plus size={14} /> New Client Invoice
           </button>
         </div>
       </div>
 
-      <div className="inv-tabs">
+      <div className="cinv-tabs">
         {[
           { id: 'overview', label: 'Overview', icon: LayoutDashboard },
           { id: 'invoices', label: 'Invoices', icon: FileText, badge: filteredInvoices.length }
         ].map(t => {
           const Icon = t.icon;
           return (
-            <button key={t.id} className={`inv-tab ${viewMode === t.id ? 'active' : ''}`}
+            <button key={t.id} className={`cinv-tab ${viewMode === t.id ? 'active' : ''}`}
               onClick={() => setViewMode(t.id)}>
               <Icon size={15} />
               <span>{t.label}</span>
-              {t.badge !== undefined && <span className="inv-tab-badge">{t.badge}</span>}
+              {t.badge !== undefined && <span className="cinv-tab-badge">{t.badge}</span>}
             </button>
           );
         })}
       </div>
 
-      {viewMode === 'overview' ? renderOverviewTab() : renderInvoicesTab()}
+      {loading ? (
+        <div className="cinv-loading">
+          <RefreshCw size={20} className="cinv-spin" /> Loading client invoices...
+        </div>
+      ) : (
+        viewMode === 'overview' ? renderOverviewTab() : renderInvoicesTab()
+      )}
 
       {showForm && renderFormModal()}
       {viewingInvoice && (
@@ -1724,4 +1762,4 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   );
 };
 
-export default InvoicesManagerComponent;
+export default ClientInvoicesManager;

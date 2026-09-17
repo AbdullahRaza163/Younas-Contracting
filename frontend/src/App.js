@@ -48,10 +48,12 @@ import PerformanceAnalytics from './components/PerformanceAnalytics';
 import InventoryManagement from './components/InventoryManagement';
 import LoanManagement from './components/LoanManagement';
 import AdvanceManagement from './components/AdvanceManagement';
+import ClientInvoicesManager from './components/ClientInvoicesManager';
+import UnitsManager from './components/UnitsManager';
 // import DailyEntryComponent from './components/DailyEntry';
 
 // ============================================
-// GLOBAL LOADER — shown while a lazy-loaded tab fetches
+// GLOBAL LOADER
 // ============================================
 const GlobalLoader = ({ label = 'Loading…' }) => (
   <div className="global-loader-overlay" role="status" aria-live="polite">
@@ -74,35 +76,37 @@ const GlobalLoader = ({ label = 'Loading…' }) => (
 // TAB → ROUTE + TITLE MAP
 // ============================================
 const TAB_META = {
-  dashboard:            { path: 'dashboard',            title: 'Dashboard' },
-  projects:             { path: 'projects',             title: 'Projects' },
-  entries:              { path: 'entries',              title: 'Entries' },
-  sites:                { path: 'sites',                title: 'Sites' },
-  items:                { path: 'items',                title: 'Items' },
-  'overhead-categories':{ path: 'overhead-categories',  title: 'Overhead Categories' },
-  'monthly-overhead':   { path: 'monthly-overhead',     title: 'Monthly Overhead' },
-  'monthly-summary':    { path: 'monthly-summary',      title: 'Monthly Summary' },
-  dailyentry:           { path: 'daily-entry',          title: 'Daily Entry' },
-  advances:             { path: 'advances',             title: 'Advances' },
-  loans:                { path: 'loans',                title: 'Loans' },
-  inventory:            { path: 'inventory',            title: 'Inventory' },
-  cumulative:           { path: 'cumulative',           title: 'Cumulative Tracker' },
-  workers:              { path: 'workers',              title: 'Workers' },
-  attendance:           { path: 'attendance',           title: 'Attendance' },
-  teams:                { path: 'teams',                title: 'Teams' },
-  leave:                { path: 'leave',                title: 'Leave Management' },
-  performance:          { path: 'performance',          title: 'Performance Analytics' },
-  quality:              { path: 'quality',              title: 'Quality Control' },
-  'budget-forecast':    { path: 'budget-forecast',      title: 'Budget Forecasting' },
-  clients:              { path: 'clients',              title: 'Clients' },
-  equipment:            { path: 'equipment',            title: 'Equipment' },
-  expenses:             { path: 'expenses',             title: 'Expenses' },
-  invoices:             { path: 'invoices',             title: 'Invoices' },
-  dailyreport:          { path: 'daily-report',         title: 'Daily Report' },
-  reports:              { path: 'reports',              title: 'Reports' },
-  bom:                  { path: 'bom',                  title: 'Bill of Materials' },
-  ai:                   { path: 'ai-assistant',         title: 'AI Assistant' },
-  settings:             { path: 'settings',             title: 'Settings' },
+  dashboard: { path: 'dashboard', title: 'Dashboard' },
+  projects: { path: 'projects', title: 'Projects' },
+  entries: { path: 'entries', title: 'Entries' },
+  sites: { path: 'sites', title: 'Sites' },
+  items: { path: 'items', title: 'Items' },
+  'overhead-categories': { path: 'overhead-categories', title: 'Overhead Categories' },
+  'monthly-overhead': { path: 'monthly-overhead', title: 'Monthly Overhead' },
+  'monthly-summary': { path: 'monthly-summary', title: 'Monthly Summary' },
+  dailyentry: { path: 'daily-entry', title: 'Daily Entry' },
+  advances: { path: 'advances', title: 'Advances' },
+  loans: { path: 'loans', title: 'Loans' },
+  inventory: { path: 'inventory', title: 'Inventory' },
+  cumulative: { path: 'cumulative', title: 'Cumulative Tracker' },
+  workers: { path: 'workers', title: 'Workers' },
+  attendance: { path: 'attendance', title: 'Attendance' },
+  teams: { path: 'teams', title: 'Teams' },
+  leave: { path: 'leave', title: 'Leave Management' },
+  performance: { path: 'performance', title: 'Performance Analytics' },
+  quality: { path: 'quality', title: 'Quality Control' },
+  'budget-forecast': { path: 'budget-forecast', title: 'Budget Forecasting' },
+  clients: { path: 'clients', title: 'Clients' },
+  equipment: { path: 'equipment', title: 'Equipment' },
+  expenses: { path: 'expenses', title: 'Expenses' },
+  invoices: { path: 'invoices', title: 'Invoices' },
+  'client-invoices': { path: 'client-invoices', title: 'Client Invoices' },
+  dailyreport: { path: 'daily-report', title: 'Daily Report' },
+  reports: { path: 'reports', title: 'Reports' },
+  bom: { path: 'bom', title: 'Bill of Materials' },
+  ai: { path: 'ai-assistant', title: 'AI Assistant' },
+  settings: { path: 'settings', title: 'Settings' },
+  units: { path: 'units', title: 'Units' },
 };
 
 // ============================================
@@ -124,14 +128,17 @@ function AppContent() {
     data,
     loading,
     refreshing,
-    tabLoading,        // ⭐ NEW
-    tabLoadingLabel,   // ⭐ NEW
+    tabLoading,
+    tabLoadingLabel,
+    showLoader,          // ⭐ used by Inventory, BOM, ClientInvoices
+    hideLoader,          // ⭐ used by Inventory, BOM, ClientInvoices
     error,
     loadData,
     loadEntries,
     loadExpenses,
     loadInvoices,
     loadItems,
+    loadMaterials,       // ⭐ lazy loader for BOM
     loadProjects,
     loadClients,
     loadEquipment,
@@ -151,25 +158,26 @@ function AppContent() {
   // ⭐ Lazy loaders on tab change
   useEffect(() => {
     switch (activeTab) {
-      case 'entries':          loadEntries?.(); break;
-      case 'expenses':         loadExpenses?.(); break;
-      case 'invoices':         loadInvoices?.(); break;
-      case 'items':            loadItems?.(); break;
-      case 'projects':         loadProjects?.(); break;
-      case 'clients':          loadClients?.(); break;
-      case 'equipment':        loadEquipment?.(); break;
-      case 'performance':      loadPerformance?.(); break;
-      case 'leave':            loadLeave?.(); break;
-      case 'quality':          loadQuality?.(); break;
+      case 'entries': loadEntries?.(); break;
+      case 'expenses': loadExpenses?.(); break;
+      case 'invoices': loadInvoices?.(); break;
+      case 'items': loadItems?.(); break;
+      case 'bom': loadMaterials?.(); break;
+      case 'projects': loadProjects?.(); break;
+      case 'clients': loadClients?.(); break;
+      case 'equipment': loadEquipment?.(); break;
+      case 'performance': loadPerformance?.(); break;
+      case 'leave': loadLeave?.(); break;
+      case 'quality': loadQuality?.(); break;
       case 'monthly-overhead': loadMonthlyOverhead?.(); break;
-      case 'monthly-summary':  loadMonthlySummary?.(); break;
-      case 'cumulative':       loadCumulativeTracker?.(); break;
-      case 'budget-forecast':  loadProjects?.(); loadEntries?.(); break;
+      case 'monthly-summary': loadMonthlySummary?.(); break;
+      case 'cumulative': loadCumulativeTracker?.(); break;
+      case 'budget-forecast': loadProjects?.(); loadEntries?.(); break;
       default: break;
     }
   }, [
     activeTab,
-    loadEntries, loadExpenses, loadInvoices, loadItems,
+    loadEntries, loadExpenses, loadInvoices, loadItems, loadMaterials,
     loadProjects, loadClients, loadEquipment, loadPerformance,
     loadLeave, loadQuality, loadMonthlyOverhead, loadMonthlySummary,
     loadCumulativeTracker,
@@ -308,6 +316,8 @@ function AppContent() {
           />
         )}
 
+        {activeTab === 'units' && <UnitsManager />}
+
         {activeTab === 'monthly-summary' && (
           <MonthlySummaryComponent
             data={data}
@@ -336,8 +346,14 @@ function AppContent() {
           <LoanManagement data={data} refreshData={actions.refreshData} />
         )}
 
+        {/* ⭐ INVENTORY — now passes showLoader / hideLoader for reference-counted loader */}
         {activeTab === 'inventory' && (
-          <InventoryManagement data={data} refreshData={actions.refreshData} />
+          <InventoryManagement
+            data={data}
+            refreshData={actions.refreshData}
+            showLoader={showLoader}
+            hideLoader={hideLoader}
+          />
         )}
 
         {activeTab === 'cumulative' && <CumulativeTrackerComponent data={data} />}
@@ -426,14 +442,35 @@ function AppContent() {
           />
         )}
 
+        {/* ⭐ Client Invoices — now accepts loader props */}
+        {activeTab === 'client-invoices' && (
+          <ClientInvoicesManager
+            showLoader={showLoader}
+            hideLoader={hideLoader}
+          />
+        )}
+
         {activeTab === 'dailyreport' && (
           <DailyReportComponent data={data} selectedDate={Utils.today()} />
         )}
 
         {activeTab === 'reports' && <ReportsComponent data={data} />}
 
+        {/* ⭐ BOM — now passes showLoader / hideLoader */}
         {activeTab === 'bom' && (
-          <BOMComponent data={data} updateData={actions.updateData} />
+          <BOMComponent
+            data={data}
+            updateData={actions.updateData}
+            showLoader={showLoader}
+            hideLoader={hideLoader}
+            onRefreshMaterials={loadMaterials}
+            addMaterial={actions.addMaterial}
+            updateMaterial={actions.updateMaterial}
+            deleteMaterial={actions.deleteMaterial}
+            addBOM={actions.addBOM}
+            updateBOM={actions.updateBOM}
+            deleteBOM={actions.deleteBOM}
+          />
         )}
 
         {activeTab === 'ai' && <AIAssistantComponent data={data} />}
@@ -443,7 +480,7 @@ function AppContent() {
         )}
       </main>
 
-      {/* ⭐ GLOBAL TAB LOADER — shows while lazy-loading a tab */}
+      {/* ⭐ GLOBAL TAB LOADER — shows during lazy loads AND CRUD actions */}
       {tabLoading && <GlobalLoader label={tabLoadingLabel} />}
     </div>
   );

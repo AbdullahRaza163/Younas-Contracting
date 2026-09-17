@@ -1,20 +1,23 @@
 // src/components/BOM.jsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Package, ClipboardList, TrendingUp as TrendingUpIcon, Edit, Trash2,
   PlusCircle, Save, X, Plus, Search, RefreshCw, CheckCircle, AlertCircle,
-  DollarSign, Layers, BarChart3, PieChart as PieChartIcon, Boxes,
-  Building2, User, Calendar, Clock, Star, Sparkles, Crown, Target,
-  Percent, Wallet, Minus, ChevronLeft, ChevronRight, ChevronsLeft,
-  ChevronsRight, LayoutDashboard, FileText, TrendingDown, Flame, Zap
+  DollarSign, Layers, BarChart3, PieChart as PieChartIcon,
+  Building2, Calendar, Sparkles, Minus,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
+  LayoutDashboard, TrendingDown, Info, Loader2, AlertTriangle,
+  Lightbulb
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Legend
+  BarChart, Bar, XAxis, YAxis, CartesianGrid
 } from 'recharts';
 import Utils from '../utils/Utils';
 import './BOM.css';
+import useUnits from '../hooks/useUnits';
+import ApiService from '../services/ApiService';
 
 // ============================================
 // PORTAL
@@ -46,12 +49,96 @@ const ChartTooltip = ({ active, payload, label, formatter }) => {
 };
 
 // ============================================
+// CONSTANTS
+// ============================================
+const DEFAULT_CATEGORIES = [
+  'Construction', 'Steel', 'Cement', 'Sand', 'Gravel', 'Wood',
+  'Electrical', 'Plumbing', 'Finishing', 'Painting', 'Glass', 'Insulation',
+  'Bricks', 'Concrete', 'Roofing', 'Hardware'
+];
+
+const FALLBACK_UNITS = ['kg', 'ton', 'm3', 'm2', 'liters', 'pieces', 'rolls', 'sheets', 'bags', 'boxes'];
+
+const MATERIAL_RATES = {
+  residential: { cement: 0.15, steel: 0.08, sand: 0.12, gravel: 0.10, wood: 0.05, bricks: 50 },
+  commercial:  { cement: 0.20, steel: 0.12, sand: 0.15, gravel: 0.12, wood: 0.03, bricks: 40 },
+  industrial:  { cement: 0.25, steel: 0.18, sand: 0.10, gravel: 0.15, wood: 0.02, bricks: 30 },
+};
+
+const FALLBACK_PRICES = {
+  cement: 45, steel: 350, sand: 25, gravel: 30, wood: 180, bricks: 0.25,
+};
+
+// ============================================
 // MAIN COMPONENT
 // ============================================
-const BOMComponent = ({ data, updateData }) => {
-  const [activeTab, setActiveTab] = useState('overview'); // overview | materials | bom | prediction
+const BOMComponent = ({ data, updateData, setTabLoading, setTabLoadingLabel }) => {
+  const [activeTab, setActiveTab] = useState('overview');
   const [mounted, setMounted] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState(null);
 
+  // ---------- Materials from backend ----------
+  const [materials, setMaterials] = useState(() => data.materials || []);
+  const [materialsLoading, setMaterialsLoading] = useState(false);
+  const materialsLoadedRef = React.useRef(false);
+
+  // ---------- Units from Units table ----------
+  const { units: allUnits } = useUnits();
+
+  const availableUnitNames = useMemo(() => {
+    const active = (allUnits || []).filter(u => u.isActive);
+    if (active.length > 0) return active.map(u => u.name);
+    return FALLBACK_UNITS;
+  }, [allUnits]);
+
+  // ---------- Normalize backend fields ----------
+  const normalizeMaterial = useCallback((m) => ({
+    ...m,
+    category: m.category || m.categoryName || 'Construction',
+    supplier: m.supplier || m.supplierName || '',
+    unit: m.unit || 'kg',
+    unitPrice: Number(m.unitPrice ?? m.unit_price ?? 0) || 0,
+    quantity: Number(m.quantity ?? 0) || 0,
+    reorderLevel: Number(m.reorderLevel ?? m.reorder_level ?? 0) || 0,
+  }), []);
+
+  // ---------- Fetch materials from API ----------
+  const fetchMaterials = useCallback(async ({ showLoader = true } = {}) => {
+    setMaterialsLoading(true);
+    if (showLoader && setTabLoading && setTabLoadingLabel) {
+      setTabLoading(true);
+      setTabLoadingLabel('Loading materials…');
+    }
+    try {
+      const list = await ApiService.getMaterials();
+      const normalized = (Array.isArray(list) ? list : []).map(normalizeMaterial);
+      setMaterials(normalized);
+      if (updateData) updateData({ materials: normalized });
+      materialsLoadedRef.current = true;
+    } catch (err) {
+      console.error('[BOM] fetchMaterials failed:', err);
+      showToast('Failed to load materials from server', 'error');
+      if (!materialsLoadedRef.current && Array.isArray(data.materials)) {
+        setMaterials(data.materials.map(normalizeMaterial));
+      }
+    } finally {
+      setMaterialsLoading(false);
+      if (showLoader && setTabLoading) setTabLoading(false);
+    }
+  }, [normalizeMaterial, updateData, setTabLoading, setTabLoadingLabel, data.materials]);
+
+  useEffect(() => {
+    if (!materialsLoadedRef.current) {
+      fetchMaterials({ showLoader: false });
+    }
+  }, [fetchMaterials]);
+
+  // ---------- BOMs + sites ----------
+  const boms = useMemo(() => data.bom || [], [data.bom]);
+  const sites = useMemo(() => data.sites || [], [data.sites]);
+
+  // ---------- Form state ----------
   const [materialForm, setMaterialForm] = useState({
     name: '', category: 'Construction', unit: 'kg', unitPrice: '',
     quantity: '', supplier: '', reorderLevel: ''
@@ -65,11 +152,15 @@ const BOMComponent = ({ data, updateData }) => {
     projectType: 'residential', area: '', floors: '1', materialType: 'all'
   });
   const [predictionResult, setPredictionResult] = useState(null);
+  const [predictionError, setPredictionError] = useState('');
   const [showMaterialForm, setShowMaterialForm] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [hoveredCard, setHoveredCard] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+
+  // ⭐ NEW — search for the "add materials" picker inside the BOM tab
+  const [bomMaterialSearch, setBomMaterialSearch] = useState('');
 
   // Pagination
   const [matPage, setMatPage] = useState(1);
@@ -77,50 +168,110 @@ const BOMComponent = ({ data, updateData }) => {
   const [bomPage, setBomPage] = useState(1);
   const [bomPer, setBomPer] = useState(9);
 
-  const categories = [
-    'Construction', 'Steel', 'Cement', 'Sand', 'Gravel', 'Wood',
-    'Electrical', 'Plumbing', 'Finishing', 'Painting', 'Glass', 'Insulation'
-  ];
-  const units = ['kg', 'ton', 'm3', 'm2', 'liters', 'pieces', 'rolls', 'sheets'];
+  // Categories merge
+  const categories = useMemo(() => {
+    const custom = new Set(DEFAULT_CATEGORIES);
+    (materials || []).forEach(m => {
+      if (m.category) custom.add(m.category);
+    });
+    return Array.from(custom).sort();
+  }, [materials]);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(id);
   }, []);
 
-  const materials = useMemo(() => data.materials || [], [data.materials]);
-  const boms = useMemo(() => data.bom || [], [data.bom]);
-  const sites = useMemo(() => data.sites || [], [data.sites]);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2600);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const showToast = (message, type = 'success') =>
+    setToast({ message, type, id: Date.now() });
 
   // ============================================
   // MATERIAL CRUD
   // ============================================
-  const handleMaterialSubmit = (e) => {
+  const handleMaterialSubmit = async (e) => {
     e.preventDefault();
-    if (!materialForm.name) return;
-    const material = {
-      id: editingMaterial || Date.now().toString(),
-      ...materialForm,
-      unitPrice: parseFloat(materialForm.unitPrice) || 0,
-      quantity: parseFloat(materialForm.quantity) || 0,
-      reorderLevel: parseFloat(materialForm.reorderLevel) || 0,
-      createdAt: new Date().toISOString()
-    };
-    let updatedMaterials;
-    if (editingMaterial) {
-      updatedMaterials = materials.map(m => m.id === editingMaterial ? material : m);
-    } else {
-      updatedMaterials = [...materials, material];
+    if (!materialForm.name.trim()) {
+      showToast('Material name is required', 'error');
+      return;
     }
-    updateData({ materials: updatedMaterials });
-    setMaterialForm({ name: '', category: 'Construction', unit: 'kg', unitPrice: '', quantity: '', supplier: '', reorderLevel: '' });
-    setEditingMaterial(null);
-    setShowMaterialForm(false);
+
+    const name = materialForm.name.trim();
+    const duplicate = materials.find(
+      m => m.id !== editingMaterial &&
+      (m.name || '').toLowerCase() === name.toLowerCase()
+    );
+    if (duplicate) {
+      showToast(`Material "${name}" already exists`, 'error');
+      return;
+    }
+
+    const payload = {
+      name,
+      category: materialForm.category || 'Construction',
+      unit: materialForm.unit || 'kg',
+      unitPrice: Math.max(0, parseFloat(materialForm.unitPrice) || 0),
+      quantity: Math.max(0, parseFloat(materialForm.quantity) || 0),
+      supplier: (materialForm.supplier || '').trim(),
+      reorderLevel: Math.max(0, parseFloat(materialForm.reorderLevel) || 0),
+      status: 'active',
+    };
+
+    try {
+      if (editingMaterial) {
+        const updated = await ApiService.updateMaterial(editingMaterial, payload);
+        const normalized = normalizeMaterial(updated);
+        const next = materials.map(m => m.id === editingMaterial ? normalized : m);
+        setMaterials(next);
+        if (updateData) updateData({ materials: next });
+        showToast('Material updated');
+      } else {
+        const created = await ApiService.createMaterial(payload);
+        const normalized = normalizeMaterial(created);
+        const next = [normalized, ...materials];
+        setMaterials(next);
+        if (updateData) updateData({ materials: next });
+        showToast('Material saved');
+      }
+
+      setMaterialForm({
+        name: '', category: 'Construction', unit: 'kg', unitPrice: '',
+        quantity: '', supplier: '', reorderLevel: ''
+      });
+      setEditingMaterial(null);
+      setShowMaterialForm(false);
+    } catch (err) {
+      console.error('[BOM] save material failed:', err);
+      showToast(err.message || 'Failed to save material', 'error');
+    }
   };
 
-  const deleteMaterial = (id) => {
-    if (window.confirm('Delete this material?')) {
-      updateData({ materials: materials.filter(m => m.id !== id) });
+  const deleteMaterial = async (id) => {
+    const material = materials.find(m => m.id === id);
+    if (!material) return;
+
+    const usedInBoms = boms.filter(b =>
+      (b.materials || []).some(m => m.materialId === id)
+    );
+    const confirmMsg = usedInBoms.length > 0
+      ? `"${material.name}" is used in ${usedInBoms.length} saved BOM(s). Delete anyway?`
+      : `Delete "${material.name}"?`;
+    if (!window.confirm(confirmMsg)) return;
+
+    try {
+      await ApiService.deleteMaterial(id);
+      const next = materials.filter(m => m.id !== id);
+      setMaterials(next);
+      if (updateData) updateData({ materials: next });
+      showToast('Material deleted');
+    } catch (err) {
+      console.error('[BOM] delete material failed:', err);
+      showToast(err.message || 'Failed to delete material', 'error');
     }
   };
 
@@ -139,111 +290,305 @@ const BOMComponent = ({ data, updateData }) => {
   };
 
   const resetMaterialForm = () => {
-    setMaterialForm({ name: '', category: 'Construction', unit: 'kg', unitPrice: '', quantity: '', supplier: '', reorderLevel: '' });
+    setMaterialForm({
+      name: '', category: 'Construction', unit: 'kg', unitPrice: '',
+      quantity: '', supplier: '', reorderLevel: ''
+    });
     setEditingMaterial(null);
   };
 
   // ============================================
   // BOM
   // ============================================
-  const addMaterialToBOM = (material) => {
+  const addMaterialToBOM = useCallback((material) => {
+    if (!material || !material.name) {
+      showToast('Invalid material', 'error');
+      return;
+    }
+    if (!material.unitPrice || material.unitPrice <= 0) {
+      showToast(`"${material.name}" has no unit price — set it first`, 'error');
+      return;
+    }
+
+    setBomForm(prev => {
+      const existingIdx = prev.materials.findIndex(m => m.materialId === material.id);
+      if (existingIdx >= 0) {
+        const updated = [...prev.materials];
+        const newQty = updated[existingIdx].quantity + 1;
+        updated[existingIdx] = {
+          ...updated[existingIdx],
+          quantity: newQty,
+          totalCost: updated[existingIdx].unitPrice * newQty
+        };
+        showToast(`Increased quantity of "${material.name}"`);
+        return { ...prev, materials: updated };
+      }
+
+      showToast(`Added "${material.name}" to BOM`);
+      return {
+        ...prev,
+        materials: [
+          ...prev.materials,
+          {
+            materialId: material.id,
+            name: material.name,
+            unit: material.unit,
+            unitPrice: material.unitPrice,
+            quantity: 1,
+            totalCost: material.unitPrice
+          }
+        ]
+      };
+    });
+  }, []);
+
+  const removeFromBOM = (index) => {
     setBomForm(prev => ({
       ...prev,
-      materials: [...prev.materials, {
-        materialId: material.id,
-        name: material.name,
-        unit: material.unit,
-        unitPrice: material.unitPrice,
-        quantity: 1,
-        totalCost: material.unitPrice
-      }]
+      materials: prev.materials.filter((_, i) => i !== index)
     }));
   };
 
-  const removeFromBOM = (index) => {
-    setBomForm(prev => ({ ...prev, materials: prev.materials.filter((_, i) => i !== index) }));
-  };
-
-  const updateBOMQuantity = (index, quantity) => {
+  const updateBOMQuantity = (index, quantityRaw) => {
+    const qty = Math.max(0, parseFloat(quantityRaw) || 0);
     setBomForm(prev => {
       const updated = [...prev.materials];
-      updated[index].quantity = parseFloat(quantity) || 0;
-      updated[index].totalCost = updated[index].unitPrice * updated[index].quantity;
+      const line = updated[index];
+      if (!line) return prev;
+      updated[index] = {
+        ...line,
+        quantity: qty,
+        totalCost: Math.round(line.unitPrice * qty * 1000) / 1000
+      };
       return { ...prev, materials: updated };
     });
   };
 
   const saveBOM = (e) => {
-    e.preventDefault();
-    if (!bomForm.projectName) return;
-    const totalMaterialCost = bomForm.materials.reduce((sum, m) => sum + m.totalCost, 0);
-    const labourCost = parseFloat(bomForm.labourCost) || 0;
-    const overhead = (totalMaterialCost + labourCost) * (parseFloat(bomForm.overheadPercentage) / 100);
-    const totalCost = totalMaterialCost + labourCost + overhead;
-    const bom = {
-      id: Date.now().toString(), ...bomForm,
-      totalMaterialCost, labourCost, overhead, totalCost,
-      createdAt: new Date().toISOString()
-    };
-    updateData({ bom: [...boms, bom] });
-    setBomForm({
-      projectName: '', siteId: '', materials: [], estimatedHours: '',
-      labourCost: '', overheadPercentage: '10'
-    });
+    if (e) e.preventDefault();
+
+    if (!bomForm.projectName.trim()) {
+      showToast('Project name is required', 'error');
+      return;
+    }
+    if (bomForm.materials.length === 0) {
+      showToast('Add at least one material', 'error');
+      return;
+    }
+    if (saving) return;
+
+    setSaving(true);
+    try {
+      const totalMaterialCost = bomForm.materials.reduce((sum, m) => sum + (m.totalCost || 0), 0);
+      const labourCost = Math.max(0, parseFloat(bomForm.labourCost) || 0);
+      const overheadPct = Math.max(0, parseFloat(bomForm.overheadPercentage) || 0);
+      const overhead = (totalMaterialCost + labourCost) * (overheadPct / 100);
+      const totalCost = totalMaterialCost + labourCost + overhead;
+
+      const bom = {
+        id: Date.now().toString(),
+        projectName: bomForm.projectName.trim(),
+        siteId: bomForm.siteId || '',
+        materials: bomForm.materials.map(m => ({ ...m })),
+        estimatedHours: parseFloat(bomForm.estimatedHours) || 0,
+        labourCost,
+        overheadPercentage: overheadPct,
+        totalMaterialCost,
+        overhead,
+        totalCost,
+        createdAt: new Date().toISOString(),
+      };
+
+      if (updateData) updateData({ bom: [...boms, bom] });
+      showToast('BOM saved successfully');
+
+      setBomForm({
+        projectName: '', siteId: '', materials: [], estimatedHours: '',
+        labourCost: '', overheadPercentage: '10'
+      });
+      setBomMaterialSearch('');
+    } catch (err) {
+      console.error('Failed to save BOM:', err);
+      showToast('Failed to save BOM', 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   // ============================================
   // PREDICTION
   // ============================================
   const generatePrediction = () => {
-    const { projectType, area, floors, materialType } = predictionParams;
-    const areaNum = parseFloat(area) || 0;
-    const floorsNum = parseInt(floors) || 1;
-    const materialRates = {
-      residential: { cement: 0.15, steel: 0.08, sand: 0.12, gravel: 0.10, wood: 0.05, bricks: 50 },
-      commercial: { cement: 0.20, steel: 0.12, sand: 0.15, gravel: 0.12, wood: 0.03, bricks: 40 },
-      industrial: { cement: 0.25, steel: 0.18, sand: 0.10, gravel: 0.15, wood: 0.02, bricks: 30 }
-    };
-    const rates = materialRates[projectType] || materialRates.residential;
-    const totalArea = areaNum * floorsNum;
-    const prediction = {
-      projectType, totalArea, floors: floorsNum,
-      materials: {
-        cement: { quantity: rates.cement * totalArea, unit: 'tons' },
-        steel: { quantity: rates.steel * totalArea, unit: 'tons' },
-        sand: { quantity: rates.sand * totalArea, unit: 'm3' },
-        gravel: { quantity: rates.gravel * totalArea, unit: 'm3' },
-        wood: { quantity: rates.wood * totalArea, unit: 'm3' },
-        bricks: { quantity: Math.round(rates.bricks * totalArea), unit: 'pieces' }
-      },
-      estimatedCost: 0,
-      laborHours: totalArea * 2.5,
-      timeline: Math.ceil(totalArea / 100)
-    };
-    let totalCost = 0;
-    Object.keys(prediction.materials).forEach(key => {
-      const material = materials.find(m =>
-        m.category.toLowerCase() === key || m.name.toLowerCase().includes(key));
-      if (material) {
-        const cost = prediction.materials[key].quantity * material.unitPrice;
-        prediction.materials[key].cost = cost;
-        totalCost += cost;
-      } else {
-        const avgPrice = 50;
-        prediction.materials[key].cost = prediction.materials[key].quantity * avgPrice;
-        totalCost += prediction.materials[key].quantity * avgPrice;
-        prediction.materials[key].estimatedPrice = true;
-      }
-    });
-    prediction.estimatedCost = totalCost;
-    if (materialType !== 'all') {
-      const filtered = {};
-      Object.keys(prediction.materials).forEach(key => {
-        if (key === materialType || key.includes(materialType)) filtered[key] = prediction.materials[key];
-      });
-      prediction.materials = filtered;
+    setPredictionError('');
+
+    const areaNum = parseFloat(predictionParams.area) || 0;
+    const floorsNum = Math.max(1, parseInt(predictionParams.floors) || 1);
+
+    if (areaNum <= 0) {
+      setPredictionError('Please enter a valid area (m²)');
+      setPredictionResult(null);
+      return;
     }
-    setPredictionResult(prediction);
+
+    const rates = MATERIAL_RATES[predictionParams.projectType] || MATERIAL_RATES.residential;
+    const totalArea = areaNum * floorsNum;
+
+    const rawQuantities = {
+      cement: { quantity: rates.cement * totalArea, unit: 'tons' },
+      steel:  { quantity: rates.steel  * totalArea, unit: 'tons' },
+      sand:   { quantity: rates.sand   * totalArea, unit: 'm3' },
+      gravel: { quantity: rates.gravel * totalArea, unit: 'm3' },
+      wood:   { quantity: rates.wood   * totalArea, unit: 'm3' },
+      bricks: { quantity: Math.round(rates.bricks * totalArea), unit: 'pieces' },
+    };
+
+    let totalCost = 0;
+    let estimatedCount = 0;
+    const materialsWithCost = {};
+
+    Object.entries(rawQuantities).forEach(([key, value]) => {
+      const match = materials.find(m => {
+        const n = (m.name || '').toLowerCase();
+        const c = (m.category || '').toLowerCase();
+        return n.includes(key) || c === key || c.includes(key);
+      });
+
+      let unitPrice;
+      let isEstimated = false;
+      if (match && match.unitPrice > 0) {
+        unitPrice = match.unitPrice;
+      } else {
+        unitPrice = FALLBACK_PRICES[key] || 50;
+        isEstimated = true;
+        estimatedCount++;
+      }
+
+      const cost = value.quantity * unitPrice;
+      totalCost += cost;
+      materialsWithCost[key] = {
+        ...value,
+        unitPrice,
+        cost,
+        estimatedPrice: isEstimated,
+        matchedMaterial: match?.name || null,
+      };
+    });
+
+    let finalMaterials = materialsWithCost;
+    if (predictionParams.materialType !== 'all') {
+      const filterKey = predictionParams.materialType.toLowerCase();
+      finalMaterials = Object.fromEntries(
+        Object.entries(materialsWithCost).filter(([k]) => k === filterKey)
+      );
+    }
+
+    const timeline = Math.max(1, Math.ceil((totalArea / 100) * 3 + floorsNum));
+    const laborHours = Math.round(totalArea * 2.8);
+
+    setPredictionResult({
+      projectType: predictionParams.projectType,
+      totalArea,
+      floors: floorsNum,
+      materials: finalMaterials,
+      estimatedCost: Math.round(totalCost * 1000) / 1000,
+      laborHours,
+      timeline,
+      estimatedCount,
+      totalMaterialCount: Object.keys(finalMaterials).length,
+    });
+  };
+
+  const handleAddPredictionToInventory = async () => {
+    if (!predictionResult) return;
+
+    const toAdd = Object.entries(predictionResult.materials).filter(([key, value]) => {
+      if (value.quantity <= 0) return false;
+      return !materials.some(m => (m.name || '').toLowerCase().includes(key));
+    });
+
+    if (toAdd.length === 0) {
+      showToast('All materials already exist in inventory', 'info');
+      return;
+    }
+
+    setMaterialsLoading(true);
+    if (setTabLoading && setTabLoadingLabel) {
+      setTabLoading(true);
+      setTabLoadingLabel('Adding materials to inventory…');
+    }
+
+    let added = 0;
+    const addedItems = [];
+    for (const [key, value] of toAdd) {
+      try {
+        const created = await ApiService.createMaterial({
+          name: key.charAt(0).toUpperCase() + key.slice(1),
+          category: 'Construction',
+          unit: value.unit,
+          unitPrice: value.unitPrice || 50,
+          quantity: 0,
+          supplier: '',
+          reorderLevel: Math.round(value.quantity * 0.2),
+          status: 'active',
+        });
+        addedItems.push(normalizeMaterial(created));
+        added++;
+      } catch (err) {
+        console.error(`[BOM] failed to add ${key}:`, err);
+      }
+    }
+
+    setMaterialsLoading(false);
+    if (setTabLoading) setTabLoading(false);
+
+    if (added > 0) {
+      const next = [...addedItems, ...materials];
+      setMaterials(next);
+      if (updateData) updateData({ materials: next });
+      showToast(`Added ${added} material${added === 1 ? '' : 's'} to inventory`);
+    } else {
+      showToast('Failed to add materials', 'error');
+    }
+  };
+
+  const handleCreateBOMFromPrediction = () => {
+    if (!predictionResult) return;
+
+    const newMaterials = Object.entries(predictionResult.materials).map(([key, value], i) => ({
+      materialId: Date.now().toString() + i,
+      name: key.charAt(0).toUpperCase() + key.slice(1),
+      unit: value.unit,
+      unitPrice: value.unitPrice || 50,
+      quantity: value.quantity,
+      totalCost: value.cost || value.quantity * 50,
+    }));
+
+    const totalMaterialCost = newMaterials.reduce((s, m) => s + m.totalCost, 0);
+    const labourCost = Math.round(predictionResult.laborHours * 8 * 1000) / 1000;
+    const overheadPct = 10;
+    const overhead = (totalMaterialCost + labourCost) * (overheadPct / 100);
+    const totalCost = totalMaterialCost + labourCost + overhead;
+
+    const bom = {
+      id: Date.now().toString(),
+      projectName: `${predictionResult.projectType.charAt(0).toUpperCase() + predictionResult.projectType.slice(1)} Project — ${Utils.today()}`,
+      siteId: '',
+      materials: newMaterials,
+      estimatedHours: predictionResult.laborHours,
+      labourCost,
+      overheadPercentage: overheadPct,
+      totalMaterialCost,
+      overhead,
+      totalCost,
+      createdAt: new Date().toISOString(),
+    };
+
+    try {
+      if (updateData) updateData({ bom: [...boms, bom] });
+      showToast('BOM created from prediction');
+    } catch (err) {
+      showToast('Failed to create BOM', 'error');
+    }
   };
 
   // ============================================
@@ -262,6 +607,27 @@ const BOMComponent = ({ data, updateData }) => {
     if (categoryFilter !== 'all') list = list.filter(m => m.category === categoryFilter);
     return list;
   }, [materials, searchTerm, categoryFilter]);
+
+  // ⭐ NEW — materials already in the BOM (to hide from the picker)
+  const materialIdsInBOM = useMemo(() => {
+    return new Set(bomForm.materials.map(m => m.materialId));
+  }, [bomForm.materials]);
+
+  // ⭐ NEW — filtered list for the in-BOM-tab picker
+  const bomPickerMaterials = useMemo(() => {
+    const q = bomMaterialSearch.trim().toLowerCase();
+    return materials
+      .filter(m => !materialIdsInBOM.has(m.id))
+      .filter(m => {
+        if (!q) return true;
+        return (
+          (m.name || '').toLowerCase().includes(q) ||
+          (m.category || '').toLowerCase().includes(q) ||
+          (m.supplier || '').toLowerCase().includes(q)
+        );
+      })
+      .slice(0, 50);
+  }, [materials, materialIdsInBOM, bomMaterialSearch]);
 
   const paginate = (list, page, per) => {
     const total = Math.max(1, Math.ceil(list.length / per));
@@ -307,7 +673,8 @@ const BOMComponent = ({ data, updateData }) => {
     );
   };
 
-  useEffect(() => { setMatPage(1); }, [searchTerm, categoryFilter, matPer]);
+  useEffect(() => { setMatPage(1); }, [searchTerm, categoryFilter, matPer, materials.length]);
+  useEffect(() => { setBomPage(1); }, [boms.length, bomPer]);
 
   // ============================================
   // STATS + CHART DATA
@@ -337,7 +704,10 @@ const BOMComponent = ({ data, updateData }) => {
 
   const categoryValueData = useMemo(() => {
     const map = {};
-    materials.forEach(m => { map[m.category] = (map[m.category] || 0) + (m.quantity || 0) * (m.unitPrice || 0); });
+    materials.forEach(m => {
+      const val = (m.quantity || 0) * (m.unitPrice || 0);
+      map[m.category] = (map[m.category] || 0) + val;
+    });
     const palette = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4'];
     return Object.entries(map)
       .map(([name, value], i) => ({
@@ -585,7 +955,11 @@ const BOMComponent = ({ data, updateData }) => {
           </button>
         </div>
 
-        {filteredMaterials.length === 0 ? (
+        {materialsLoading ? (
+          <div className="bom-loading">
+            <Loader2 size={20} className="bom-spin" /> Loading materials from server…
+          </div>
+        ) : filteredMaterials.length === 0 ? (
           <div className="bom-empty">
             <div className="bom-empty-icon"><Package size={40} /></div>
             <h3>No Materials Found</h3>
@@ -599,6 +973,7 @@ const BOMComponent = ({ data, updateData }) => {
             <div className="bom-materials-grid">
               {items.map((m, i) => {
                 const low = m.reorderLevel > 0 && m.quantity <= m.reorderLevel;
+                const alreadyInBOM = materialIdsInBOM.has(m.id);
                 return (
                   <div key={m.id} className="bom-material-card" style={{ animationDelay: `${Math.min(i * 40, 400)}ms` }}>
                     <div className="bom-material-accent" style={{
@@ -651,7 +1026,9 @@ const BOMComponent = ({ data, updateData }) => {
                           onClick={() => startEditMaterial(m)}>
                           <Edit size={13} />
                         </button>
-                        <button className="bom-icon-btn bom-icon-add" title="Add to BOM"
+                        <button
+                          className={`bom-icon-btn bom-icon-add ${alreadyInBOM ? 'is-in-bom' : ''}`}
+                          title={alreadyInBOM ? 'Already in BOM — click to add one more' : 'Add to BOM'}
                           onClick={() => addMaterialToBOM(m)}>
                           <PlusCircle size={13} />
                         </button>
@@ -673,15 +1050,21 @@ const BOMComponent = ({ data, updateData }) => {
   };
 
   // ============================================
-  // BOM TAB
+  // BOM TAB — with in-tab material picker
   // ============================================
   const renderBOMTab = () => {
     const { total, page, items } = paginate([...boms].reverse(), bomPage, bomPer);
     if (page !== bomPage) setBomPage(page);
+
+    const mc = bomForm.materials.reduce((s, m) => s + (m.totalCost || 0), 0);
+    const lc = parseFloat(bomForm.labourCost) || 0;
+    const ohPct = parseFloat(bomForm.overheadPercentage) || 0;
+    const oh = (mc + lc) * (ohPct / 100);
+
     return (
       <div className="bom-view">
         <div className="bom-grid-2-1">
-          {/* BOM Form */}
+          {/* -------- Create BOM form -------- */}
           <div className="bom-card">
             <div className="bom-card-header">
               <div className="bom-card-title">
@@ -713,26 +1096,92 @@ const BOMComponent = ({ data, updateData }) => {
                 </div>
               </div>
 
+              {/* ⭐ NEW — Material picker INSIDE the BOM tab */}
+              <div className="bom-picker-section">
+                <div className="bom-picker-label">
+                  <Package size={13} /> Add Materials to this BOM
+                </div>
+                <div className="bom-search" style={{ marginBottom: 8 }}>
+                  <Search size={15} className="bom-search-icon" />
+                  <input
+                    type="text"
+                    placeholder="Search materials by name, category or supplier..."
+                    value={bomMaterialSearch}
+                    onChange={(e) => setBomMaterialSearch(e.target.value)}
+                  />
+                  {bomMaterialSearch && (
+                    <button
+                      type="button"
+                      className="bom-search-clear"
+                      onClick={() => setBomMaterialSearch('')}
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+
+                {bomPickerMaterials.length === 0 ? (
+                  <div className="bom-picker-empty">
+                    <Info size={14} />
+                    <span>
+                      {materials.length === 0
+                        ? 'No materials in inventory yet. Add some in the Materials tab first.'
+                        : materialIdsInBOM.size === materials.length
+                          ? 'All materials are already in this BOM.'
+                          : 'No materials match your search.'}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="bom-picker-list">
+                    {bomPickerMaterials.map((m) => (
+                      <button
+                        key={m.id}
+                        type="button"
+                        className="bom-picker-item"
+                        onClick={() => addMaterialToBOM(m)}
+                      >
+                        <div className="bom-picker-info">
+                          <div className="bom-picker-name">{m.name}</div>
+                          <div className="bom-picker-meta">
+                            <span>{m.category}</span>
+                            <span>·</span>
+                            <span>{m.quantity} {m.unit} in stock</span>
+                          </div>
+                        </div>
+                        <div className="bom-picker-price">
+                          {Utils.formatCurrency(m.unitPrice)}
+                        </div>
+                        <PlusCircle size={14} className="bom-picker-add-icon" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Selected materials */}
               <div className="bom-materials-list">
                 <div className="bom-materials-header">
-                  <h4>Materials ({bomForm.materials.length})</h4>
+                  <h4>Selected Materials ({bomForm.materials.length})</h4>
                 </div>
                 {bomForm.materials.length === 0 ? (
-                  <div className="bom-empty-mini">Add materials from the Materials tab.</div>
+                  <div className="bom-empty-mini">
+                    No materials added yet. Use the picker above or the Materials tab.
+                  </div>
                 ) : (
                   bomForm.materials.map((mat, index) => (
-                    <div key={index} className="bom-material-row">
+                    <div key={`${mat.materialId}-${index}`} className="bom-material-row">
                       <div className="bom-mat-info">
                         <span className="bom-mat-name">{mat.name}</span>
-                        <span className="bom-mat-unit">{mat.unit}</span>
+                        <span className="bom-mat-unit">{mat.unit} · {Utils.formatCurrency(mat.unitPrice)} each</span>
                       </div>
                       <div className="bom-mat-controls">
-                        <input type="number" step="0.01" value={mat.quantity}
+                        <input type="number" step="0.01" min="0" value={mat.quantity}
                           onChange={e => updateBOMQuantity(index, e.target.value)}
                           className="bom-qty-input" />
                         <span className="bom-mat-cost">{Utils.formatCurrency(mat.totalCost)}</span>
                         <button type="button" className="bom-icon-btn bom-icon-danger"
-                          onClick={() => removeFromBOM(index)}>
+                          onClick={() => removeFromBOM(index)}
+                          title="Remove from BOM">
                           <X size={12} />
                         </button>
                       </div>
@@ -744,13 +1193,13 @@ const BOMComponent = ({ data, updateData }) => {
               <div className="bom-form-row">
                 <div className="bom-form-group">
                   <label>Estimated Hours</label>
-                  <input type="number" step="0.5" value={bomForm.estimatedHours}
+                  <input type="number" step="0.5" min="0" value={bomForm.estimatedHours}
                     onChange={e => setBomForm({ ...bomForm, estimatedHours: e.target.value })}
                     placeholder="0" className="bom-form-input" />
                 </div>
                 <div className="bom-form-group">
                   <label>Labour Cost (BD)</label>
-                  <input type="number" step="0.001" value={bomForm.labourCost}
+                  <input type="number" step="0.001" min="0" value={bomForm.labourCost}
                     onChange={e => setBomForm({ ...bomForm, labourCost: e.target.value })}
                     placeholder="0.000" className="bom-form-input" />
                 </div>
@@ -758,38 +1207,31 @@ const BOMComponent = ({ data, updateData }) => {
 
               <div className="bom-form-group">
                 <label>Overhead Percentage (%)</label>
-                <input type="number" step="0.1" value={bomForm.overheadPercentage}
+                <input type="number" step="0.1" min="0" value={bomForm.overheadPercentage}
                   onChange={e => setBomForm({ ...bomForm, overheadPercentage: e.target.value })}
                   placeholder="10" className="bom-form-input" />
               </div>
 
               {bomForm.materials.length > 0 && (
                 <div className="bom-summary">
-                  {(() => {
-                    const mc = bomForm.materials.reduce((s, m) => s + m.totalCost, 0);
-                    const lc = parseFloat(bomForm.labourCost) || 0;
-                    const oh = (mc + lc) * (parseFloat(bomForm.overheadPercentage) / 100);
-                    return (
-                      <>
-                        <div className="bom-summary-row"><span>Material Cost:</span><span>{Utils.formatCurrency(mc)}</span></div>
-                        <div className="bom-summary-row"><span>Labour Cost:</span><span>{Utils.formatCurrency(lc)}</span></div>
-                        <div className="bom-summary-row"><span>Overhead ({bomForm.overheadPercentage}%):</span><span>{Utils.formatCurrency(oh)}</span></div>
-                        <div className="bom-summary-row total"><span>Total Cost:</span><strong>{Utils.formatCurrency(mc + lc + oh)}</strong></div>
-                      </>
-                    );
-                  })()}
+                  <div className="bom-summary-row"><span>Material Cost:</span><span>{Utils.formatCurrency(mc)}</span></div>
+                  <div className="bom-summary-row"><span>Labour Cost:</span><span>{Utils.formatCurrency(lc)}</span></div>
+                  <div className="bom-summary-row"><span>Overhead ({ohPct}%):</span><span>{Utils.formatCurrency(oh)}</span></div>
+                  <div className="bom-summary-row total"><span>Total Cost:</span><strong>{Utils.formatCurrency(mc + lc + oh)}</strong></div>
                 </div>
               )}
 
               <div className="bom-form-actions">
-                <button type="submit" className="bom-btn bom-btn-primary" disabled={bomForm.materials.length === 0}>
-                  <Save size={14} /> Save BOM
+                <button type="submit" className="bom-btn bom-btn-primary"
+                  disabled={bomForm.materials.length === 0 || saving}>
+                  {saving ? <Loader2 size={14} className="bom-spin" /> : <Save size={14} />}
+                  {saving ? 'Saving…' : 'Save BOM'}
                 </button>
               </div>
             </form>
           </div>
 
-          {/* Saved BOMs */}
+          {/* -------- Saved BOMs -------- */}
           <div className="bom-card">
             <div className="bom-card-header">
               <div className="bom-card-title">
@@ -866,8 +1308,8 @@ const BOMComponent = ({ data, updateData }) => {
             </select>
           </div>
           <div className="bom-form-group">
-            <label>Area (m²)</label>
-            <input type="number" value={predictionParams.area}
+            <label>Area (m²) <span className="bom-required">*</span></label>
+            <input type="number" min="1" value={predictionParams.area}
               onChange={e => setPredictionParams({ ...predictionParams, area: e.target.value })}
               placeholder="Area in m²" className="bom-form-input" />
           </div>
@@ -894,6 +1336,11 @@ const BOMComponent = ({ data, updateData }) => {
             </select>
           </div>
         </div>
+        {predictionError && (
+          <div className="bom-form-error">
+            <AlertTriangle size={14} /> {predictionError}
+          </div>
+        )}
         <div className="bom-form-actions">
           <button className="bom-btn bom-btn-primary" onClick={generatePrediction}>
             <TrendingUpIcon size={14} /> Generate Prediction
@@ -922,13 +1369,23 @@ const BOMComponent = ({ data, updateData }) => {
             </div>
             <div className="bom-pred-item">
               <span className="bom-pred-label">Labor Hours</span>
-              <span className="bom-pred-value">{predictionResult.laborHours.toFixed(1)} hrs</span>
+              <span className="bom-pred-value">{predictionResult.laborHours} hrs</span>
             </div>
             <div className="bom-pred-item">
               <span className="bom-pred-label">Timeline</span>
               <span className="bom-pred-value">{predictionResult.timeline} days</span>
             </div>
           </div>
+
+          {predictionResult.estimatedCount > 0 && (
+            <div className="bom-pred-warning">
+              <Info size={13} />
+              <span>
+                {predictionResult.estimatedCount} of {predictionResult.totalMaterialCount} materials
+                used fallback prices (marked with <strong>*</strong>) — add them to inventory for accurate costs.
+              </span>
+            </div>
+          )}
 
           <div className="bom-card">
             <div className="bom-card-header">
@@ -945,61 +1402,29 @@ const BOMComponent = ({ data, updateData }) => {
             <div className="bom-pred-materials-grid">
               {Object.entries(predictionResult.materials).map(([key, value]) => (
                 <div key={key} className="bom-pred-material">
-                  <div className="bom-pred-mat-name">{key.charAt(0).toUpperCase() + key.slice(1)}</div>
+                  <div className="bom-pred-mat-name">
+                    {key.charAt(0).toUpperCase() + key.slice(1)}
+                    {value.estimatedPrice && <span className="bom-est-badge" title="Using fallback price">*</span>}
+                  </div>
                   <div className="bom-pred-mat-qty">{value.quantity.toFixed(2)} {value.unit}</div>
-                  {value.cost && (
+                  {value.cost !== undefined && (
                     <div className="bom-pred-mat-cost">
                       {Utils.formatCurrency(value.cost)}
-                      {value.estimatedPrice && <span className="bom-est-badge">*</span>}
+                      {value.matchedMaterial && (
+                        <span className="bom-pred-mat-source" title={`Matched: ${value.matchedMaterial}`}>
+                          ✓
+                        </span>
+                      )}
                     </div>
                   )}
                 </div>
               ))}
             </div>
             <div className="bom-pred-actions">
-              <button className="bom-btn bom-btn-secondary" onClick={() => {
-                const list = [...materials];
-                Object.entries(predictionResult.materials).forEach(([key, value]) => {
-                  const existing = list.find(m => m.name.toLowerCase().includes(key));
-                  if (!existing) {
-                    list.push({
-                      id: Date.now().toString() + Math.random().toString(36).slice(2, 5),
-                      name: key.charAt(0).toUpperCase() + key.slice(1),
-                      category: 'Construction', unit: value.unit,
-                      unitPrice: 50, quantity: 0, supplier: '',
-                      reorderLevel: value.quantity * 0.2
-                    });
-                  }
-                });
-                updateData({ materials: list });
-                alert('Predicted materials added to inventory!');
-              }}>
+              <button className="bom-btn bom-btn-secondary" onClick={handleAddPredictionToInventory}>
                 <PlusCircle size={14} /> Add to Inventory
               </button>
-              <button className="bom-btn bom-btn-primary" onClick={() => {
-                const newMaterials = Object.entries(predictionResult.materials).map(([key, value]) => ({
-                  materialId: Date.now().toString() + Math.random().toString(36).slice(2, 5),
-                  name: key.charAt(0).toUpperCase() + key.slice(1),
-                  unit: value.unit,
-                  unitPrice: value.cost ? value.cost / value.quantity : 50,
-                  quantity: value.quantity,
-                  totalCost: value.cost || value.quantity * 50
-                }));
-                const bom = {
-                  id: Date.now().toString(),
-                  projectName: `${predictionResult.projectType} Project - ${Utils.today()}`,
-                  siteId: '', materials: newMaterials,
-                  estimatedHours: predictionResult.laborHours.toString(),
-                  labourCost: (predictionResult.laborHours * 8).toString(),
-                  overheadPercentage: '10',
-                  totalMaterialCost: predictionResult.estimatedCost,
-                  overhead: predictionResult.estimatedCost * 0.1,
-                  totalCost: predictionResult.estimatedCost * 1.1,
-                  createdAt: new Date().toISOString()
-                };
-                updateData({ bom: [...boms, bom] });
-                alert('BOM created from prediction!');
-              }}>
+              <button className="bom-btn bom-btn-primary" onClick={handleCreateBOMFromPrediction}>
                 <ClipboardList size={14} /> Create BOM
               </button>
             </div>
@@ -1054,12 +1479,12 @@ const BOMComponent = ({ data, updateData }) => {
                   <select value={materialForm.unit}
                     onChange={e => setMaterialForm({ ...materialForm, unit: e.target.value })}
                     className="bom-form-select">
-                    {units.map(u => <option key={u} value={u}>{u}</option>)}
+                    {availableUnitNames.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </div>
                 <div className="bom-form-group">
                   <label>Unit Price (BD)</label>
-                  <input type="number" step="0.001" value={materialForm.unitPrice}
+                  <input type="number" step="0.001" min="0" value={materialForm.unitPrice}
                     onChange={e => setMaterialForm({ ...materialForm, unitPrice: e.target.value })}
                     placeholder="0.000" className="bom-form-input" />
                 </div>
@@ -1067,13 +1492,13 @@ const BOMComponent = ({ data, updateData }) => {
               <div className="bom-form-row">
                 <div className="bom-form-group">
                   <label>Current Quantity</label>
-                  <input type="number" step="0.01" value={materialForm.quantity}
+                  <input type="number" step="0.01" min="0" value={materialForm.quantity}
                     onChange={e => setMaterialForm({ ...materialForm, quantity: e.target.value })}
                     placeholder="0" className="bom-form-input" />
                 </div>
                 <div className="bom-form-group">
                   <label>Reorder Level</label>
-                  <input type="number" step="0.01" value={materialForm.reorderLevel}
+                  <input type="number" step="0.01" min="0" value={materialForm.reorderLevel}
                     onChange={e => setMaterialForm({ ...materialForm, reorderLevel: e.target.value })}
                     placeholder="0" className="bom-form-input" />
                 </div>
@@ -1105,6 +1530,13 @@ const BOMComponent = ({ data, updateData }) => {
   // ============================================
   return (
     <div className={`bom-root ${mounted ? 'is-mounted' : ''}`}>
+      {toast && (
+        <div className={`bom-toast bom-toast-${toast.type}`} key={toast.id}>
+          {toast.type === 'success' ? <CheckCircle size={15} /> : <AlertCircle size={15} />}
+          <span>{toast.message}</span>
+        </div>
+      )}
+
       <div className="bom-ambient">
         <div className="bom-orb bom-orb-1" />
         <div className="bom-orb bom-orb-2" />
@@ -1125,8 +1557,9 @@ const BOMComponent = ({ data, updateData }) => {
           </div>
         </div>
         <div className="bom-header-right">
-          <button className="bom-btn bom-btn-ghost" onClick={() => window.location.reload()}>
-            <RefreshCw size={14} /> Refresh
+          <button className="bom-btn bom-btn-ghost" onClick={() => fetchMaterials({ showLoader: true })} disabled={materialsLoading}>
+            {materialsLoading ? <Loader2 size={14} className="bom-spin" /> : <RefreshCw size={14} />}
+            {materialsLoading ? 'Refreshing…' : 'Refresh'}
           </button>
           <button className="bom-btn bom-btn-primary" onClick={() => { resetMaterialForm(); setShowMaterialForm(true); }}>
             <Plus size={14} /> New Material
