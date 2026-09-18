@@ -58,6 +58,22 @@ import letterheadFooter from '../assets/letterhead-footer.png';
 import background from '../assets/background.png';
 
 // ============================================
+// DATE NORMALIZER — handles Date objects, ISO strings, plain 'YYYY-MM-DD'
+// ============================================
+const normDate = (d) => {
+  if (!d) return '';
+  if (typeof d === 'string') return d.length > 10 ? d.slice(0, 10) : d;
+  try {
+    const dt = new Date(d);
+    if (isNaN(dt.getTime())) return '';
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const day = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  } catch { return ''; }
+};
+
+// ============================================
 // ANIMATED NUMBER — counts up smoothly on change
 // ============================================
 const AnimatedNumber = ({ value, decimals = 0, prefix = '', suffix = '', duration = 700 }) => {
@@ -121,6 +137,42 @@ const getAllExpenses = (entry) => {
 const getEntryProfit = (entry) => {
   if (!entry) return 0;
   return (Number(entry.kamai) || 0) - getAllExpenses(entry);
+};
+
+// ============================================
+// ⭐ ATTENDANCE HOURS — single source of truth
+// Prefers backend-computed totalHours (respects break + OT settings).
+// Falls back to raw clock diff only when totalHours is missing.
+// ============================================
+const getAttendanceHours = (record) => {
+  if (!record) return 0;
+
+  // Backend-computed totalHours (best source — respects breakEnabled/overtimeEnabled)
+  if (typeof record.totalHours === 'number' && record.totalHours > 0) {
+    return record.totalHours;
+  }
+
+  // Fallback: raw hours minus break (if break is enabled for this record)
+  if (record.checkedIn && record.checkedOut) {
+    const inMs = new Date(record.checkedIn).getTime();
+    const outMs = new Date(record.checkedOut).getTime();
+    if (isNaN(inMs) || isNaN(outMs) || outMs <= inMs) return 0;
+
+    let hours = (outMs - inMs) / (1000 * 60 * 60);
+
+    // Only subtract break if explicitly enabled on the record
+    if (record.breakEnabled === true && record.breakStart && record.breakEnd) {
+      const bs = new Date(record.breakStart).getTime();
+      const be = new Date(record.breakEnd).getTime();
+      if (!isNaN(bs) && !isNaN(be) && be > bs) {
+        hours -= (be - bs) / (1000 * 60 * 60);
+      }
+    }
+
+    return Math.max(0, hours);
+  }
+
+  return 0;
 };
 
 // ============================================
@@ -213,11 +265,18 @@ const DashboardComponent = ({ data }) => {
 
   const stats = useMemo(() => {
     const range = getDateRange();
-    const start = range.start;
-    const end = range.end;
+    const start = normDate(range.start);
+    const end = normDate(range.end);
 
-    let filteredEntries = (data.entries || []).filter(e => e.date >= start && e.date <= end);
-    let filteredAttendance = (data.attendance || []).filter(a => a.date >= start && a.date <= end);
+    // ⭐ Normalize dates before comparison so ISO strings & Date objects work
+    let filteredEntries = (data.entries || []).filter(e => {
+      const d = normDate(e.date);
+      return d >= start && d <= end;
+    });
+    let filteredAttendance = (data.attendance || []).filter(a => {
+      const d = normDate(a.date);
+      return d >= start && d <= end;
+    });
 
     if (selectedSite !== 'all') {
       filteredEntries = filteredEntries.filter(e => e.siteId === selectedSite);
@@ -243,9 +302,11 @@ const DashboardComponent = ({ data }) => {
 
     // ==== Daily chart data ====
     const dailyData = filteredEntries.reduce((acc, e) => {
-      if (!acc[e.date]) {
-        acc[e.date] = {
-          date: e.date,
+      const dateKey = normDate(e.date);
+      if (!dateKey) return acc;
+      if (!acc[dateKey]) {
+        acc[dateKey] = {
+          date: dateKey,
           revenue: 0,
           expenses: 0,
           labour: 0,
@@ -259,17 +320,17 @@ const DashboardComponent = ({ data }) => {
           sites: new Set()
         };
       }
-      acc[e.date].revenue += Number(e.kamai) || 0;
-      acc[e.date].labour += Number(e.labour) || 0;
-      acc[e.date].overhead += Number(e.overhead) || 0;
-      acc[e.date].oneTime += Number(e.oneTime) || 0;
-      acc[e.date].material += Number(e.materialCost) || 0;
-      acc[e.date].equipment += Number(e.equipmentCost) || 0;
-      acc[e.date].transport += Number(e.transportCost) || 0;
-      acc[e.date].other += Number(e.otherExpense) || 0;
-      acc[e.date].expenses += getAllExpenses(e);
-      acc[e.date].profit += getEntryProfit(e);
-      if (e.siteId) acc[e.date].sites.add(e.siteId);
+      acc[dateKey].revenue += Number(e.kamai) || 0;
+      acc[dateKey].labour += Number(e.labour) || 0;
+      acc[dateKey].overhead += Number(e.overhead) || 0;
+      acc[dateKey].oneTime += Number(e.oneTime) || 0;
+      acc[dateKey].material += Number(e.materialCost) || 0;
+      acc[dateKey].equipment += Number(e.equipmentCost) || 0;
+      acc[dateKey].transport += Number(e.transportCost) || 0;
+      acc[dateKey].other += Number(e.otherExpense) || 0;
+      acc[dateKey].expenses += getAllExpenses(e);
+      acc[dateKey].profit += getEntryProfit(e);
+      if (e.siteId) acc[dateKey].sites.add(e.siteId);
       return acc;
     }, {});
 
@@ -284,24 +345,22 @@ const DashboardComponent = ({ data }) => {
     const presentWorkerIds = new Set(filteredAttendance.filter(a => a.present).map(a => a.workerId));
     const workersPresent = presentWorkerIds.size;
 
-    const totalHours = filteredAttendance.reduce((sum, a) => {
-      if (a.checkedIn && a.checkedOut) return sum + Utils.calculateHoursWorked(a.checkedIn, a.checkedOut);
-      if (typeof a.totalHours === 'number' && a.totalHours > 0) return sum + a.totalHours;
-      return sum;
-    }, 0);
+    // ⭐ CHANGED — prefer backend-computed totalHours (respects break/OT settings)
+    const totalHours = filteredAttendance.reduce(
+      (sum, a) => sum + getAttendanceHours(a),
+      0
+    );
 
     const totalWages = filteredAttendance.reduce((sum, a) => {
       if (typeof a.wageEarned === 'number' && a.wageEarned > 0) return sum + a.wageEarned;
       const worker = workersMap[a.workerId];
       if (!worker) return sum;
-      const hours = a.checkedIn && a.checkedOut
-        ? Utils.calculateHoursWorked(a.checkedIn, a.checkedOut)
-        : (a.totalHours || 0);
+      const hours = getAttendanceHours(a);
       return sum + Utils.calculateDailyWage(hours, worker.dailyRate);
     }, 0);
 
-    // ==== Site performance — fixed profit ====
-    const sitePerformance = (data.sites || []).map(site => {
+    // ==== Site performance — includes Unassigned bucket ====
+    const sitePerformanceBase = (data.sites || []).map(site => {
       const siteEntries = filteredEntries.filter(e => e.siteId === site.id);
       const revenue = Utils.calculateTotal(siteEntries, 'kamai');
       const labour = Utils.calculateTotal(siteEntries, 'labour');
@@ -314,9 +373,7 @@ const DashboardComponent = ({ data }) => {
       const expenses = labour + overhead + oneTime + material + equipment + transport + other;
       const profit = revenue - expenses;
 
-      const siteAttendance = (data.attendance || []).filter(a =>
-        a.date >= start && a.date <= end && a.siteId === site.id
-      );
+      const siteAttendance = filteredAttendance.filter(a => a.siteId === site.id);
       const sitePresentWorkers = new Set(
         siteAttendance.filter(a => a.present).map(a => a.workerId)
       ).size;
@@ -336,9 +393,48 @@ const DashboardComponent = ({ data }) => {
         profit,
         entryCount: siteEntries.length,
         presentWorkers: sitePresentWorkers,
-        profitMargin: revenue > 0 ? (profit / revenue) * 100 : 0
+        profitMargin: revenue > 0 ? (profit / revenue) * 100 : 0,
+        isUnassigned: false
       };
-    }).sort((a, b) => b.profit - a.profit);
+    });
+
+    // ⭐ Entries with no siteId — bucket them so revenue isn't lost
+    const unassignedEntries = filteredEntries.filter(e => !e.siteId);
+    let unassignedSite = null;
+    if (unassignedEntries.length > 0) {
+      const uRev = Utils.calculateTotal(unassignedEntries, 'kamai');
+      const uLab = Utils.calculateTotal(unassignedEntries, 'labour');
+      const uOh  = Utils.calculateTotal(unassignedEntries, 'overhead');
+      const uOt  = Utils.calculateTotal(unassignedEntries, 'oneTime');
+      const uMat = Utils.calculateTotal(unassignedEntries, 'materialCost');
+      const uEqp = Utils.calculateTotal(unassignedEntries, 'equipmentCost');
+      const uTrn = Utils.calculateTotal(unassignedEntries, 'transportCost');
+      const uOth = Utils.calculateTotal(unassignedEntries, 'otherExpense');
+      const uExp = uLab + uOh + uOt + uMat + uEqp + uTrn + uOth;
+      const uProfit = uRev - uExp;
+
+      unassignedSite = {
+        id: '__unassigned__',
+        name: 'Unassigned (No Site)',
+        revenue: uRev,
+        labour: uLab,
+        overhead: uOh,
+        oneTime: uOt,
+        material: uMat,
+        equipment: uEqp,
+        transport: uTrn,
+        other: uOth,
+        expenses: uExp,
+        profit: uProfit,
+        entryCount: unassignedEntries.length,
+        presentWorkers: 0,
+        profitMargin: uRev > 0 ? (uProfit / uRev) * 100 : 0,
+        isUnassigned: true
+      };
+    }
+
+    const sitePerformance = [...sitePerformanceBase, ...(unassignedSite ? [unassignedSite] : [])]
+      .sort((a, b) => b.revenue - a.revenue || b.profit - a.profit);
 
     // ==== Expense breakdown — all 7 categories ====
     const expenseBreakdown = [
@@ -353,7 +449,7 @@ const DashboardComponent = ({ data }) => {
 
     const COLORS = ['#0ea5e9', '#f43f5e', '#f59e0b', '#8b5cf6', '#10b981', '#ec4899', '#6366f1'];
 
-    // ==== Month over month — corrected ====
+    // ==== Month over month ====
     const monthComparison = (() => {
       const currentMonth = new Date().getMonth();
       const currentYear = new Date().getFullYear();
@@ -1092,7 +1188,11 @@ const DashboardComponent = ({ data }) => {
               {stats.sitePerformance.slice(0, 6).map((site, i) => {
                 const revPct = stats.totalRevenue > 0 ? (site.revenue / stats.totalRevenue) * 100 : 0;
                 return (
-                  <div key={site.id} className="db-site-row" style={{ animationDelay: `${i * 60}ms` }}>
+                  <div
+                    key={site.id}
+                    className={`db-site-row ${site.isUnassigned ? 'is-unassigned' : ''}`}
+                    style={{ animationDelay: `${i * 60}ms` }}
+                  >
                     <div className="db-site-rank">
                       {i === 0 ? <Crown size={14} /> : i + 1}
                     </div>

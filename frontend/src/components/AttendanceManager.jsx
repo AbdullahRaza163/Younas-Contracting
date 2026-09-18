@@ -12,7 +12,7 @@ import {
   PlayCircle, StopCircle, CalendarDays, FileSpreadsheet, Package, Box,
   Layers, BarChart3, PieChart as PieChartIcon, LineChart as LineChartIcon,
   ChevronLeft, ChevronsLeft, ChevronsRight, Flame, Target, Percent,
-  Banknote, Minus, List, Sun, Moon, Sliders, RotateCcw
+  Banknote, Minus, List, Sun, Moon, Sliders, RotateCcw, Coffee, Ban
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
@@ -37,7 +37,7 @@ const dbgErr = (...args) => { if (DEBUG) console.error('%c[AM-ERR]', 'color:#dc2
 const dbgWarn = (...args) => { if (DEBUG) console.warn('%c[AM-WARN]', 'color:#f59e0b;font-weight:bold', ...args); };
 
 // ============================================
-// DEFAULTS
+// DEFAULTS  ⭐ breakEnabled + overtimeEnabled added
 // ============================================
 const DEFAULT_SETTINGS = {
   shiftStartTime: '07:00',
@@ -46,8 +46,9 @@ const DEFAULT_SETTINGS = {
   breakStartTime: '12:00',
   breakEndTime: '13:00',
   breakHours: 1,
+  breakEnabled: true,          // ⭐ NEW — global break toggle
   overtimeRate: 1.5,
-  overtimeEnabled: true,
+  overtimeEnabled: true,       // ⭐ global OT toggle
   earlyInThreshold: 15,
   lateInThreshold: 15,
   earlyOutThreshold: 15,
@@ -137,59 +138,94 @@ const normalizeDate = (raw) => {
   } catch { return ''; }
 };
 
-// ⭐ Compute hours worked from a record, falling back to settings for break times.
-// Returns { hoursWorked, overtimeHours, normalHours, breakHours, overtimeRate }
+// ⭐⭐⭐ CORE: Compute hours with settings — respects breakEnabled & overtimeEnabled
+// record.breakEnabled  (per-record override)  → falls back to cfg.breakEnabled
+// record.overtimeEnabled (per-record override) → falls back to cfg.overtimeEnabled
 const computeHoursWithSettings = (record, cfg = DEFAULT_SETTINGS) => {
   if (!record?.checkedIn || !record?.checkedOut) {
-    return { hoursWorked: 0, overtimeHours: 0, normalHours: 0, breakHours: 0 };
+    return {
+      hoursWorked: 0, overtimeHours: 0, normalHours: 0, breakHours: 0,
+      breakEnabled: cfg.breakEnabled !== false,
+      overtimeEnabled: cfg.overtimeEnabled !== false,
+    };
   }
 
   const inMs = new Date(record.checkedIn).getTime();
   const outMs = new Date(record.checkedOut).getTime();
   if (isNaN(inMs) || isNaN(outMs) || outMs <= inMs) {
-    return { hoursWorked: 0, overtimeHours: 0, normalHours: 0, breakHours: 0 };
+    return {
+      hoursWorked: 0, overtimeHours: 0, normalHours: 0, breakHours: 0,
+      breakEnabled: cfg.breakEnabled !== false,
+      overtimeEnabled: cfg.overtimeEnabled !== false,
+    };
   }
 
   const rawHours = (outMs - inMs) / (1000 * 60 * 60);
 
-  // ⭐ Break times: record value → settings fallback
+  // ⭐ Resolve break toggle: record override → settings
+  const breakEnabled = record.breakEnabled !== undefined
+    ? record.breakEnabled !== false
+    : cfg.breakEnabled !== false;
+
+  // ⭐ Resolve OT toggle: record override → settings
+  const overtimeEnabled = record.overtimeEnabled !== undefined
+    ? record.overtimeEnabled !== false
+    : cfg.overtimeEnabled !== false;
+
+  // ⭐ Break hours — ONLY computed when breakEnabled is true
   let breakHours = 0;
-  const dateStr = normalizeDate(record.date);
-  const bStart = record.breakStart || (cfg.breakStartTime && dateStr
-    ? buildISO(dateStr, cfg.breakStartTime) : null);
-  const bEnd = record.breakEnd || (cfg.breakEndTime && dateStr
-    ? buildISO(dateStr, cfg.breakEndTime) : null);
+  if (breakEnabled) {
+    const dateStr = normalizeDate(record.date);
+    const bStart = record.breakStart || (cfg.breakStartTime && dateStr
+      ? buildISO(dateStr, cfg.breakStartTime) : null);
+    const bEnd = record.breakEnd || (cfg.breakEndTime && dateStr
+      ? buildISO(dateStr, cfg.breakEndTime) : null);
 
-  if (bStart && bEnd) {
-    const bsMs = new Date(bStart).getTime();
-    const beMs = new Date(bEnd).getTime();
-    if (!isNaN(bsMs) && !isNaN(beMs) && beMs > bsMs) {
-      breakHours = (beMs - bsMs) / (1000 * 60 * 60);
+    if (bStart && bEnd) {
+      const bsMs = new Date(bStart).getTime();
+      const beMs = new Date(bEnd).getTime();
+      if (!isNaN(bsMs) && !isNaN(beMs) && beMs > bsMs) {
+        breakHours = (beMs - bsMs) / (1000 * 60 * 60);
+      }
+    } else if (cfg.breakHours) {
+      breakHours = Number(cfg.breakHours) || 0;
     }
-  } else if (cfg.breakHours) {
-    breakHours = Number(cfg.breakHours) || 0;
+
+    // Auto-apply settings.breakHours if none computed and shift is long enough
+    if (breakHours === 0 && cfg.breakHours > 0) {
+      const shiftHoursCfg = Number(cfg.shiftHours) || 8;
+      if (rawHours >= shiftHoursCfg) breakHours = Number(cfg.breakHours) || 0;
+    }
   }
 
-  // Auto-apply settings.breakHours if none computed and shift is long enough
-  if (breakHours === 0 && cfg.breakHours > 0) {
-    const shiftHoursCfg = Number(cfg.shiftHours) || 8;
-    if (rawHours >= shiftHoursCfg) breakHours = Number(cfg.breakHours) || 0;
-  }
+  // ⭐ Paid hours = raw - break (only when break enabled)
+  const paidHours = breakEnabled
+    ? Math.max(0, rawHours - breakHours)
+    : rawHours;
 
-  const paidHours = Math.max(0, rawHours - breakHours);
   const shiftHours = Number(cfg.shiftHours) || 8;
-  const overtimeHours = Math.max(0, paidHours - shiftHours);
-  const normalHours = Math.min(paidHours, shiftHours);
+
+  // ⭐ OT only computed when enabled
+  const overtimeHours = overtimeEnabled
+    ? Math.max(0, paidHours - shiftHours)
+    : 0;
+
+  // ⭐ Normal hours = either capped at shift (when OT enabled)
+  //    or full paid hours (when OT disabled — all hours are normal)
+  const normalHours = overtimeEnabled
+    ? Math.min(paidHours, shiftHours)
+    : paidHours;
 
   return {
     hoursWorked: paidHours,
     overtimeHours,
     normalHours,
     breakHours,
+    breakEnabled,
+    overtimeEnabled,
   };
 };
 
-// ⭐ Compute minutes late (positive) or early (negative) for clock-in
 const getClockInMinutes = (checkedIn, cfg = DEFAULT_SETTINGS) => {
   if (!checkedIn) return null;
   const inMins = minutesSinceMidnight(checkedIn);
@@ -198,7 +234,6 @@ const getClockInMinutes = (checkedIn, cfg = DEFAULT_SETTINGS) => {
   return inMins - startMins;
 };
 
-// ⭐ Compute minutes late (positive) or early (negative) for clock-out
 const getClockOutMinutes = (checkedOut, cfg = DEFAULT_SETTINGS) => {
   if (!checkedOut) return null;
   const outMins = minutesSinceMidnight(checkedOut);
@@ -207,13 +242,14 @@ const getClockOutMinutes = (checkedOut, cfg = DEFAULT_SETTINGS) => {
   return outMins - endMins;
 };
 
-// ⭐ Compute wage from normal/OT hours + hourly rate + OT multiplier from settings
-const computeWage = (normalHours, overtimeHours, worker, cfg = DEFAULT_SETTINGS) => {
+// ⭐ Compute wage — respects per-record & global OT toggle
+const computeWage = (normalHours, overtimeHours, worker, cfg = DEFAULT_SETTINGS, record = null) => {
   const otRate = Number(cfg.overtimeRate) || 1.5;
-  const otEnabled = cfg.overtimeEnabled !== false;
+  const otEnabled = record?.overtimeEnabled !== undefined
+    ? record.overtimeEnabled !== false
+    : cfg.overtimeEnabled !== false;
   const shiftHours = Number(cfg.shiftHours) || 8;
 
-  // Prefer worker.hourlyRate; fall back to dailyRate / shiftHours
   let hourlyRate = Number(worker?.hourlyRate) || 0;
   if (!hourlyRate && Number(worker?.dailyRate) && shiftHours) {
     hourlyRate = Number(worker.dailyRate) / shiftHours;
@@ -336,10 +372,12 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     siteId: '',
     notes: '',
     present: true,
+    breakEnabled: true,       // ⭐ NEW
+    overtimeEnabled: true,    // ⭐ NEW
   });
   const [editLoading, setEditLoading] = useState(false);
 
-  // ⭐ Optimistic local overrides — survives a failed refreshData
+  // ⭐ Optimistic local overrides
   const [localAttendanceOverride, setLocalAttendanceOverride] = useState({});
 
   const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -389,7 +427,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   }, [sites]);
 
   // ============================================
-  // MERGED ATTENDANCE — applies optimistic overrides on top of server data
+  // MERGED ATTENDANCE
   // ============================================
   const mergedAttendance = useMemo(() => {
     const server = data.attendance || [];
@@ -401,7 +439,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   }, [data.attendance, localAttendanceOverride]);
 
   // ============================================
-  // LOAD ATTENDANCE SETTINGS
+  // LOAD SETTINGS
   // ============================================
   const loadSettings = useCallback(async () => {
     setSettingsLoading(true);
@@ -445,7 +483,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   };
 
   // ============================================
-  // DATE FILTER HANDLERS
+  // DATE FILTER
   // ============================================
   const handleDateFilterChange = useCallback((filterType) => {
     setActiveDateFilter(filterType);
@@ -480,7 +518,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   }, [activeDateFilter, customDateFrom, customDateTo, selectedDate]);
 
   // ============================================
-  // LOAD SALARY REPORT
+  // SALARY REPORT
   // ============================================
   const loadSalaryReport = useCallback(async () => {
     if (!selectedMonth) return;
@@ -513,7 +551,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   }, [viewMode, reportViewMode, selectedMonth, loadSalaryReport]);
 
   // ============================================
-  // WORKER ATTENDANCE — uses mergedAttendance
+  // WORKER ATTENDANCE
   // ============================================
   const dateRangeAttendance = useMemo(() => {
     const range = activeDateRange;
@@ -523,9 +561,6 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     });
   }, [mergedAttendance, activeDateRange]);
 
-  // ============================================
-  // ⭐ TODAY ATTENDANCE — auto-applies settings
-  // ============================================
   const todayAttendance = useMemo(() => {
     const range = activeDateRange;
     const isSingleDay = range.from === range.to;
@@ -541,9 +576,10 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       let earlyIn = false, lateIn = false, lateOut = false, earlyOut = false;
       let lateInMinutes = 0, lateOutMinutes = 0;
       let breakStart = null, breakEnd = null, breakHours = 0;
+      let breakEnabled = cfg.breakEnabled !== false;
+      let overtimeEnabled = cfg.overtimeEnabled !== false;
 
       if (isSingleDay) {
-        // ⭐ Read from mergedAttendance (not raw data.attendance) so overrides apply
         record = mergedAttendance.find(
           a => a.workerId === worker.id && a.date === range.from
         );
@@ -551,31 +587,36 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
           checkedInTime = record.checkedIn || null;
           checkedOutTime = record.checkedOut || null;
 
-          // ⭐ Break times: DB value OR settings fallback
-          breakStart = record.breakStart || (cfg.breakStartTime
+          breakStart = record.breakStart || (cfg.breakEnabled !== false && cfg.breakStartTime
             ? buildISO(range.from, cfg.breakStartTime) : null);
-          breakEnd = record.breakEnd || (cfg.breakEndTime
+          breakEnd = record.breakEnd || (cfg.breakEnabled !== false && cfg.breakEndTime
             ? buildISO(range.from, cfg.breakEndTime) : null);
+
+          breakEnabled = record.breakEnabled !== undefined
+            ? record.breakEnabled !== false
+            : cfg.breakEnabled !== false;
+          overtimeEnabled = record.overtimeEnabled !== undefined
+            ? record.overtimeEnabled !== false
+            : cfg.overtimeEnabled !== false;
 
           if (record.checkedIn && !record.checkedOut) {
             status = 'working';
           } else if (record.checkedIn && record.checkedOut) {
             status = 'completed';
 
-            // ⭐ Compute hours using settings-aware helper
             const computed = computeHoursWithSettings(record, cfg);
             hoursWorked = computed.hoursWorked;
             overtimeHours = computed.overtimeHours;
             normalHours = computed.normalHours;
             breakHours = computed.breakHours;
+            breakEnabled = computed.breakEnabled;
+            overtimeEnabled = computed.overtimeEnabled;
 
-            // ⭐ Wage from settings-aware helper
-            wageEarned = computeWage(normalHours, overtimeHours, worker, cfg);
+            wageEarned = computeWage(normalHours, overtimeHours, worker, cfg, record);
           } else if (record.present) {
             status = 'pending';
           }
 
-          // ⭐ Early / Late flags + minutes
           const inStatus = getClockInStatus(record.checkedIn, cfg);
           if (inStatus === 'early_in') earlyIn = true;
           if (inStatus === 'late_in') {
@@ -591,20 +632,17 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
           if (outStatus === 'early_out') earlyOut = true;
         }
       } else {
-        // Multi-day range
         const completed = workerRecords.filter(a => a.checkedIn && a.checkedOut);
         const active = workerRecords.find(a => a.checkedIn && !a.checkedOut);
 
-        // ⭐ Aggregate using settings-aware helper
         completed.forEach(a => {
           const computed = computeHoursWithSettings(a, cfg);
           hoursWorked += computed.hoursWorked;
           overtimeHours += computed.overtimeHours;
           normalHours += computed.normalHours;
           breakHours += computed.breakHours;
+          wageEarned += computeWage(computed.normalHours, computed.overtimeHours, worker, cfg, a);
         });
-
-        wageEarned = computeWage(normalHours, overtimeHours, worker, cfg);
 
         const presentCount = workerRecords.filter(a => a.present).length;
         if (active) {
@@ -629,6 +667,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         earlyIn, lateIn, lateOut, earlyOut,
         lateInMinutes, lateOutMinutes,
         breakStart, breakEnd, breakHours,
+        breakEnabled, overtimeEnabled,
         present: status !== 'absent',
         siteId, siteName,
         recordCount: workerRecords.length,
@@ -681,9 +720,10 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     const lateInCount = todayAttendance.filter(w => w.lateIn).length;
     const lateOutCount = todayAttendance.filter(w => w.lateOut).length;
     const earlyOutCount = todayAttendance.filter(w => w.earlyOut).length;
+    const totalOvertime = todayAttendance.reduce((sum, w) => sum + w.overtimeHours, 0);
     return {
       present: present.length, working: working.length, completed: completed.length,
-      absent: absent.length, totalHours, totalWages, totalWorkers,
+      absent: absent.length, totalHours, totalWages, totalWorkers, totalOvertime,
       attendanceRate: totalWorkers > 0 ? (present.length / totalWorkers) * 100 : 0,
       avgHours: present.length > 0 ? totalHours / present.length : 0,
       earlyInCount, lateInCount, lateOutCount, earlyOutCount,
@@ -757,91 +797,120 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   // KPI
   // ============================================
   const kpiItems = [
-    { id: 'present', icon: UserCheck, label: 'Present', value: dayStats.present,
+    {
+      id: 'present', icon: UserCheck, label: 'Present', value: dayStats.present,
       meta: `${dayStats.attendanceRate.toFixed(0)}% attendance`,
-      color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
-    { id: 'working', icon: Activity, label: 'Currently Working', value: dayStats.working,
+      color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up'
+    },
+    {
+      id: 'working', icon: Activity, label: 'Currently Working', value: dayStats.working,
       meta: `${dayStats.completed} completed`,
-      color: '#3b82f6', accent: 'linear-gradient(90deg,#3b82f6,#60a5fa)', trend: 'up' },
-    { id: 'hours', icon: Timer, label: 'Total Hours',
+      color: '#3b82f6', accent: 'linear-gradient(90deg,#3b82f6,#60a5fa)', trend: 'up'
+    },
+    {
+      id: 'hours', icon: Timer, label: 'Total Hours',
       value: `${dayStats.totalHours.toFixed(1)}h`,
       meta: `Avg ${dayStats.avgHours.toFixed(1)}h`,
-      color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)', trend: 'up' },
-    { id: 'wages', icon: Banknote, label: 'Total Wages',
+      color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)', trend: 'up'
+    },
+    {
+      id: 'overtime', icon: Flame, label: 'Overtime',
+      value: `${dayStats.totalOvertime.toFixed(1)}h`,
+      meta: settings.overtimeEnabled ? `${settings.overtimeRate}× rate` : 'OT disabled',
+      color: '#8b5cf6', accent: 'linear-gradient(90deg,#8b5cf6,#a78bfa)', trend: 'up'
+    },
+    {
+      id: 'wages', icon: Banknote, label: 'Total Wages',
       value: fmtBDShort(dayStats.totalWages),
       meta: `${dayStats.present} present · BD`,
-      color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
-    { id: 'earlyIn', icon: ArrowDownRight, label: 'Early In',
+      color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up'
+    },
+    {
+      id: 'earlyIn', icon: ArrowDownRight, label: 'Early In',
       value: dayStats.earlyInCount,
       meta: 'before expected start',
-      color: '#0ea5e9', accent: 'linear-gradient(90deg,#0ea5e9,#38bdf8)',
-      trend: 'flat' },
-    { id: 'lateIn', icon: ArrowUpRight, label: 'Late In',
+      color: '#0ea5e9', accent: 'linear-gradient(90deg,#0ea5e9,#38bdf8)', trend: 'flat'
+    },
+    {
+      id: 'lateIn', icon: ArrowUpRight, label: 'Late In',
       value: dayStats.lateInCount,
       meta: 'after expected start',
-      color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)',
-      trend: 'flat' },
-    { id: 'lateOut', icon: ArrowUpRight, label: 'Late Out',
-      value: dayStats.lateOutCount,
-      meta: 'after expected end',
-      color: '#8b5cf6', accent: 'linear-gradient(90deg,#8b5cf6,#a78bfa)',
-      trend: 'flat' },
-    { id: 'absent', icon: X, label: 'Absent',
+      color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)', trend: 'flat'
+    },
+    {
+      id: 'absent', icon: X, label: 'Absent',
       value: dayStats.absent,
       meta: `${((dayStats.absent / (dayStats.totalWorkers || 1)) * 100).toFixed(0)}% absent`,
       color: '#ef4444', accent: 'linear-gradient(90deg,#ef4444,#f87171)',
-      trend: dayStats.absent > 0 ? 'down' : 'flat' },
+      trend: dayStats.absent > 0 ? 'down' : 'flat'
+    },
   ];
 
   const cardDetails = {
-    present: { title: 'Present', details: [
-      { label: 'Present', value: dayStats.present },
-      { label: 'Attendance Rate', value: `${dayStats.attendanceRate.toFixed(1)}%` },
-      { label: 'Total Workers', value: dayStats.totalWorkers },
-      { label: 'Absent', value: dayStats.absent }
-    ]},
-    working: { title: 'Currently Working', details: [
-      { label: 'Working', value: dayStats.working },
-      { label: 'Completed', value: dayStats.completed },
-      { label: 'Present', value: dayStats.present },
-      { label: 'Working Rate', value: dayStats.present > 0 ? `${((dayStats.working / dayStats.present) * 100).toFixed(1)}%` : '0%' }
-    ]},
-    hours: { title: 'Total Hours', details: [
-      { label: 'Total Hours', value: `${dayStats.totalHours.toFixed(1)}h` },
-      { label: 'Avg Hours', value: `${dayStats.avgHours.toFixed(1)}h` },
-      { label: 'Present', value: dayStats.present },
-      { label: 'Working Now', value: dayStats.working }
-    ]},
-    wages: { title: 'Total Wages (BD)', details: [
-      { label: 'Total Wages', value: fmtBD(dayStats.totalWages) },
-      { label: 'Avg Wage', value: dayStats.present > 0 ? fmtBD(dayStats.totalWages / dayStats.present) : '0.000 BD' },
-      { label: 'Total Hours', value: `${dayStats.totalHours.toFixed(1)}h` },
-      { label: 'Present', value: dayStats.present }
-    ]},
-    earlyIn: { title: 'Early In', details: [
-      { label: 'Count', value: dayStats.earlyInCount },
-      { label: 'Threshold', value: `>${settings.earlyInThreshold} min before start` },
-      { label: 'Expected Start', value: settings.shiftStartTime },
-      { label: 'Total Workers', value: dayStats.totalWorkers }
-    ]},
-    lateIn: { title: 'Late In', details: [
-      { label: 'Count', value: dayStats.lateInCount },
-      { label: 'Threshold', value: `>${settings.lateInThreshold} min after start` },
-      { label: 'Expected Start', value: settings.shiftStartTime },
-      { label: 'Total Workers', value: dayStats.totalWorkers }
-    ]},
-    lateOut: { title: 'Late Out', details: [
-      { label: 'Count', value: dayStats.lateOutCount },
-      { label: 'Threshold', value: `>${settings.lateOutThreshold} min after end` },
-      { label: 'Expected End', value: settings.shiftEndTime },
-      { label: 'Total Workers', value: dayStats.totalWorkers }
-    ]},
-    absent: { title: 'Absent', details: [
-      { label: 'Absent', value: dayStats.absent },
-      { label: 'Total Workers', value: dayStats.totalWorkers },
-      { label: 'Absent Rate', value: `${((dayStats.absent / (dayStats.totalWorkers || 1)) * 100).toFixed(1)}%` },
-      { label: 'Present', value: dayStats.present }
-    ]}
+    present: {
+      title: 'Present', details: [
+        { label: 'Present', value: dayStats.present },
+        { label: 'Attendance Rate', value: `${dayStats.attendanceRate.toFixed(1)}%` },
+        { label: 'Total Workers', value: dayStats.totalWorkers },
+        { label: 'Absent', value: dayStats.absent }
+      ]
+    },
+    working: {
+      title: 'Currently Working', details: [
+        { label: 'Working', value: dayStats.working },
+        { label: 'Completed', value: dayStats.completed },
+        { label: 'Present', value: dayStats.present },
+        { label: 'Working Rate', value: dayStats.present > 0 ? `${((dayStats.working / dayStats.present) * 100).toFixed(1)}%` : '0%' }
+      ]
+    },
+    hours: {
+      title: 'Total Hours', details: [
+        { label: 'Total Hours', value: `${dayStats.totalHours.toFixed(1)}h` },
+        { label: 'Avg Hours', value: `${dayStats.avgHours.toFixed(1)}h` },
+        { label: 'Present', value: dayStats.present },
+        { label: 'Working Now', value: dayStats.working }
+      ]
+    },
+    overtime: {
+      title: 'Overtime', details: [
+        { label: 'Total OT Hours', value: `${dayStats.totalOvertime.toFixed(1)}h` },
+        { label: 'OT Rate', value: `${settings.overtimeRate}×` },
+        { label: 'Status', value: settings.overtimeEnabled ? 'Enabled' : 'Disabled' },
+        { label: 'Shift Hours', value: `${settings.shiftHours}h` }
+      ]
+    },
+    wages: {
+      title: 'Total Wages (BD)', details: [
+        { label: 'Total Wages', value: fmtBD(dayStats.totalWages) },
+        { label: 'Avg Wage', value: dayStats.present > 0 ? fmtBD(dayStats.totalWages / dayStats.present) : '0.000 BD' },
+        { label: 'Total Hours', value: `${dayStats.totalHours.toFixed(1)}h` },
+        { label: 'Present', value: dayStats.present }
+      ]
+    },
+    earlyIn: {
+      title: 'Early In', details: [
+        { label: 'Count', value: dayStats.earlyInCount },
+        { label: 'Threshold', value: `>${settings.earlyInThreshold} min before start` },
+        { label: 'Expected Start', value: settings.shiftStartTime },
+        { label: 'Total Workers', value: dayStats.totalWorkers }
+      ]
+    },
+    lateIn: {
+      title: 'Late In', details: [
+        { label: 'Count', value: dayStats.lateInCount },
+        { label: 'Threshold', value: `>${settings.lateInThreshold} min after start` },
+        { label: 'Expected Start', value: settings.shiftStartTime },
+        { label: 'Total Workers', value: dayStats.totalWorkers }
+      ]
+    },
+    absent: {
+      title: 'Absent', details: [
+        { label: 'Absent', value: dayStats.absent },
+        { label: 'Total Workers', value: dayStats.totalWorkers },
+        { label: 'Absent Rate', value: `${((dayStats.absent / (dayStats.totalWorkers || 1)) * 100).toFixed(1)}%` },
+        { label: 'Present', value: dayStats.present }
+      ]
+    }
   };
 
   const handleCardHover = (id, e) => {
@@ -880,6 +949,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             breakStart: m.attendance?.breakStart || m.breakStart,
             breakEnd: m.attendance?.breakEnd || m.breakEnd,
             date: selectedDate,
+            breakEnabled: m.attendance?.breakEnabled,
+            overtimeEnabled: m.attendance?.overtimeEnabled,
           }, cfg);
 
           return {
@@ -898,7 +969,9 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             overtimeHours: computed.overtimeHours,
             normalHours: computed.normalHours,
             breakHours: computed.breakHours,
-            wageEarned: computeWage(computed.normalHours, computed.overtimeHours, m.worker || {}, cfg),
+            breakEnabled: computed.breakEnabled,
+            overtimeEnabled: computed.overtimeEnabled,
+            wageEarned: computeWage(computed.normalHours, computed.overtimeHours, m.worker || {}, cfg, m.attendance),
           };
         });
       }
@@ -926,15 +999,10 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   };
 
   // ============================================
-  // EDIT ATTENDANCE MODAL — FULL DEBUG
+  // EDIT ATTENDANCE MODAL
   // ============================================
   const openEditModal = (record, worker) => {
-    dbg('🔓 openEditModal', {
-      recordId: record?.id,
-      workerId: worker?.id,
-      workerName: worker?.name,
-      hasRecord: !!record,
-    });
+    dbg('🔓 openEditModal', { recordId: record?.id, workerId: worker?.id, workerName: worker?.name });
 
     if (!record) {
       dbgWarn('⚠️ openEditModal: no record');
@@ -945,11 +1013,10 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     const cfg = settings || DEFAULT_SETTINGS;
     const dateStr = normalizeDate(record.date);
 
-    // ⭐ Pre-fill break times from settings if DB is empty
     const fallbackBreakStart = record.breakStart
-      || (cfg.breakStartTime ? buildISO(dateStr, cfg.breakStartTime) : null);
+      || (cfg.breakEnabled !== false && cfg.breakStartTime ? buildISO(dateStr, cfg.breakStartTime) : null);
     const fallbackBreakEnd = record.breakEnd
-      || (cfg.breakEndTime ? buildISO(dateStr, cfg.breakEndTime) : null);
+      || (cfg.breakEnabled !== false && cfg.breakEndTime ? buildISO(dateStr, cfg.breakEndTime) : null);
 
     const parsed = {
       checkedIn: isoToLocalHHMM(record.checkedIn),
@@ -958,21 +1025,12 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       breakEnd: isoToLocalHHMM(fallbackBreakEnd),
     };
 
-    dbg('📝 openEditModal parsed:', {
-      rawCheckedIn: record.checkedIn,
-      parsedCheckedIn: parsed.checkedIn,
-      rawCheckedOut: record.checkedOut,
-      parsedCheckedOut: parsed.checkedOut,
-      rawBreakStart: record.breakStart,
-      parsedBreakStart: parsed.breakStart,
-      rawBreakEnd: record.breakEnd,
-      parsedBreakEnd: parsed.breakEnd,
-      rawDate: record.date,
-      normalizedDate: dateStr,
-      siteId: record.siteId,
-      notes: record.notes,
-      present: record.present,
-    });
+    const breakEnabled = record.breakEnabled !== undefined
+      ? record.breakEnabled !== false
+      : cfg.breakEnabled !== false;
+    const overtimeEnabled = record.overtimeEnabled !== undefined
+      ? record.overtimeEnabled !== false
+      : cfg.overtimeEnabled !== false;
 
     setEditRecord({ ...record, _worker: worker });
     setEditForm({
@@ -983,22 +1041,23 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       siteId: record.siteId || '',
       notes: record.notes || '',
       present: record.present !== false,
+      breakEnabled,
+      overtimeEnabled,
     });
     setShowEditModal(true);
   };
 
   const closeEditModal = () => {
-    dbg('🔒 closeEditModal');
     setShowEditModal(false);
     setEditRecord(null);
   };
 
   const handleSaveEdit = async () => {
-    dbg('═══════════════════════════════════════════');
-    dbg('💾 handleSaveEdit START');
+    console.log('═══════════════════════════════════════════');
+    console.log('💾 handleSaveEdit START');
 
     if (!editRecord) {
-      dbgWarn('⚠️ no editRecord — aborting');
+      console.warn('⚠️ no editRecord — aborting');
       return;
     }
 
@@ -1007,11 +1066,11 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     try {
       const rawDate = editRecord.date;
       const dateStr = normalizeDate(rawDate);
-
-      dbg('📅 Date normalization:', { rawDate, rawDateType: typeof rawDate, normalizedDate: dateStr });
+      console.log('📅 dateStr:', dateStr);
 
       if (!dateStr) throw new Error('Attendance record has no valid date');
 
+      // ── Build diff body ──
       const origIn = isoToLocalHHMM(editRecord.checkedIn);
       const origOut = isoToLocalHHMM(editRecord.checkedOut);
       const origBreakStart = isoToLocalHHMM(editRecord.breakStart);
@@ -1019,94 +1078,98 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       const origSite = editRecord.siteId || '';
       const origNotes = editRecord.notes || '';
       const origPresent = editRecord.present !== false;
+      const origBreakEnabled = editRecord.breakEnabled !== undefined
+        ? editRecord.breakEnabled !== false
+        : (settings || DEFAULT_SETTINGS).breakEnabled !== false;
+      const origOvertimeEnabled = editRecord.overtimeEnabled !== undefined
+        ? editRecord.overtimeEnabled !== false
+        : (settings || DEFAULT_SETTINGS).overtimeEnabled !== false;
 
-      const newIn = editForm.checkedIn;
-      const newOut = editForm.checkedOut;
-      const newBreakStart = editForm.breakStart;
-      const newBreakEnd = editForm.breakEnd;
-      const newSite = editForm.siteId;
-      const newNotes = editForm.notes;
-      const newPresent = editForm.present;
-
-      dbg('🔍 DIFF:', {
-        checkedIn:  { orig: origIn,       new: newIn,       changed: origIn !== newIn },
-        checkedOut: { orig: origOut,      new: newOut,      changed: origOut !== newOut },
-        breakStart: { orig: origBreakStart, new: newBreakStart, changed: origBreakStart !== newBreakStart },
-        breakEnd:   { orig: origBreakEnd, new: newBreakEnd, changed: origBreakEnd !== newBreakEnd },
-        siteId:     { orig: origSite,     new: newSite,     changed: origSite !== newSite },
-        notes:      { orig: origNotes,    new: newNotes,    changed: origNotes !== newNotes },
-        present:    { orig: origPresent,  new: newPresent,  changed: origPresent !== newPresent },
+      console.log('🔍 DIFF:', {
+        checkedIn: { orig: origIn, new: editForm.checkedIn, changed: origIn !== editForm.checkedIn },
+        checkedOut: { orig: origOut, new: editForm.checkedOut, changed: origOut !== editForm.checkedOut },
+        breakStart: { orig: origBreakStart, new: editForm.breakStart, changed: origBreakStart !== editForm.breakStart },
+        breakEnd: { orig: origBreakEnd, new: editForm.breakEnd, changed: origBreakEnd !== editForm.breakEnd },
+        breakEnabled: { orig: origBreakEnabled, new: editForm.breakEnabled, changed: origBreakEnabled !== editForm.breakEnabled },
+        overtimeEnabled: { orig: origOvertimeEnabled, new: editForm.overtimeEnabled, changed: origOvertimeEnabled !== editForm.overtimeEnabled },
+        siteId: { orig: origSite, new: editForm.siteId, changed: origSite !== editForm.siteId },
+        notes: { orig: origNotes, new: editForm.notes, changed: origNotes !== editForm.notes },
+        present: { orig: origPresent, new: editForm.present, changed: origPresent !== editForm.present },
       });
 
       const body = {};
+      if (editForm.checkedIn !== origIn)
+        body.checkedIn = editForm.checkedIn ? buildISO(dateStr, editForm.checkedIn) : null;
+      if (editForm.checkedOut !== origOut)
+        body.checkedOut = editForm.checkedOut ? buildISO(dateStr, editForm.checkedOut) : null;
+      if (editForm.breakStart !== origBreakStart)
+        body.breakStart = editForm.breakStart ? buildISO(dateStr, editForm.breakStart) : null;
+      if (editForm.breakEnd !== origBreakEnd)
+        body.breakEnd = editForm.breakEnd ? buildISO(dateStr, editForm.breakEnd) : null;
+      if (editForm.siteId && editForm.siteId !== origSite) body.siteId = editForm.siteId;
+      if (editForm.notes !== origNotes) body.notes = editForm.notes;
+      if (editForm.present !== origPresent) body.present = editForm.present;
+      if (editForm.breakEnabled !== origBreakEnabled) body.breakEnabled = editForm.breakEnabled;
+      if (editForm.overtimeEnabled !== origOvertimeEnabled) body.overtimeEnabled = editForm.overtimeEnabled;
 
-      if (newIn !== origIn) {
-        body.checkedIn = newIn ? buildISO(dateStr, newIn) : null;
-      }
-      if (newOut !== origOut) {
-        body.checkedOut = newOut ? buildISO(dateStr, newOut) : null;
-      }
-      if (newBreakStart !== origBreakStart) {
-        body.breakStart = newBreakStart ? buildISO(dateStr, newBreakStart) : null;
-      }
-      if (newBreakEnd !== origBreakEnd) {
-        body.breakEnd = newBreakEnd ? buildISO(dateStr, newBreakEnd) : null;
-      }
-      if (newSite && newSite !== origSite) body.siteId = newSite;
-      if (newNotes !== origNotes) body.notes = newNotes;
-      if (newPresent !== origPresent) body.present = newPresent;
-
-      dbg('📦 BODY:', JSON.stringify(body, null, 2));
+      console.log('📦 REQUEST BODY:', JSON.stringify(body, null, 2));
 
       if (Object.keys(body).length === 0) {
-        dbgWarn('⚠️ BODY EMPTY — no field changed');
+        console.warn('⚠️ BODY EMPTY — nothing changed, no request sent');
         setSuccess('No changes to save');
         closeEditModal();
         setTimeout(() => setSuccess(''), 3000);
         return;
       }
 
-      dbg('🌐 Calling PUT /attendance/' + editRecord.id + '/edit-times');
-
+      console.log('🌐 Calling PUT /attendance/' + editRecord.id + '/edit-times');
       const res = await ApiService.editAttendanceTimes(editRecord.id, body);
 
-      dbg('✅ API RESPONSE:', res);
+      console.log('✅ API RESPONSE:', res);
+      console.log('   res.record =', res?.record);
+      console.log('   res.record.id =', res?.record?.id);
+      console.log('   res.record.checkedIn =', res?.record?.checkedIn);
+      console.log('   res.record.checkedOut =', res?.record?.checkedOut);
+      console.log('   res.record.totalHours =', res?.record?.totalHours);
+      console.log('   res.record.wageEarned =', res?.record?.wageEarned);
+      console.log('   res.record.breakEnabled =', res?.record?.breakEnabled);
+      console.log('   res.record.overtimeEnabled =', res?.record?.overtimeEnabled);
 
-      // ⭐ OPTIMISTIC LOCAL UPDATE — apply the returned record immediately
+      // ⭐ Apply optimistic override
       if (res?.record) {
-        setLocalAttendanceOverride(prev => ({
-          ...prev,
-          [res.record.id]: res.record,
-        }));
-        dbg('💡 Applied optimistic override for record', res.record.id);
+        console.log('💡 Applying optimistic override for id:', res.record.id);
+        setLocalAttendanceOverride(prev => {
+          const next = { ...prev, [res.record.id]: res.record };
+          console.log('   override map now has keys:', Object.keys(next));
+          return next;
+        });
+      } else {
+        console.warn('⚠️ Response has NO record object — cannot apply optimistic override');
       }
 
       setSuccess(`Attendance updated (${res?.changes?.join(', ') || Object.keys(body).join(', ')})`);
       closeEditModal();
 
-      // ⭐ REFRESH MUST NOT CRASH THE SUCCESS FLOW
       try {
         if (viewMode === 'teams') await loadTeamAttendance();
         await refreshData();
-        dbg('🔄 refreshData OK');
+        console.log('🔄 refreshData OK');
       } catch (refreshErr) {
-        dbgWarn('⚠️ refreshData failed — UI kept up-to-date by optimistic override:', refreshErr);
-        setError('Saved successfully, but reload failed. Please refresh the page (F5) to confirm.');
+        console.warn('⚠️ refreshData failed:', refreshErr);
+        setError('Saved successfully, but reload failed. Refresh the page (F5).');
         setTimeout(() => setSuccess(''), 4000);
         setTimeout(() => setError(''), 8000);
-        dbg('💾 handleSaveEdit END — saved, refresh failed');
-        dbg('═══════════════════════════════════════════');
         return;
       }
-
       setTimeout(() => setSuccess(''), 4000);
-      dbg('💾 handleSaveEdit END — success');
-      dbg('═══════════════════════════════════════════');
+      console.log('💾 handleSaveEdit END — success');
+      console.log('═══════════════════════════════════════════');
     } catch (err) {
-      dbgErr('❌ handleSaveEdit FAILED:', err);
-      dbgErr('   message:', err?.message);
+      console.error('❌ handleSaveEdit FAILED:', err);
+      console.error('   message:', err?.message);
+      console.error('   stack:', err?.stack);
       setError(err.message || 'Failed to update attendance');
-      dbg('═══════════════════════════════════════════');
+      console.log('═══════════════════════════════════════════');
     } finally {
       setEditLoading(false);
     }
@@ -1130,11 +1193,10 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         a => a.workerId === worker.id && a.date && a.date.startsWith(selectedMonth)
       );
 
-      // ⭐ Compute each record using settings-aware helper
       let totalHours = 0, totalOvertime = 0, totalNormal = 0, totalBreak = 0, totalWages = 0;
       const enrichedAttendances = attendances.map(a => {
         const computed = computeHoursWithSettings(a, cfg);
-        const wage = computeWage(computed.normalHours, computed.overtimeHours, worker, cfg);
+        const wage = computeWage(computed.normalHours, computed.overtimeHours, worker, cfg, a);
         totalHours += computed.hoursWorked;
         totalOvertime += computed.overtimeHours;
         totalNormal += computed.normalHours;
@@ -1175,7 +1237,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   }, [data.workers, mergedAttendance, selectedMonth, selectedReportWorkerId, settings]);
 
   // ============================================
-  // SALARY SLIP — uses settings-aware OT rate
+  // SALARY SLIP
   // ============================================
   const generateSalarySlipHTML = (workerData) => {
     const worker = workerData.worker || workerData;
@@ -1344,7 +1406,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   };
 
   // ============================================
-  // ATTENDANCE REPORT
+  // ATTENDANCE REPORT PRINT
   // ============================================
   const generateAttendanceReportHTML = (report) => {
     const monthName = Utils.getMonthName(selectedMonth);
@@ -1534,7 +1596,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const toggleReportExpand = (id) => setExpandedReportWorkers(prev => ({ ...prev, [id]: !prev[id] }));
 
   // ============================================
-  // PAGINATION HELPERS
+  // PAGINATION
   // ============================================
   const paginate = (items, page, perPage) => {
     const total = Math.max(1, Math.ceil(items.length / perPage));
@@ -1587,34 +1649,22 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const renderDateFilterBar = () => (
     <div className="am-date-filter-bar">
       <div className="am-date-filter-buttons">
-        <button
-          className={`am-date-filter-btn ${activeDateFilter === 'today' ? 'active' : ''}`}
-          onClick={() => handleDateFilterChange('today')}>
+        <button className={`am-date-filter-btn ${activeDateFilter === 'today' ? 'active' : ''}`} onClick={() => handleDateFilterChange('today')}>
           <CalendarDays size={13} /> Today
         </button>
-        <button
-          className={`am-date-filter-btn ${activeDateFilter === 'yesterday' ? 'active' : ''}`}
-          onClick={() => handleDateFilterChange('yesterday')}>
+        <button className={`am-date-filter-btn ${activeDateFilter === 'yesterday' ? 'active' : ''}`} onClick={() => handleDateFilterChange('yesterday')}>
           <CalendarDays size={13} /> Yesterday
         </button>
-        <button
-          className={`am-date-filter-btn ${activeDateFilter === 'thisWeek' ? 'active' : ''}`}
-          onClick={() => handleDateFilterChange('thisWeek')}>
+        <button className={`am-date-filter-btn ${activeDateFilter === 'thisWeek' ? 'active' : ''}`} onClick={() => handleDateFilterChange('thisWeek')}>
           <CalendarDays size={13} /> This Week
         </button>
-        <button
-          className={`am-date-filter-btn ${activeDateFilter === 'thisMonth' ? 'active' : ''}`}
-          onClick={() => handleDateFilterChange('thisMonth')}>
+        <button className={`am-date-filter-btn ${activeDateFilter === 'thisMonth' ? 'active' : ''}`} onClick={() => handleDateFilterChange('thisMonth')}>
           <CalendarDays size={13} /> This Month
         </button>
-        <button
-          className={`am-date-filter-btn ${activeDateFilter === 'lastMonth' ? 'active' : ''}`}
-          onClick={() => handleDateFilterChange('lastMonth')}>
+        <button className={`am-date-filter-btn ${activeDateFilter === 'lastMonth' ? 'active' : ''}`} onClick={() => handleDateFilterChange('lastMonth')}>
           <CalendarDays size={13} /> Last Month
         </button>
-        <button
-          className={`am-date-filter-btn ${activeDateFilter === 'custom' ? 'active' : ''}`}
-          onClick={() => handleDateFilterChange('custom')}>
+        <button className={`am-date-filter-btn ${activeDateFilter === 'custom' ? 'active' : ''}`} onClick={() => handleDateFilterChange('custom')}>
           <Filter size={13} /> Custom
         </button>
       </div>
@@ -1623,21 +1673,11 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         <div className="am-custom-date-row">
           <div className="am-custom-date-field">
             <label><CalendarDays size={12} /> From:</label>
-            <input
-              type="date"
-              value={customDateFrom}
-              onChange={(e) => setCustomDateFrom(e.target.value)}
-              className="am-input am-input-sm"
-            />
+            <input type="date" value={customDateFrom} onChange={(e) => setCustomDateFrom(e.target.value)} className="am-input am-input-sm" />
           </div>
           <div className="am-custom-date-field">
             <label><CalendarDays size={12} /> To:</label>
-            <input
-              type="date"
-              value={customDateTo}
-              onChange={(e) => setCustomDateTo(e.target.value)}
-              className="am-input am-input-sm"
-            />
+            <input type="date" value={customDateTo} onChange={(e) => setCustomDateTo(e.target.value)} className="am-input am-input-sm" />
           </div>
           <button className="am-btn am-btn-primary am-btn-sm" onClick={handleCustomDateApply}>
             <CheckCircle size={12} /> Apply
@@ -1689,8 +1729,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       </div>
 
       {hoveredCard && cardDetails[hoveredCard] && (
-        <div className="am-hover-tooltip"
-          style={{ position: 'fixed', left: tooltipPosition.x, top: tooltipPosition.y, zIndex: 9999 }}>
+        <div className="am-hover-tooltip" style={{ position: 'fixed', left: tooltipPosition.x, top: tooltipPosition.y, zIndex: 9999 }}>
           <div className="am-tooltip-header"><strong>{cardDetails[hoveredCard].title}</strong></div>
           <div className="am-tooltip-body">
             {cardDetails[hoveredCard].details.map((d, i) => (
@@ -1733,12 +1772,9 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
               <XAxis dataKey="label" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
               <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
               <ReTooltip content={<ChartTooltip />} />
-              <Area type="monotone" dataKey="present" stroke="#10b981" strokeWidth={2.5}
-                fill="url(#amPresentGrad)" name="Present" />
-              <Line type="monotone" dataKey="hours" stroke="#3b82f6" strokeWidth={2.5}
-                name="Hours" dot={{ r: 3, strokeWidth: 2 }} />
-              <Line type="monotone" dataKey="wages" stroke="#f59e0b" strokeWidth={2.5}
-                name="Wages" dot={{ r: 3, strokeWidth: 2 }} />
+              <Area type="monotone" dataKey="present" stroke="#10b981" strokeWidth={2.5} fill="url(#amPresentGrad)" name="Present" />
+              <Line type="monotone" dataKey="hours" stroke="#3b82f6" strokeWidth={2.5} name="Hours" dot={{ r: 3, strokeWidth: 2 }} />
+              <Line type="monotone" dataKey="wages" stroke="#f59e0b" strokeWidth={2.5} name="Wages" dot={{ r: 3, strokeWidth: 2 }} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -1803,10 +1839,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} horizontal={false} />
                 <XAxis type="number" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis type="category" dataKey="name" stroke="#94a3b8" fontSize={11}
-                  tickLine={false} axisLine={false} width={100} />
-                <ReTooltip content={<ChartTooltip formatter={(v) => `${v.toFixed(2)}h`} />}
-                  cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
+                <YAxis type="category" dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} width={100} />
+                <ReTooltip content={<ChartTooltip formatter={(v) => `${v.toFixed(2)}h`} />} cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
                 <Bar dataKey="hours" name="Hours" fill="url(#amTopGrad)" radius={[0, 8, 8, 0]} barSize={20} />
               </BarChart>
             </ResponsiveContainer>
@@ -1837,8 +1871,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                       <span className="am-breakdown-val">{d.value}</span>
                     </div>
                     <div className="am-breakdown-track">
-                      <div className="am-breakdown-fill"
-                        style={{ width: `${(d.value / max) * 100}%`, background: d.color }} />
+                      <div className="am-breakdown-fill" style={{ width: `${(d.value / max) * 100}%`, background: d.color }} />
                     </div>
                   </div>
                 );
@@ -1892,7 +1925,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
 
     return (
       <div className="am-view">
-        {/* ⭐ Settings banner — shows what's currently applied */}
+        {/* Settings banner */}
         <div style={{
           display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 12,
           padding: '8px 14px', background: 'rgba(59,130,246,0.06)',
@@ -1902,12 +1935,19 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <Clock size={12} /> Shift: <strong>{cfg.shiftStartTime} – {cfg.shiftEndTime}</strong> ({cfg.shiftHours}h)
           </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-            <Timer size={12} /> Break: <strong>{cfg.breakStartTime} – {cfg.breakEndTime}</strong> ({cfg.breakHours}h)
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            color: cfg.breakEnabled ? '#1e40af' : '#b91c1c',
+            textDecoration: cfg.breakEnabled ? 'none' : 'line-through',
+          }}>
+            <Coffee size={12} /> Break: <strong>{cfg.breakEnabled ? `${cfg.breakStartTime} – ${cfg.breakEndTime} (${cfg.breakHours}h)` : 'DISABLED'}</strong>
           </span>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
-            <Flame size={12} /> OT: <strong>{cfg.overtimeRate}×</strong>
-            {cfg.overtimeEnabled ? ' enabled' : ' disabled'}
+          <span style={{
+            display: 'inline-flex', alignItems: 'center', gap: 5,
+            color: cfg.overtimeEnabled ? '#1e40af' : '#b91c1c',
+            textDecoration: cfg.overtimeEnabled ? 'none' : 'line-through',
+          }}>
+            <Flame size={12} /> OT: <strong>{cfg.overtimeEnabled ? `${cfg.overtimeRate}× enabled` : 'DISABLED'}</strong>
           </span>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <Target size={12} /> Thresholds: <strong>{cfg.earlyInThreshold}/{cfg.lateInThreshold}/{cfg.earlyOutThreshold}/{cfg.lateOutThreshold}m</strong>
@@ -1961,8 +2001,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                       <div className="am-worker-avatar" style={{
                         background: worker.status === 'working' ? 'linear-gradient(135deg,#3b82f6,#1d4ed8)'
                           : worker.status === 'completed' ? 'linear-gradient(135deg,#10b981,#059669)'
-                          : worker.status === 'pending' ? 'linear-gradient(135deg,#f59e0b,#d97706)'
-                          : 'linear-gradient(135deg,#94a3b8,#64748b)'
+                            : worker.status === 'pending' ? 'linear-gradient(135deg,#f59e0b,#d97706)'
+                              : 'linear-gradient(135deg,#94a3b8,#64748b)'
                       }}>
                         {worker.name.charAt(0).toUpperCase()}
                       </div>
@@ -2032,14 +2072,24 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                         <div className="am-worker-times">
                           {worker.checkedInTime && <span><LogIn size={11} /> {Utils.formatTime(worker.checkedInTime)}</span>}
                           {worker.checkedOutTime && <span><LogOut size={11} /> {Utils.formatTime(worker.checkedOutTime)}</span>}
-                          {worker.breakStart && worker.breakEnd && (
+                          {worker.breakEnabled && worker.breakStart && worker.breakEnd && (
                             <span title={`Break: ${Utils.formatTime(worker.breakStart)} – ${Utils.formatTime(worker.breakEnd)}`}>
-                              <Timer size={11} /> Brk {worker.breakHours.toFixed(1)}h
+                              <Coffee size={11} /> Brk {worker.breakHours.toFixed(1)}h
                             </span>
                           )}
-                          {worker.overtimeHours > 0 && (
+                          {!worker.breakEnabled && (
+                            <span style={{ color: '#b91c1c' }} title="Break disabled">
+                              <Ban size={11} /> No Brk
+                            </span>
+                          )}
+                          {worker.overtimeEnabled && worker.overtimeHours > 0 && (
                             <span style={{ color: '#d97706' }} title="Overtime hours">
                               <Flame size={11} /> OT {worker.overtimeHours.toFixed(1)}h
+                            </span>
+                          )}
+                          {!worker.overtimeEnabled && (
+                            <span style={{ color: '#b91c1c' }} title="Overtime disabled">
+                              <Ban size={11} /> No OT
                             </span>
                           )}
                         </div>
@@ -2090,6 +2140,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const renderTeamsTab = () => {
     const { total, page, items } = paginate(filteredTeamMembers, teamPage, teamPerPage);
     if (page !== teamPage) setTeamPage(page);
+    const cfg = settings || DEFAULT_SETTINGS;
     return (
       <div className="am-view">
         <div className="am-team-selector">
@@ -2251,8 +2302,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                         {member.siteName && <div className="am-expand-item"><Building2 size={12} /><span><strong>Site:</strong> {member.siteName}</span></div>}
                         {member.checkedIn && <div className="am-expand-item"><LogIn size={12} /><span><strong>In:</strong> {Utils.formatTime(member.checkedIn)}</span></div>}
                         {member.checkedOut && <div className="am-expand-item"><LogOut size={12} /><span><strong>Out:</strong> {Utils.formatTime(member.checkedOut)}</span></div>}
-                        {member.breakHours > 0 && <div className="am-expand-item"><Timer size={12} /><span><strong>Break:</strong> {member.breakHours.toFixed(2)}h</span></div>}
-                        {member.overtimeHours > 0 && <div className="am-expand-item"><Flame size={12} /><span><strong>OT:</strong> {member.overtimeHours.toFixed(2)}h</span></div>}
+                        {member.breakEnabled && member.breakHours > 0 && <div className="am-expand-item"><Coffee size={12} /><span><strong>Break:</strong> {member.breakHours.toFixed(2)}h</span></div>}
+                        {member.overtimeEnabled && member.overtimeHours > 0 && <div className="am-expand-item"><Flame size={12} /><span><strong>OT:</strong> {member.overtimeHours.toFixed(2)}h</span></div>}
                       </div>
                     )}
                   </div>
@@ -2344,6 +2395,10 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                   <span className="value">{attendanceReport.totalHours.toFixed(1)}h</span>
                 </div>
                 <div className="am-report-summary-item">
+                  <span className="label"><Flame size={13} /> OT Hours</span>
+                  <span className="value" style={{ color: '#d97706' }}>{attendanceReport.totalOvertime.toFixed(1)}h</span>
+                </div>
+                <div className="am-report-summary-item">
                   <span className="label"><Banknote size={13} /> Wages (BD)</span>
                   <span className="value" style={{ color: '#047857' }}>{fmtBDShort(attendanceReport.totalWages)}</span>
                 </div>
@@ -2390,7 +2445,9 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                               || (w.worker.dailyRate && cfg.shiftHours ? w.worker.dailyRate / cfg.shiftHours : 0);
                             const basicHours = w.totalNormal || (w.totalHours - w.totalOvertime);
                             const basicSalary = basicHours * hourlyRate;
-                            const overtimeSalary = w.totalOvertime * hourlyRate * cfg.overtimeRate;
+                            const overtimeSalary = cfg.overtimeEnabled
+                              ? w.totalOvertime * hourlyRate * cfg.overtimeRate
+                              : w.totalOvertime * hourlyRate;
                             const totalSalary = basicSalary + overtimeSalary;
 
                             const pct = Number(w.worker.deductionPercentage || 0);
@@ -2503,8 +2560,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                         <td className="right" style={{ color: pctEnabled && pctValue > 0 ? '#7c3aed' : '#94a3b8' }}>
                           {pctEnabled && pctValue > 0
                             ? <span className="am-pct-deduct" title={`${Number(pctValue).toFixed(2)}%`}>
-                                {fmtBDShort(pctDeduction)}
-                              </span>
+                              {fmtBDShort(pctDeduction)}
+                            </span>
                             : '—'}
                         </td>
                         <td className="right am-td-red">
@@ -2534,7 +2591,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   };
 
   // ============================================
-  // SETTINGS TAB
+  // SETTINGS TAB  ⭐ WITH BREAK + OT TOGGLES
   // ============================================
   const renderSettingsTab = () => {
     if (settingsLoading || !settingsForm) {
@@ -2587,42 +2644,61 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             </div>
           </div>
 
-          {/* Break Times */}
+          {/* Break Times  ⭐ WITH BREAK TOGGLE */}
           <div className="am-card am-settings-card">
             <div className="am-card-header">
               <div className="am-card-title">
                 <span className="am-card-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
-                  <Timer size={16} />
+                  <Coffee size={16} />
                 </span>
                 <div>
                   <h4>Break Times</h4>
-                  <span>Daily break period</span>
+                  <span>Daily break period — deducted from hours</span>
                 </div>
               </div>
+              <button
+                type="button"
+                className={`am-toggle ${settingsForm.breakEnabled ? 'on' : 'off'}`}
+                onClick={() => update({ breakEnabled: !settingsForm.breakEnabled })}
+                title={settingsForm.breakEnabled ? 'Break time will be deducted' : 'Break time will NOT be deducted'}
+              >
+                {settingsForm.breakEnabled ? <><Coffee size={12} /> Enabled</> : <><Ban size={12} /> Disabled</>}
+              </button>
             </div>
             <div className="am-settings-form">
               <div className="am-settings-field">
                 <label>Break Start</label>
                 <input type="time" className="am-input"
                   value={settingsForm.breakStartTime || '12:00'}
+                  disabled={!settingsForm.breakEnabled}
                   onChange={(e) => update({ breakStartTime: e.target.value })} />
               </div>
               <div className="am-settings-field">
                 <label>Break End</label>
                 <input type="time" className="am-input"
                   value={settingsForm.breakEndTime || '13:00'}
+                  disabled={!settingsForm.breakEnabled}
                   onChange={(e) => update({ breakEndTime: e.target.value })} />
               </div>
               <div className="am-settings-field">
                 <label>Break Hours</label>
                 <input type="number" step="0.25" min="0" className="am-input"
                   value={settingsForm.breakHours}
+                  disabled={!settingsForm.breakEnabled}
                   onChange={(e) => update({ breakHours: parseFloat(e.target.value) || 0 })} />
               </div>
+              {!settingsForm.breakEnabled && (
+                <div className="am-settings-hint" style={{ gridColumn: '1 / -1', color: '#b91c1c' }}>
+                  <AlertCircle size={13} />
+                  <span>
+                    Break is disabled. Total hours = raw clock-in → clock-out time. No break will be deducted.
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Overtime */}
+          {/* Overtime  ⭐ WITH OT TOGGLE */}
           <div className="am-card am-settings-card">
             <div className="am-card-header">
               <div className="am-card-title">
@@ -2638,8 +2714,9 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                 type="button"
                 className={`am-toggle ${settingsForm.overtimeEnabled ? 'on' : 'off'}`}
                 onClick={() => update({ overtimeEnabled: !settingsForm.overtimeEnabled })}
+                title={settingsForm.overtimeEnabled ? 'OT will be paid at multiplier rate' : 'OT is disabled — all hours at normal rate'}
               >
-                {settingsForm.overtimeEnabled ? 'Enabled' : 'Disabled'}
+                {settingsForm.overtimeEnabled ? <><Flame size={12} /> Enabled</> : <><Ban size={12} /> Disabled</>}
               </button>
             </div>
             <div className="am-settings-form">
@@ -2653,7 +2730,9 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
               <div className="am-settings-hint">
                 <Info size={13} />
                 <span>
-                  Rate × hourly wage for hours worked beyond shift. Default: 1.5×
+                  {settingsForm.overtimeEnabled
+                    ? `Hours beyond ${settingsForm.shiftHours}h paid at ${settingsForm.overtimeRate}× hourly rate.`
+                    : 'OT disabled — all paid hours count as normal hours.'}
                 </span>
               </div>
             </div>
@@ -2706,10 +2785,10 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
 
             <div className="am-settings-flags-row">
               {[
-                { key: 'countEarlyIn',  label: 'Count Early In' },
-                { key: 'countLateIn',   label: 'Count Late In' },
+                { key: 'countEarlyIn', label: 'Count Early In' },
+                { key: 'countLateIn', label: 'Count Late In' },
                 { key: 'countEarlyOut', label: 'Count Early Out' },
-                { key: 'countLateOut',  label: 'Count Late Out' },
+                { key: 'countLateOut', label: 'Count Late Out' },
               ].map(f => (
                 <button
                   key={f.key}
@@ -2745,7 +2824,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     if (!showSiteModal) return null;
     const title = siteModalContext?.type === 'team-checkin' ? 'Select Site for Team Check-In'
       : siteModalContext?.type === 'team-member-checkin' ? 'Select Site for Worker Check-In'
-      : 'Select Site for Clock-In';
+        : 'Select Site for Clock-In';
     const subtitle = siteModalContext?.type === 'team-checkin'
       ? 'All team members will be checked in to the selected site.'
       : 'Attendance will be recorded against the selected site.';
@@ -2791,7 +2870,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   };
 
   // ============================================
-  // EDIT ATTENDANCE MODAL
+  // EDIT ATTENDANCE MODAL  ⭐ WITH BREAK + OT TOGGLES
   // ============================================
   const renderEditModal = () => {
     if (!showEditModal || !editRecord) return null;
@@ -2800,10 +2879,10 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     const dateStr = normalizeDate(rawDate);
     const cfg = settings || DEFAULT_SETTINGS;
 
-    // ⭐ Preview using settings-aware computation
+    // ⭐ Preview respects both per-record toggles
     const preview = (() => {
       if (!editForm.checkedIn || !editForm.checkedOut) {
-        return { hours: 0, overtime: 0, normal: 0, breakH: 0, wage: 0 };
+        return { hours: 0, overtime: 0, normal: 0, breakH: 0, wage: 0, breakEnabled: editForm.breakEnabled, overtimeEnabled: editForm.overtimeEnabled };
       }
       const inISO = buildISO(dateStr, editForm.checkedIn);
       const outISO = buildISO(dateStr, editForm.checkedOut);
@@ -2813,15 +2892,19 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         breakStart: editForm.breakStart ? buildISO(dateStr, editForm.breakStart) : null,
         breakEnd: editForm.breakEnd ? buildISO(dateStr, editForm.breakEnd) : null,
         date: dateStr,
+        breakEnabled: editForm.breakEnabled,
+        overtimeEnabled: editForm.overtimeEnabled,
       };
       const computed = computeHoursWithSettings(fakeRecord, cfg);
-      const wage = computeWage(computed.normalHours, computed.overtimeHours, worker, cfg);
+      const wage = computeWage(computed.normalHours, computed.overtimeHours, worker, cfg, fakeRecord);
       return {
         hours: computed.hoursWorked,
         overtime: computed.overtimeHours,
         normal: computed.normalHours,
         breakH: computed.breakHours,
         wage,
+        breakEnabled: computed.breakEnabled,
+        overtimeEnabled: computed.overtimeEnabled,
       };
     })();
 
@@ -2858,18 +2941,6 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                     className="am-input" />
                 </div>
                 <div className="am-edit-field">
-                  <label><Timer size={12} /> Break Start</label>
-                  <input type="time" value={editForm.breakStart}
-                    onChange={(e) => setEditForm({ ...editForm, breakStart: e.target.value })}
-                    className="am-input" />
-                </div>
-                <div className="am-edit-field">
-                  <label><Timer size={12} /> Break End</label>
-                  <input type="time" value={editForm.breakEnd}
-                    onChange={(e) => setEditForm({ ...editForm, breakEnd: e.target.value })}
-                    className="am-input" />
-                </div>
-                <div className="am-edit-field">
                   <label><Building2 size={12} /> Site</label>
                   <select value={editForm.siteId}
                     onChange={(e) => setEditForm({ ...editForm, siteId: e.target.value })}
@@ -2890,6 +2961,61 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                     </button>
                   </div>
                 </div>
+
+                {/* ⭐ Break toggle + times */}
+                <div className="am-edit-field am-edit-full">
+                  <div className="am-edit-toggle-header">
+                    <label><Coffee size={12} /> Break Time</label>
+                    <button
+                      type="button"
+                      className={`am-toggle am-toggle-sm ${editForm.breakEnabled ? 'on' : 'off'}`}
+                      onClick={() => setEditForm({ ...editForm, breakEnabled: !editForm.breakEnabled })}
+                    >
+                      {editForm.breakEnabled ? 'Enabled' : 'Disabled'}
+                    </button>
+                  </div>
+                  <div className="am-edit-break-row">
+                    <input type="time" value={editForm.breakStart}
+                      disabled={!editForm.breakEnabled}
+                      onChange={(e) => setEditForm({ ...editForm, breakStart: e.target.value })}
+                      className="am-input" placeholder="Break start" />
+                    <span className="am-edit-arrow">→</span>
+                    <input type="time" value={editForm.breakEnd}
+                      disabled={!editForm.breakEnabled}
+                      onChange={(e) => setEditForm({ ...editForm, breakEnd: e.target.value })}
+                      className="am-input" placeholder="Break end" />
+                  </div>
+                  {!editForm.breakEnabled && (
+                    <div className="am-edit-hint danger">
+                      <Ban size={11} /> Break disabled — no break hours will be deducted
+                    </div>
+                  )}
+                </div>
+
+                {/* ⭐ Overtime toggle */}
+                <div className="am-edit-field am-edit-full">
+                  <div className="am-edit-toggle-header">
+                    <label><Flame size={12} /> Overtime</label>
+                    <button
+                      type="button"
+                      className={`am-toggle am-toggle-sm ${editForm.overtimeEnabled ? 'on' : 'off'}`}
+                      onClick={() => setEditForm({ ...editForm, overtimeEnabled: !editForm.overtimeEnabled })}
+                    >
+                      {editForm.overtimeEnabled ? 'Enabled' : 'Disabled'}
+                    </button>
+                  </div>
+                  {!editForm.overtimeEnabled && (
+                    <div className="am-edit-hint danger">
+                      <Ban size={11} /> OT disabled — all paid hours count as normal hours
+                    </div>
+                  )}
+                  {editForm.overtimeEnabled && (
+                    <div className="am-edit-hint">
+                      <Info size={11} /> OT hours beyond {cfg.shiftHours}h will be paid at {cfg.overtimeRate}×
+                    </div>
+                  )}
+                </div>
+
                 <div className="am-edit-field am-edit-full">
                   <label><FileText size={12} /> Notes</label>
                   <textarea value={editForm.notes}
@@ -2905,11 +3031,13 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                 </div>
                 <div className="am-edit-preview-item">
                   <span>Break</span>
-                  <strong>{preview.breakH.toFixed(2)} h</strong>
+                  <strong style={{ color: preview.breakEnabled ? undefined : '#94a3b8', textDecoration: preview.breakEnabled ? 'none' : 'line-through' }}>
+                    {preview.breakH.toFixed(2)} h
+                  </strong>
                 </div>
                 <div className="am-edit-preview-item">
                   <span>OT</span>
-                  <strong style={{ color: preview.overtime > 0 ? '#d97706' : undefined }}>
+                  <strong style={{ color: preview.overtimeEnabled && preview.overtime > 0 ? '#d97706' : '#94a3b8', textDecoration: preview.overtimeEnabled ? 'none' : 'line-through' }}>
                     {preview.overtime.toFixed(2)} h
                   </strong>
                 </div>
@@ -2930,8 +3058,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
               }}>
                 <Info size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />
                 Using settings: shift {cfg.shiftStartTime}–{cfg.shiftEndTime} ({cfg.shiftHours}h),
-                break {cfg.breakStartTime}–{cfg.breakEndTime} ({cfg.breakHours}h),
-                OT {cfg.overtimeRate}×
+                break {cfg.breakEnabled ? `${cfg.breakStartTime}–${cfg.breakEndTime} (${cfg.breakHours}h)` : 'DISABLED'},
+                OT {cfg.overtimeEnabled ? `${cfg.overtimeRate}×` : 'DISABLED'}
               </div>
 
               <div className="am-edit-actions">
@@ -2965,14 +3093,24 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         <div className="am-row-tooltip-row"><Clock size={11} /><span>Status:</span><strong style={{ textTransform: 'capitalize' }}>{worker.status}</strong></div>
         {worker.checkedInTime && <div className="am-row-tooltip-row"><LogIn size={11} /><span>In:</span><strong>{Utils.formatTime(worker.checkedInTime)}</strong></div>}
         {worker.checkedOutTime && <div className="am-row-tooltip-row"><LogOut size={11} /><span>Out:</span><strong>{Utils.formatTime(worker.checkedOutTime)}</strong></div>}
-        {worker.breakStart && worker.breakEnd && (
+        {worker.breakEnabled && worker.breakStart && worker.breakEnd && (
           <div className="am-row-tooltip-row">
-            <Timer size={11} /><span>Break:</span>
+            <Coffee size={11} /><span>Break:</span>
             <strong>{Utils.formatTime(worker.breakStart)} – {Utils.formatTime(worker.breakEnd)} ({worker.breakHours.toFixed(2)}h)</strong>
           </div>
         )}
+        {!worker.breakEnabled && (
+          <div className="am-row-tooltip-row">
+            <Ban size={11} /><span>Break:</span><strong style={{ color: '#b91c1c' }}>Disabled</strong>
+          </div>
+        )}
         {worker.hoursWorked > 0 && <div className="am-row-tooltip-row"><Timer size={11} /><span>Hours:</span><strong>{worker.hoursWorked.toFixed(2)}h</strong></div>}
-        {worker.overtimeHours > 0 && <div className="am-row-tooltip-row"><Flame size={11} /><span>OT:</span><strong style={{ color: '#d97706' }}>{worker.overtimeHours.toFixed(2)}h</strong></div>}
+        {worker.overtimeEnabled && worker.overtimeHours > 0 && <div className="am-row-tooltip-row"><Flame size={11} /><span>OT:</span><strong style={{ color: '#d97706' }}>{worker.overtimeHours.toFixed(2)}h</strong></div>}
+        {!worker.overtimeEnabled && (
+          <div className="am-row-tooltip-row">
+            <Ban size={11} /><span>OT:</span><strong style={{ color: '#b91c1c' }}>Disabled</strong>
+          </div>
+        )}
         {worker.wageEarned > 0 && <div className="am-row-tooltip-row"><Banknote size={11} /><span>Wage:</span><strong style={{ color: '#047857' }}>{fmtBD(worker.wageEarned)}</strong></div>}
         {worker.earlyIn && <div className="am-row-tooltip-row"><ArrowDownRight size={11} /><span>Flag:</span><strong style={{ color: '#0284c7' }}>Early In</strong></div>}
         {worker.lateIn && <div className="am-row-tooltip-row"><ArrowUpRight size={11} /><span>Flag:</span><strong style={{ color: '#d97706' }}>Late In +{worker.lateInMinutes}m</strong></div>}
@@ -2980,7 +3118,11 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         {worker.earlyOut && <div className="am-row-tooltip-row"><Minus size={11} /><span>Flag:</span><strong style={{ color: '#dc2626' }}>Early Out</strong></div>}
         <div className="am-row-tooltip-row" style={{ opacity: 0.7, borderTop: '1px solid rgba(148,163,184,0.3)', marginTop: 4, paddingTop: 4 }}>
           <Info size={11} /><span>Settings:</span>
-          <strong style={{ fontSize: 10 }}>{cfg.shiftStartTime}–{cfg.shiftEndTime} · {cfg.shiftHours}h · OT {cfg.overtimeRate}×</strong>
+          <strong style={{ fontSize: 10 }}>
+            {cfg.shiftStartTime}–{cfg.shiftEndTime} · {cfg.shiftHours}h ·
+            Brk {cfg.breakEnabled ? `${cfg.breakHours}h` : 'off'} ·
+            OT {cfg.overtimeEnabled ? `${cfg.overtimeRate}×` : 'off'}
+          </strong>
         </div>
       </div>
     );
@@ -2998,8 +3140,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         <div className="am-row-tooltip-row"><Building2 size={11} /><span>Site:</span><strong style={{ color: member.siteName ? '#047857' : '#b91c1c' }}>{member.siteName || 'Not assigned'}</strong></div>
         {member.checkedIn && <div className="am-row-tooltip-row"><LogIn size={11} /><span>In:</span><strong>{Utils.formatTime(member.checkedIn)}</strong></div>}
         {member.checkedOut && <div className="am-row-tooltip-row"><LogOut size={11} /><span>Out:</span><strong>{Utils.formatTime(member.checkedOut)}</strong></div>}
-        {member.breakHours > 0 && <div className="am-row-tooltip-row"><Timer size={11} /><span>Break:</span><strong>{member.breakHours.toFixed(2)}h</strong></div>}
-        {member.overtimeHours > 0 && <div className="am-row-tooltip-row"><Flame size={11} /><span>OT:</span><strong>{member.overtimeHours.toFixed(2)}h</strong></div>}
+        {member.breakEnabled && member.breakHours > 0 && <div className="am-row-tooltip-row"><Coffee size={11} /><span>Break:</span><strong>{member.breakHours.toFixed(2)}h</strong></div>}
+        {member.overtimeEnabled && member.overtimeHours > 0 && <div className="am-row-tooltip-row"><Flame size={11} /><span>OT:</span><strong>{member.overtimeHours.toFixed(2)}h</strong></div>}
         {member.earlyIn && <div className="am-row-tooltip-row"><ArrowDownRight size={11} /><span>Flag:</span><strong style={{ color: '#0284c7' }}>Early In</strong></div>}
         {member.lateIn && <div className="am-row-tooltip-row"><ArrowUpRight size={11} /><span>Flag:</span><strong style={{ color: '#d97706' }}>Late In{member.lateInMinutes > 0 ? ` +${member.lateInMinutes}m` : ''}</strong></div>}
         {member.lateOut && <div className="am-row-tooltip-row"><ArrowUpRight size={11} /><span>Flag:</span><strong style={{ color: '#7c3aed' }}>Late Out{member.lateOutMinutes > 0 ? ` +${member.lateOutMinutes}m` : ''}</strong></div>}
@@ -3058,10 +3200,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         })}
       </div>
 
-      {/* Date filter — hide on settings tab */}
       {viewMode !== 'settings' && renderDateFilterBar()}
 
-      {/* Explicit date picker for Teams tab */}
       {viewMode === 'teams' && (
         <div className="am-date-bar">
           <label><CalendarDays size={14} /> Select Date:</label>

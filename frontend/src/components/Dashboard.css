@@ -1265,3 +1265,15 @@
     transition-duration: 0.01ms !important;
   }
 }
+/* ⭐ Unassigned site row — highlights entries missing a siteId */
+.db-site-row.is-unassigned {
+  background: rgba(245, 158, 11, 0.06);
+  border-left: 3px solid #f59e0b;
+}
+.db-site-row.is-unassigned .db-site-name {
+  color: #b45309;
+  font-style: italic;
+}
+.db-site-row.is-unassigned .db-site-rank {
+  color: #b45309;
+}

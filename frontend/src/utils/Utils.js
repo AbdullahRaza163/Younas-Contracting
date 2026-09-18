@@ -6,20 +6,20 @@ const Utils = {
   // DATE FUNCTIONS
   // ============================================
   today: () => new Date().toISOString().split('T')[0],
-  
+
   getCurrentMonthString: () => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   },
-  
+
   getMonthString: (date) => {
     if (!date) return Utils.getCurrentMonthString();
     const d = new Date(date);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   },
-  
+
   // ============================================
-  // MONTH NAME FUNCTIONS - ADDED
+  // MONTH NAME FUNCTIONS
   // ============================================
   getMonthName: (monthStr) => {
     if (!monthStr) return '';
@@ -27,13 +27,9 @@ const Utils = {
       'January', 'February', 'March', 'April', 'May', 'June',
       'July', 'August', 'September', 'October', 'November', 'December'
     ];
-    const monthNamesShort = [
-      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
-    ];
-    
+
     // If monthStr is in YYYY-MM format
-    if (monthStr.includes('-')) {
+    if (typeof monthStr === 'string' && monthStr.includes('-')) {
       const parts = monthStr.split('-');
       if (parts.length === 2) {
         const monthIndex = parseInt(parts[1]) - 1;
@@ -42,13 +38,13 @@ const Utils = {
         }
       }
     }
-    
+
     // If monthStr is a number
     const num = parseInt(monthStr);
     if (!isNaN(num) && num >= 1 && num <= 12) {
       return monthNames[num - 1];
     }
-    
+
     // Try parsing as date
     try {
       const date = new Date(monthStr);
@@ -58,18 +54,18 @@ const Utils = {
     } catch (e) {
       // Ignore
     }
-    
+
     return monthStr;
   },
-  
+
   getShortMonthName: (monthStr) => {
     if (!monthStr) return '';
     const monthNamesShort = [
       'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
       'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
     ];
-    
-    if (monthStr.includes('-')) {
+
+    if (typeof monthStr === 'string' && monthStr.includes('-')) {
       const parts = monthStr.split('-');
       if (parts.length === 2) {
         const monthIndex = parseInt(parts[1]) - 1;
@@ -78,12 +74,12 @@ const Utils = {
         }
       }
     }
-    
+
     const num = parseInt(monthStr);
     if (!isNaN(num) && num >= 1 && num <= 12) {
       return monthNamesShort[num - 1];
     }
-    
+
     try {
       const date = new Date(monthStr);
       if (!isNaN(date.getTime())) {
@@ -92,10 +88,10 @@ const Utils = {
     } catch (e) {
       // Ignore
     }
-    
+
     return monthStr;
   },
-  
+
   formatMonth: (monthStr) => {
     if (!monthStr) return '';
     const parts = monthStr.split('-');
@@ -105,7 +101,7 @@ const Utils = {
     }
     return monthStr;
   },
-  
+
   formatMonthYear: (monthStr) => {
     if (!monthStr) return '';
     const parts = monthStr.split('-');
@@ -115,7 +111,7 @@ const Utils = {
     }
     return monthStr;
   },
-  
+
   // ============================================
   // DATE FORMATTING FUNCTIONS
   // ============================================
@@ -125,27 +121,27 @@ const Utils = {
     if (isNaN(d.getTime())) return '-';
     return d.toLocaleDateString('en-PK', { year: 'numeric', month: 'short', day: 'numeric' });
   },
-  
+
   formatDateShort: (date) => {
     if (!date) return '-';
     const d = new Date(date);
     if (isNaN(d.getTime())) return '-';
     return d.toLocaleDateString('en-PK', { month: 'short', day: 'numeric' });
   },
-  
+
   formatDateTime: (date) => {
     if (!date) return '-';
     const d = new Date(date);
     if (isNaN(d.getTime())) return '-';
-    return d.toLocaleString('en-PK', { 
-      year: 'numeric', 
-      month: 'short', 
+    return d.toLocaleString('en-PK', {
+      year: 'numeric',
+      month: 'short',
       day: 'numeric',
       hour: '2-digit',
       minute: '2-digit'
     });
   },
-  
+
   formatTime: (date) => {
     if (!date) return '-';
     const d = new Date(date);
@@ -156,62 +152,63 @@ const Utils = {
     hours = hours % 12 || 12;
     return `${hours}:${minutes} ${ampm}`;
   },
-  
+
   getDaysInMonth: (date = new Date()) => {
     const d = new Date(date);
     return new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
   },
-  
+
   getMonthStart: (date = new Date()) => {
     const d = new Date(date);
     d.setDate(1);
     return d.toISOString().split('T')[0];
   },
-  
+
   getMonthEnd: (date = new Date()) => {
     const d = new Date(date);
     d.setMonth(d.getMonth() + 1);
     d.setDate(0);
     return d.toISOString().split('T')[0];
   },
-  
+
   getYearStart: (date = new Date()) => {
     const d = new Date(date);
     d.setMonth(0, 1);
     return d.toISOString().split('T')[0];
   },
-  
+
   getYearEnd: (date = new Date()) => {
     const d = new Date(date);
     d.setMonth(11, 31);
     return d.toISOString().split('T')[0];
   },
-  
+
   addDays: (date, days) => {
     const d = new Date(date);
     d.setDate(d.getDate() + days);
     return d.toISOString().split('T')[0];
   },
-  
+
   subtractDays: (date, days) => {
     const d = new Date(date);
     d.setDate(d.getDate() - days);
     return d.toISOString().split('T')[0];
   },
-  
+
   getDateRange: (period) => {
     const today = new Date();
     const todayStr = Utils.today();
     const start = new Date(today);
     const end = new Date(today);
-    
-    switch(period) {
+
+    switch (period) {
       case 'today':
         return { start: todayStr, end: todayStr };
-      case 'yesterday':
+      case 'yesterday': {
         start.setDate(start.getDate() - 1);
         const yStr = start.toISOString().split('T')[0];
         return { start: yStr, end: yStr };
+      }
       case 'week':
         start.setDate(start.getDate() - 7);
         return { start: start.toISOString().split('T')[0], end: todayStr };
@@ -222,9 +219,9 @@ const Utils = {
         start.setMonth(start.getMonth() - 1);
         start.setDate(1);
         end.setDate(0);
-        return { 
-          start: start.toISOString().split('T')[0], 
-          end: end.toISOString().split('T')[0] 
+        return {
+          start: start.toISOString().split('T')[0],
+          end: end.toISOString().split('T')[0]
         };
       case 'year':
         start.setMonth(0, 1);
@@ -234,9 +231,9 @@ const Utils = {
         start.setMonth(0, 1);
         end.setFullYear(end.getFullYear() - 1);
         end.setMonth(11, 31);
-        return { 
-          start: start.toISOString().split('T')[0], 
-          end: end.toISOString().split('T')[0] 
+        return {
+          start: start.toISOString().split('T')[0],
+          end: end.toISOString().split('T')[0]
         };
       default:
         return { start: todayStr, end: todayStr };
@@ -250,18 +247,18 @@ const Utils = {
     if (amount === undefined || amount === null || isNaN(amount)) return '0.000 BD';
     return `${Number(amount || 0).toFixed(3)} ${CONFIG.CURRENCY}`;
   },
-  
+
   formatCurrencyShort: (amount) => {
     if (amount === undefined || amount === null || isNaN(amount)) return '0.000';
     return Number(amount || 0).toFixed(3);
   },
-  
+
   formatCurrencyWithSign: (amount, showSign = false) => {
     const formatted = Utils.formatCurrencyShort(amount);
     if (!showSign) return formatted;
     return amount >= 0 ? `+${formatted}` : `${formatted}`;
   },
-  
+
   calculateProfitMargin: (revenue, profit) => {
     if (revenue === 0) return 0;
     return (profit / revenue) * 100;
@@ -270,49 +267,133 @@ const Utils = {
   // ============================================
   // CALCULATION FUNCTIONS
   // ============================================
-    calculateHoursWorked: (checkIn, checkOut) => {
+
+  // ⭐ Backwards-compatible: still works with 2 args (raw hours),
+  // and now accepts optional `record` to respect break toggles.
+  //
+  //   Utils.calculateHoursWorked(checkIn, checkOut)
+  //     → raw clock-diff (legacy behaviour)
+  //
+  //   Utils.calculateHoursWorked(checkIn, checkOut, record)
+  //     → respects record.totalHours if present
+  //     → else computes clock-diff minus break when breakEnabled === true
+  //
+  //   Utils.calculateHoursWorked(null, null, record)
+  //     → uses record.totalHours if present, else 0
+  calculateHoursWorked: (checkIn, checkOut, record = null) => {
+    // ⭐ Prefer backend-computed totalHours whenever we have the record
+    if (record && typeof record.totalHours === 'number' && record.totalHours > 0) {
+      return record.totalHours;
+    }
+
     if (!checkIn || !checkOut) return 0;
+
     const start = new Date(checkIn).getTime();
     const end = new Date(checkOut).getTime();
     if (isNaN(start) || isNaN(end)) return 0;
-    const diff = end - start;
-    // ⭐ Never return negative — clamp to 0
+
+    let diff = end - start;
     if (diff <= 0) return 0;
-    return Math.round((diff / 3600000) * 100) / 100;
+
+    let hours = diff / 3600000;
+
+    // ⭐ Subtract break ONLY when the record explicitly enables it
+    if (
+      record &&
+      record.breakEnabled === true &&
+      record.breakStart &&
+      record.breakEnd
+    ) {
+      const bs = new Date(record.breakStart).getTime();
+      const be = new Date(record.breakEnd).getTime();
+      if (!isNaN(bs) && !isNaN(be) && be > bs) {
+        hours -= (be - bs) / 3600000;
+      }
+    }
+
+    hours = Math.max(0, hours);
+    return Math.round(hours * 100) / 100;
   },
+
+  // ⭐ New helper — always correct for any record from the API
+  calculateRecordHours: (record) => {
+    if (!record) return 0;
+
+    // 1. Backend-computed totalHours (source of truth)
+    if (typeof record.totalHours === 'number' && record.totalHours > 0) {
+      return record.totalHours;
+    }
+
+    // 2. Fallback: compute from clock times + break toggle
+    if (record.checkedIn && record.checkedOut) {
+      const inMs = new Date(record.checkedIn).getTime();
+      const outMs = new Date(record.checkedOut).getTime();
+      if (isNaN(inMs) || isNaN(outMs) || outMs <= inMs) return 0;
+
+      let hours = (outMs - inMs) / 3600000;
+
+      if (
+        record.breakEnabled === true &&
+        record.breakStart &&
+        record.breakEnd
+      ) {
+        const bs = new Date(record.breakStart).getTime();
+        const be = new Date(record.breakEnd).getTime();
+        if (!isNaN(bs) && !isNaN(be) && be > bs) {
+          hours -= (be - bs) / 3600000;
+        }
+      }
+
+      return Math.max(0, Math.round(hours * 100) / 100);
+    }
+
+    return 0;
+  },
+
+  // ⭐ New helper — wage from record, prefers backend wageEarned
+  calculateRecordWage: (record, worker) => {
+    if (!record) return 0;
+    if (typeof record.wageEarned === 'number' && record.wageEarned > 0) {
+      return record.wageEarned;
+    }
+    if (!worker) return 0;
+    const hours = Utils.calculateRecordHours(record);
+    return Utils.calculateDailyWage(hours, worker.dailyRate);
+  },
+
   calculateDailyWage: (hoursWorked, dailyRate) => {
     if (!hoursWorked || !dailyRate) return 0;
     const hourlyRate = dailyRate / 8;
     return hoursWorked * hourlyRate;
   },
-  
+
   calculateOvertimePay: (overtimeHours, dailyRate) => {
     if (!overtimeHours || !dailyRate) return 0;
     const hourlyRate = dailyRate / 8;
     return overtimeHours * hourlyRate * 1.5;
   },
-  
+
   calculateDailyOH: (monthlyOH, date = new Date()) => {
     const days = Utils.getDaysInMonth(date);
     return monthlyOH / days;
   },
-  
+
   calculateEntryProfit: (entry) => {
     if (!entry) return 0;
     return (entry.kamai || 0) - (entry.labour || 0) - (entry.overhead || 0) - (entry.oneTime || 0);
   },
-  
+
   calculateTotal: (items, field) => {
     if (!items || items.length === 0) return 0;
     return items.reduce((sum, item) => sum + (Number(item[field]) || 0), 0);
   },
-  
+
   calculateAverage: (items, field) => {
     if (!items || items.length === 0) return 0;
     const total = Utils.calculateTotal(items, field);
     return total / items.length;
   },
-  
+
   calculateSiteProfit: (entries, siteId) => {
     if (!entries || !siteId) return 0;
     const siteEntries = entries.filter(e => e.siteId === siteId);
@@ -322,27 +403,35 @@ const Utils = {
     const oneTime = Utils.calculateTotal(siteEntries, 'oneTime');
     return kamai - labour - overhead - oneTime;
   },
-  
+
+  // ⭐ Worker salary — now uses calculateRecordHours so it respects
+  //   breakEnabled / overtimeEnabled toggles via stored totalHours.
   calculateWorkerSalary: (worker, attendanceRecords) => {
     if (!worker || !attendanceRecords) {
       return { totalHours: 0, totalWage: 0, daysPresent: 0, overtimeHours: 0, overtimePay: 0, totalEarnings: 0 };
     }
     const workerAttendance = attendanceRecords.filter(a => a.workerId === worker.id);
-    const totalHours = workerAttendance.reduce((sum, a) => {
-      if (a.checkedIn && a.checkedOut) {
-        return sum + Utils.calculateHoursWorked(a.checkedIn, a.checkedOut);
-      }
-      return sum;
+
+    const totalHours = workerAttendance.reduce(
+      (sum, a) => sum + Utils.calculateRecordHours(a),
+      0
+    );
+
+    // Prefer backend wageEarned, fall back to hours × rate
+    const totalWage = workerAttendance.reduce((sum, a) => {
+      if (typeof a.wageEarned === 'number' && a.wageEarned > 0) return sum + a.wageEarned;
+      return sum + Utils.calculateDailyWage(Utils.calculateRecordHours(a), worker.dailyRate);
     }, 0);
-    const totalWage = Utils.calculateDailyWage(totalHours, worker.dailyRate);
+
     const daysPresent = workerAttendance.filter(a => a.present).length;
     const overtimeHours = workerAttendance.reduce((sum, a) => sum + (a.overtimeHours || 0), 0);
     const overtimePay = Utils.calculateOvertimePay(overtimeHours, worker.dailyRate);
-    return { 
-      totalHours, 
-      totalWage, 
-      daysPresent, 
-      overtimeHours, 
+
+    return {
+      totalHours,
+      totalWage,
+      daysPresent,
+      overtimeHours,
       overtimePay,
       totalEarnings: totalWage + overtimePay
     };
@@ -354,14 +443,14 @@ const Utils = {
   getWorkerAttendance: (attendance, workerId, date) => {
     return attendance.find(a => a.workerId === workerId && a.date === date) || null;
   },
-  
+
   getTeamAttendance: (attendance, teamId, date) => {
     return attendance.filter(a => a.teamId === teamId && a.date === date);
   },
-  
+
   getSiteAttendance: (attendance, siteId, workers, date) => {
     const siteWorkers = workers.filter(w => w.siteId === siteId);
-    return attendance.filter(a => 
+    return attendance.filter(a =>
       siteWorkers.some(w => w.id === a.workerId) && a.date === date
     );
   },
@@ -379,13 +468,13 @@ const Utils = {
       return true;
     });
   },
-  
+
   filterBySite: (items, siteId) => {
     if (!items) return [];
     if (!siteId) return items;
     return items.filter(item => item.siteId === siteId);
   },
-  
+
   filterByWorker: (items, workerId) => {
     if (!items) return [];
     if (!workerId) return items;
@@ -404,7 +493,7 @@ const Utils = {
       return ascending ? dateA - dateB : dateB - dateA;
     });
   },
-  
+
   sortByAmount: (items, field, ascending = false) => {
     if (!items) return [];
     return [...items].sort((a, b) => {
@@ -428,7 +517,7 @@ const Utils = {
       return acc;
     }, {});
   },
-  
+
   groupBySite: (items) => {
     if (!items) return {};
     return items.reduce((acc, item) => {
@@ -438,7 +527,7 @@ const Utils = {
       return acc;
     }, {});
   },
-  
+
   getMonthlySummary: (entries) => {
     if (!entries) return {};
     const grouped = Utils.groupByMonth(entries);
@@ -456,7 +545,7 @@ const Utils = {
     });
     return summary;
   },
-  
+
   getYearlySummary: (entries) => {
     if (!entries) return {};
     const grouped = entries.reduce((acc, entry) => {
@@ -487,10 +576,10 @@ const Utils = {
     try {
       const num = parseFloat(amount);
       if (isNaN(num) || num === 0) return 'Zero';
-      
+
       const words = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen", "Nineteen"];
       const tens = ["", "", "Twenty", "Thirty", "Forty", "Fifty", "Sixty", "Seventy", "Eighty", "Ninety"];
-      
+
       function numberToWords(n) {
         if (n < 20) return words[n];
         if (n < 100) return tens[Math.floor(n / 10)] + (n % 10 === 0 ? "" : " " + words[n % 10]);
@@ -499,10 +588,10 @@ const Utils = {
         if (n < 1000000000) return numberToWords(Math.floor(n / 1000000)) + " Million" + (n % 1000000 === 0 ? "" : " " + numberToWords(n % 1000000));
         return String(n);
       }
-      
+
       const bd = Math.floor(num);
       const fils = Math.round((num - bd) * 1000);
-      
+
       let result = numberToWords(bd) + " Bahraini Dinar";
       if (fils > 0) {
         result += " and " + numberToWords(fils) + " Fils";
@@ -512,7 +601,7 @@ const Utils = {
       return String(amount) + " BD";
     }
   },
-  
+
   calculateInvoiceTotals: (items, vatRate = 10) => {
     const subtotal = items.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
     const vatAmount = subtotal * (vatRate / 100);
@@ -528,17 +617,17 @@ const Utils = {
     const d = new Date(date);
     return d instanceof Date && !isNaN(d.getTime());
   },
-  
+
   isValidAmount: (amount) => {
     return typeof amount === 'number' && !isNaN(amount) && amount >= 0;
   },
-  
+
   isValidEmail: (email) => {
     if (!email) return false;
     const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     return re.test(email);
   },
-  
+
   isValidPhone: (phone) => {
     if (!phone) return false;
     const re = /^\+?[0-9]{8,15}$/;
@@ -552,18 +641,18 @@ const Utils = {
     if (!str) return '';
     return str.charAt(0).toUpperCase() + str.slice(1).toLowerCase();
   },
-  
+
   truncate: (str, length = 50) => {
     if (!str) return '';
     if (str.length <= length) return str;
     return str.substring(0, length) + '...';
   },
-  
+
   generateId: () => {
-    return Math.random().toString(36).substring(2, 9) + 
-           Math.random().toString(36).substring(2, 9);
+    return Math.random().toString(36).substring(2, 9) +
+      Math.random().toString(36).substring(2, 9);
   },
-  
+
   generateInvoiceNumber: (prefix = 'INV') => {
     const year = new Date().getFullYear();
     const random = Math.random().toString(36).substring(2, 6).toUpperCase();
@@ -589,7 +678,7 @@ const Utils = {
     };
     return colors[status] || '#6b7280';
   },
-  
+
   getProfitColor: (profit) => {
     if (profit > 0) return '#22c55e';
     if (profit < 0) return '#ef4444';
@@ -610,46 +699,46 @@ const Utils = {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   },
-  
+
   downloadJSON: (data, filename) => {
     const json = JSON.stringify(data, null, 2);
     Utils.downloadFile(json, filename, 'application/json');
   },
-  
+
   downloadCSV: (data, filename) => {
     const rows = data.map(row => Object.values(row).join(','));
     const csv = rows.join('\n');
     Utils.downloadFile(csv, filename, 'text/csv');
   },
-  
+
   // ============================================
   // ADDITIONAL HELPER FUNCTIONS
   // ============================================
   isEmpty: (str) => {
     return !str || str.trim().length === 0;
   },
-  
+
   getDayName: (dateStr) => {
     const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return '';
     return days[date.getDay()];
   },
-  
+
   getShortDayName: (dateStr) => {
     const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return '';
     return days[date.getDay()];
   },
-  
+
   isWeekend: (dateStr) => {
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return false;
     const day = date.getDay();
     return day === 0 || day === 6;
   },
-  
+
   getWorkingDays: (startDate, endDate) => {
     let count = 0;
     const current = new Date(startDate);
@@ -664,7 +753,7 @@ const Utils = {
     }
     return count;
   },
-  
+
   getWeekNumber: (dateStr) => {
     const date = new Date(dateStr);
     if (isNaN(date.getTime())) return 0;
@@ -672,7 +761,7 @@ const Utils = {
     const diff = (date - startOfYear) / (1000 * 60 * 60 * 24);
     return Math.ceil((diff + startOfYear.getDay() + 1) / 7);
   },
-  
+
   excelDateToDate: (excelSerial) => {
     if (!excelSerial) return null;
     const utc_days = Math.floor(excelSerial - 25569);

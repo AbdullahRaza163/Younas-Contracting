@@ -38,6 +38,52 @@ const ModalPortal = ({ children }) => {
 };
 
 // ============================================
+// ⭐ ATTENDANCE HOURS HELPER — single source of truth
+// Prefers backend-computed totalHours (respects break + OT settings).
+// Falls back to raw clock diff only when totalHours is missing.
+// ============================================
+const getAttendanceHours = (record) => {
+  if (!record) return 0;
+
+  // Backend-computed totalHours (best source — respects breakEnabled/overtimeEnabled)
+  if (typeof record.totalHours === 'number' && record.totalHours > 0) {
+    return record.totalHours;
+  }
+
+  // Fallback: raw hours minus break (if break is enabled for this record)
+  if (record.checkedIn && record.checkedOut) {
+    const inMs = new Date(record.checkedIn).getTime();
+    const outMs = new Date(record.checkedOut).getTime();
+    if (isNaN(inMs) || isNaN(outMs) || outMs <= inMs) return 0;
+
+    let hours = (outMs - inMs) / (1000 * 60 * 60);
+
+    if (record.breakEnabled === true && record.breakStart && record.breakEnd) {
+      const bs = new Date(record.breakStart).getTime();
+      const be = new Date(record.breakEnd).getTime();
+      if (!isNaN(bs) && !isNaN(be) && be > bs) {
+        hours -= (be - bs) / (1000 * 60 * 60);
+      }
+    }
+
+    return Math.max(0, hours);
+  }
+
+  return 0;
+};
+
+// ⭐ Wage helper — prefers backend wageEarned, falls back to hours × rate
+const getAttendanceWage = (record, worker) => {
+  if (!record) return 0;
+  if (typeof record.wageEarned === 'number' && record.wageEarned > 0) {
+    return record.wageEarned;
+  }
+  if (!worker) return 0;
+  const hours = getAttendanceHours(record);
+  return Utils.calculateDailyWage(hours, worker.dailyRate);
+};
+
+// ============================================
 // RING PERCENTAGE GAUGE
 // ============================================
 const RingGauge = ({ value = 0, max = 100, size = 130, stroke = 10, color = '#009846', label, sublabel }) => {
@@ -110,7 +156,7 @@ const DailyReportComponent = ({ data, selectedDate }) => {
 
   // ⭐ Expanded days + loss/profit day filter
   const [expandedDays, setExpandedDays] = useState({});
-  const [dailySiteFilter, setDailySiteFilter] = useState('all'); // all | profit | loss
+  const [dailySiteFilter, setDailySiteFilter] = useState('all');
 
   // Pagination
   const [dailyPage, setDailyPage] = useState(1);
@@ -203,12 +249,12 @@ const DailyReportComponent = ({ data, selectedDate }) => {
       const profit = revenue - labour - overhead - oneTime;
 
       const workersPresent = dayAttendance.filter(a => a.present).length;
-      const totalHours = dayAttendance.reduce((sum, a) => {
-        if (a.checkedIn && a.checkedOut) {
-          return sum + Utils.calculateHoursWorked(a.checkedIn, a.checkedOut);
-        }
-        return sum;
-      }, 0);
+
+      // ⭐ Use backend-computed totalHours (respects break/OT toggles)
+      const totalHours = dayAttendance.reduce(
+        (sum, a) => sum + getAttendanceHours(a),
+        0
+      );
 
       // ⭐ Group this day's entries by site
       const bySite = {};
@@ -267,6 +313,7 @@ const DailyReportComponent = ({ data, selectedDate }) => {
       };
     });
 
+    // ⭐ Totals — use backend-computed totalHours and wageEarned
     const totals = {
       revenue: Utils.calculateTotal(filteredEntries, 'kamai'),
       labour: Utils.calculateTotal(filteredEntries, 'labour'),
@@ -280,24 +327,28 @@ const DailyReportComponent = ({ data, selectedDate }) => {
       uniqueDates: uniqueDates.length,
       totalDays: uniqueDates.length,
       totalWorkers: filteredAttendance.filter(a => a.present).length,
-      totalHours: filteredAttendance.reduce((sum, a) => {
-        if (a.checkedIn && a.checkedOut) {
-          return sum + Utils.calculateHoursWorked(a.checkedIn, a.checkedOut);
-        }
-        return sum;
-      }, 0)
+      totalHours: filteredAttendance.reduce(
+        (sum, a) => sum + getAttendanceHours(a),
+        0
+      )
     };
 
     const workerSummary = data.workers.map(worker => {
       const workerAttendance = filteredAttendance.filter(a => a.workerId === worker.id);
-      const totalHours = workerAttendance.reduce((sum, a) => {
-        if (a.checkedIn && a.checkedOut) {
-          return sum + Utils.calculateHoursWorked(a.checkedIn, a.checkedOut);
-        }
-        return sum;
-      }, 0);
+
+      // ⭐ Use backend-computed totalHours
+      const totalHours = workerAttendance.reduce(
+        (sum, a) => sum + getAttendanceHours(a),
+        0
+      );
+
+      // ⭐ Use backend-computed wageEarned when present, else fallback to hours × dailyRate
+      const totalWage = workerAttendance.reduce(
+        (sum, a) => sum + getAttendanceWage(a, worker),
+        0
+      );
+
       const daysPresent = workerAttendance.filter(a => a.present).length;
-      const totalWage = Utils.calculateDailyWage(totalHours, worker.dailyRate);
       return { ...worker, totalHours, daysPresent, totalWage, attendance: workerAttendance };
     });
 
