@@ -581,6 +581,109 @@ const useData = () => {
   }, [showLoader, hideLoader]);
 
   // ============================================
+  // ⭐ MULTI-SITE SHIFTS
+  // ============================================
+  const getAttendanceShifts = useCallback(async (attendanceId) => {
+    try {
+      const shifts = await ApiService.getAttendanceShifts(attendanceId);
+      setData(prev => ({
+        ...prev,
+        attendance: (prev.attendance || []).map(a =>
+          a.id === attendanceId ? { ...a, shifts: shifts || [] } : a
+        ),
+      }));
+      return shifts;
+    } catch (err) {
+      console.error('Failed to load shifts:', err);
+      throw err;
+    }
+  }, []);
+
+  const addAttendanceShift = useCallback(async (attendanceId, shift) => {
+    showLoader('Adding shift…');
+    try {
+      const result = await ApiService.addAttendanceShift(attendanceId, shift);
+      if (result?.record) {
+        setData(prev => ({
+          ...prev,
+          attendance: (prev.attendance || []).map(a =>
+            a.id === attendanceId ? result.record : a
+          ),
+        }));
+      }
+      return result;
+    } catch (err) {
+      console.error('Failed to add shift:', err);
+      throw err;
+    } finally {
+      hideLoader();
+    }
+  }, [showLoader, hideLoader]);
+
+  const updateAttendanceShift = useCallback(async (shiftId, updates) => {
+    showLoader('Updating shift…');
+    try {
+      const result = await ApiService.updateAttendanceShift(shiftId, updates);
+      if (result?.record) {
+        setData(prev => ({
+          ...prev,
+          attendance: (prev.attendance || []).map(a =>
+            a.id === result.record.id ? result.record : a
+          ),
+        }));
+      }
+      return result;
+    } catch (err) {
+      console.error('Failed to update shift:', err);
+      throw err;
+    } finally {
+      hideLoader();
+    }
+  }, [showLoader, hideLoader]);
+
+  const deleteAttendanceShift = useCallback(async (shiftId) => {
+    showLoader('Deleting shift…');
+    try {
+      const result = await ApiService.deleteAttendanceShift(shiftId);
+      if (result?.record) {
+        setData(prev => ({
+          ...prev,
+          attendance: (prev.attendance || []).map(a =>
+            a.id === result.record.id ? result.record : a
+          ),
+        }));
+      }
+      return result;
+    } catch (err) {
+      console.error('Failed to delete shift:', err);
+      throw err;
+    } finally {
+      hideLoader();
+    }
+  }, [showLoader, hideLoader]);
+
+  const replaceAttendanceShifts = useCallback(async (attendanceId, shifts) => {
+    showLoader('Saving shifts…');
+    try {
+      const result = await ApiService.replaceAttendanceShifts(attendanceId, shifts);
+      if (result?.record) {
+        setData(prev => ({
+          ...prev,
+          attendance: (prev.attendance || []).map(a =>
+            a.id === attendanceId ? result.record : a
+          ),
+        }));
+      }
+      return result;
+    } catch (err) {
+      console.error('Failed to replace shifts:', err);
+      throw err;
+    } finally {
+      hideLoader();
+    }
+  }, [showLoader, hideLoader]);
+
+  // ============================================
   // MATERIALS
   // ============================================
   const addMaterial = useCallback(async (payload) => {
@@ -1285,6 +1388,13 @@ const useData = () => {
 
     // Attendance
     clockInWorker, clockOutWorker,
+
+    // ⭐ Multi-site shifts
+    getAttendanceShifts,
+    addAttendanceShift,
+    updateAttendanceShift,
+    deleteAttendanceShift,
+    replaceAttendanceShifts,
 
     // Team
     addTeam, updateTeam, deleteTeam, addTeamMember, removeTeamMember,

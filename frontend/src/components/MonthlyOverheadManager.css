@@ -1062,3 +1062,22 @@
   .mo-pagination { flex-direction: column; align-items: stretch; }
   .mo-pagination-controls { justify-content: space-between; }
 }
+/* Auto-created entry highlight */
+.mo-row-auto {
+  background: linear-gradient(90deg, rgba(139, 92, 246, 0.04), transparent 40%);
+}
+
+.mo-auto-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  border-radius: 10px;
+  background: rgba(139, 92, 246, 0.15);
+  color: #7c3aed;
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  vertical-align: middle;
+}

@@ -67,7 +67,7 @@ const OverheadCategoriesManager = ({
   const isMounted = useRef(true);
 
   // View / filter / pagination
-  const [viewMode, setViewMode] = useState('overview'); // overview | categories
+  const [viewMode, setViewMode] = useState('overview');
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -76,7 +76,7 @@ const OverheadCategoriesManager = ({
 
   const [formData, setFormData] = useState({
     name: '', type: 'company', isRecurring: true,
-    defaultFrequency: 'monthly', glAccount: ''
+    defaultFrequency: 'monthly', defaultAmount: '', glAccount: ''
   });
 
   useEffect(() => {
@@ -171,7 +171,6 @@ const OverheadCategoriesManager = ({
     const recurring = localCategories.filter(c => c.isRecurring).length;
     const oneTime = total - recurring;
 
-    // Type breakdown
     const byType = {
       company: localCategories.filter(c => c.type === 'company').length,
       site: localCategories.filter(c => c.type === 'site').length,
@@ -179,7 +178,6 @@ const OverheadCategoriesManager = ({
       department: localCategories.filter(c => c.type === 'department').length
     };
 
-    // Frequency breakdown
     const byFrequency = {
       daily: localCategories.filter(c => c.defaultFrequency === 'daily').length,
       weekly: localCategories.filter(c => c.defaultFrequency === 'weekly').length,
@@ -283,18 +281,23 @@ const OverheadCategoriesManager = ({
         type: formData.type,
         isRecurring: formData.isRecurring,
         defaultFrequency: formData.defaultFrequency,
+        defaultAmount: parseFloat(formData.defaultAmount) || 0,   // ⭐ NEW
         glAccount: formData.glAccount || ''
       };
       if (editingId) {
-        await ApiService.updateOverheadCategory(editingId, categoryData);
-        setSuccessMessage('Category updated successfully!');
+        const res = await ApiService.updateOverheadCategory(editingId, categoryData);
+        const synced = res?.syncedEntries || 0;
+        setSuccessMessage(`Category updated!${synced > 0 ? ` ${synced} existing entries updated.` : ''}`);
       } else {
         await ApiService.createOverheadCategory(categoryData);
-        setSuccessMessage('Category created successfully!');
+        setSuccessMessage('Category created!');
       }
       await loadCategories(true);
       resetForm();
       setShowForm(false);
+      if (typeof refreshData === 'function') {
+        try { await refreshData(); } catch (e) { /* no-op */ }
+      }
       setTimeout(() => setSuccessMessage(''), 4000);
     } catch (error) {
       console.error('Error saving category:', error);
@@ -305,7 +308,7 @@ const OverheadCategoriesManager = ({
   const resetForm = () => {
     setFormData({
       name: '', type: 'company', isRecurring: true,
-      defaultFrequency: 'monthly', glAccount: ''
+      defaultFrequency: 'monthly', defaultAmount: '', glAccount: ''
     });
     setEditingId(null); setErrorMessage(''); setSuccessMessage('');
   };
@@ -317,6 +320,7 @@ const OverheadCategoriesManager = ({
       type: category.type || 'company',
       isRecurring: category.isRecurring !== undefined ? category.isRecurring : true,
       defaultFrequency: category.defaultFrequency || 'monthly',
+      defaultAmount: category.defaultAmount != null ? String(category.defaultAmount) : '',  // ⭐ NEW
       glAccount: category.glAccount || ''
     });
     setShowForm(true);
@@ -330,6 +334,9 @@ const OverheadCategoriesManager = ({
       await ApiService.deleteOverheadCategory(id);
       setSuccessMessage(`Category "${name}" deleted successfully!`);
       await loadCategories(true);
+      if (typeof refreshData === 'function') {
+        try { await refreshData(); } catch (e) { /* no-op */ }
+      }
       setTimeout(() => setSuccessMessage(''), 4000);
     } catch (error) {
       console.error('Error deleting category:', error);
@@ -424,7 +431,6 @@ const OverheadCategoriesManager = ({
         </div>
       )}
 
-      {/* Row 1: Status donut + Type bars */}
       <div className="oc-grid-2-1">
         <div className="oc-card">
           <div className="oc-card-header">
@@ -499,7 +505,6 @@ const OverheadCategoriesManager = ({
         </div>
       </div>
 
-      {/* Row 2: Frequency bars */}
       <div className="oc-card">
         <div className="oc-card-header">
           <div className="oc-card-title">
@@ -527,7 +532,6 @@ const OverheadCategoriesManager = ({
         ) : <div className="oc-empty-mini">No data</div>}
       </div>
 
-      {/* Row 3: Recent categories */}
       {localCategories.length > 0 && (
         <div className="oc-card">
           <div className="oc-card-header">
@@ -551,6 +555,7 @@ const OverheadCategoriesManager = ({
                   <th>Name</th>
                   <th>Type</th>
                   <th>Frequency</th>
+                  <th className="right">Default Amount</th>
                   <th>GL Account</th>
                   <th className="center">Status</th>
                 </tr>
@@ -568,6 +573,7 @@ const OverheadCategoriesManager = ({
                       </span>
                     </td>
                     <td><span className="oc-freq-badge">{getFrequencyLabel(category.defaultFrequency)}</span></td>
+                    <td className="right"><strong>{Utils.formatCurrencyShort(category.defaultAmount || 0)}</strong></td>
                     <td className="oc-gl-account">{category.glAccount || '—'}</td>
                     <td className="center">{getStatusBadge(category.isActive)}</td>
                   </tr>
@@ -585,7 +591,6 @@ const OverheadCategoriesManager = ({
   // ============================================
   const renderCategoriesTab = () => (
     <div className="oc-view">
-      {/* Filters */}
       <div className="oc-filters">
         <div className="oc-search">
           <Search size={15} className="oc-search-icon" />
@@ -619,7 +624,6 @@ const OverheadCategoriesManager = ({
         </button>
       </div>
 
-      {/* Table */}
       {loading ? (
         <div className="oc-loading">
           <div className="oc-loading-spinner" />
@@ -645,6 +649,7 @@ const OverheadCategoriesManager = ({
                   <th>Name</th>
                   <th>Type</th>
                   <th>Frequency</th>
+                  <th className="right">Default Amount</th>
                   <th>Recurring</th>
                   <th>GL Account</th>
                   <th className="center">Status</th>
@@ -666,6 +671,7 @@ const OverheadCategoriesManager = ({
                       </span>
                     </td>
                     <td><span className="oc-freq-badge">{getFrequencyLabel(category.defaultFrequency)}</span></td>
+                    <td className="right"><strong>{Utils.formatCurrencyShort(category.defaultAmount || 0)}</strong></td>
                     <td>
                       <span className={`oc-recurring-badge ${category.isRecurring ? 'yes' : 'no'}`}>
                         {category.isRecurring ? 'Yes' : 'No'}
@@ -695,7 +701,6 @@ const OverheadCategoriesManager = ({
             </table>
           </div>
 
-          {/* Pagination */}
           {filteredCategories.length > 0 && (
             <div className="oc-pagination">
               <div className="oc-pagination-info">
@@ -739,7 +744,7 @@ const OverheadCategoriesManager = ({
   );
 
   // ============================================
-  // FORM MODAL
+  // FORM MODAL  ⭐ with Default Amount
   // ============================================
   const renderFormModal = () => (
     <ModalPortal>
@@ -752,7 +757,9 @@ const OverheadCategoriesManager = ({
               </div>
               <div>
                 <h3>{editingId ? 'Edit Category' : 'New Category'}</h3>
-                <p className="oc-modal-sub">{editingId ? 'Update overhead category' : 'Create a new overhead category'}</p>
+                <p className="oc-modal-sub">
+                  {editingId ? 'Update overhead category' : 'Create a template — you can use it later in Monthly Overhead'}
+                </p>
               </div>
             </div>
             <button className="oc-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
@@ -796,12 +803,26 @@ const OverheadCategoriesManager = ({
                   </select>
                 </div>
                 <div className="oc-form-group">
-                  <label>GL Account</label>
-                  <input type="text" value={formData.glAccount}
-                    onChange={e => setFormData({ ...formData, glAccount: e.target.value })}
-                    placeholder="e.g. 5000, 6000"
+                  <label>
+                    <Banknote size={12} /> Default Amount (BD)
+                  </label>
+                  <input type="number" step="0.001" min="0"
+                    value={formData.defaultAmount}
+                    onChange={e => setFormData({ ...formData, defaultAmount: e.target.value })}
+                    placeholder="0.000"
                     className="oc-form-input" />
+                  <span className="oc-hint" style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'block' }}>
+                    Pre-fills the amount when you use this category in Monthly Overhead.
+                  </span>
                 </div>
+              </div>
+
+              <div className="oc-form-group">
+                <label>GL Account</label>
+                <input type="text" value={formData.glAccount}
+                  onChange={e => setFormData({ ...formData, glAccount: e.target.value })}
+                  placeholder="e.g. 5000, 6000"
+                  className="oc-form-input" />
               </div>
 
               <div className="oc-form-group">
@@ -840,7 +861,6 @@ const OverheadCategoriesManager = ({
         <div className="oc-orb oc-orb-3" />
       </div>
 
-      {/* Header */}
       <div className="oc-header">
         <div className="oc-header-left">
           <div className="oc-header-icon">
@@ -864,7 +884,6 @@ const OverheadCategoriesManager = ({
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="oc-tabs">
         {[
           { id: 'overview', label: 'Overview', icon: BarChart3 },

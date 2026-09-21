@@ -1,5 +1,5 @@
 // src/components/MonthlyOverheadManager.jsx
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Plus, Save, X, Edit, Trash2, RefreshCw, Building2, Calendar, AlertCircle, ChevronDown, Filter, ChevronLeft,
@@ -23,9 +23,18 @@ const ModalPortal = ({ children }) => {
   return createPortal(children, document.body);
 };
 
-// ============================================
-// CHART TOOLTIP
-// ============================================
+// ⭐ Frequency-aware monthly total — same rule as backend
+const computeMonthlyTotal = (amount, frequency, workingDays = 26) => {
+  const amt = Math.max(0, Number(amount) || 0);
+  const wd = Math.max(1, Number(workingDays) || 26);
+  const f = (frequency || 'monthly').toLowerCase();
+  if (f === 'daily')     return amt * wd;
+  if (f === 'weekly')    return amt * Math.max(1, Math.ceil(wd / 7));
+  if (f === 'quarterly') return amt / 3;
+  if (f === 'yearly')    return amt / 12;
+  return amt;
+};
+
 const ChartTooltip = ({ active, payload, label, formatter }) => {
   if (!active || !payload || !payload.length) return null;
   return (
@@ -44,9 +53,6 @@ const ChartTooltip = ({ active, payload, label, formatter }) => {
   );
 };
 
-// ============================================
-// MAIN COMPONENT
-// ============================================
 const MonthlyOverheadManager = ({
   data,
   addMonthlyOverhead,
@@ -72,13 +78,8 @@ const MonthlyOverheadManager = ({
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [mounted, setMounted] = useState(false);
 
-  // Tabs
-  const [viewMode, setViewMode] = useState('overview'); // overview | entries
-
-  // Search
+  const [viewMode, setViewMode] = useState('overview');
   const [searchTerm, setSearchTerm] = useState('');
-
-  // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
@@ -86,6 +87,10 @@ const MonthlyOverheadManager = ({
     month: selectedMonth, categoryId: '', amount: '', siteIds: [],
     sitesCount: '1', workingDays: '26', notes: ''
   });
+
+  // ⭐ Refs for click-outside handling
+  const siteSelectorRef = useRef(null);
+  const filterDropdownRef = useRef(null);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setMounted(true));
@@ -95,17 +100,7 @@ const MonthlyOverheadManager = ({
   const sites = useMemo(() => data?.sites || [], [data]);
   const overheads = useMemo(() => data?.monthlyOverhead || [], [data]);
 
-  useEffect(() => { loadCategories(); }, []);
-
-  useEffect(() => {
-    setViewMonth(selectedMonth);
-    setCustomMonth(selectedMonth);
-  }, [selectedMonth]);
-
-  // ============================================
-  // LOAD CATEGORIES
-  // ============================================
-  const loadCategories = async () => {
+  const loadCategories = useCallback(async () => {
     setLoadingCategories(true); setErrorMessage('');
     try {
       const response = await ApiService.getOverheadCategories();
@@ -117,11 +112,29 @@ const MonthlyOverheadManager = ({
       console.error('Error loading categories:', error);
       setErrorMessage('Failed to load categories. Please check the connection.');
     } finally { setLoadingCategories(false); }
-  };
+  }, []);
 
-  // ============================================
-  // HELPERS
-  // ============================================
+  useEffect(() => { loadCategories(); }, [loadCategories]);
+
+  useEffect(() => {
+    setViewMonth(selectedMonth);
+    setCustomMonth(selectedMonth);
+  }, [selectedMonth]);
+
+  // ⭐ Close dropdowns when clicking outside
+  useEffect(() => {
+    const handler = (e) => {
+      if (siteSelectorRef.current && !siteSelectorRef.current.contains(e.target)) {
+        setShowSiteDropdown(false);
+      }
+      if (filterDropdownRef.current && !filterDropdownRef.current.contains(e.target)) {
+        setShowFilterDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
   const getDisplayMonth = () => (filterType === 'custom' && customMonth) ? customMonth : viewMonth;
 
   const getCategoryName = (categoryId) => {
@@ -129,14 +142,22 @@ const MonthlyOverheadManager = ({
     return cat?.name || 'Unknown';
   };
 
+  const getCategory = (categoryId) => categories.find(c => c.id === categoryId);
+
+  // ⭐ FIXED: never returns "Unknown Site"
   const getSiteNames = (overhead) => {
-    if (overhead.siteNames && overhead.siteNames.length > 0) return overhead.siteNames.join(', ');
-    if (!overhead.siteId) {
-      const allNames = sites.map(s => s.name);
-      return allNames.length > 0 ? allNames.join(', ') : 'All Sites';
+    if (overhead.siteNames && overhead.siteNames.length > 0) {
+      return overhead.siteNames.join(', ');
     }
-    const site = sites.find(s => s.id === overhead.siteId);
-    return site?.name || 'Unknown Site';
+    if (overhead.siteId) {
+      const site = sites.find(s => s.id === overhead.siteId);
+      if (site?.name) return site.name;
+      // FK points to a site that isn't loaded → fallback
+      const allNames = sites.map(s => s.name);
+      return allNames.length > 0 ? `All Sites (${allNames.length})` : 'All Sites';
+    }
+    const allNames = sites.map(s => s.name);
+    return allNames.length > 0 ? `All Sites (${allNames.length})` : 'All Sites';
   };
 
   const getSelectedSiteNames = () => {
@@ -151,6 +172,18 @@ const MonthlyOverheadManager = ({
     const [y, m] = monthStr.split('-');
     const names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     return `${names[parseInt(m) - 1]} ${y}`;
+  };
+
+  const getFrequencyLabel = (f) => ({
+    'daily': 'Daily', 'weekly': 'Weekly',
+    'monthly': 'Monthly', 'quarterly': 'Quarterly', 'yearly': 'Yearly'
+  }[f] || f);
+
+  // ⭐ Frequency-aware helper for a given overhead entry
+  const getMonthlyTotalFor = (o) => {
+    if (o.monthlyTotal != null) return Number(o.monthlyTotal) || 0;
+    const freq = o.frequency || getCategory(o.categoryId)?.defaultFrequency || 'monthly';
+    return computeMonthlyTotal(o.amount || 0, freq, o.workingDays || 26);
   };
 
   // ============================================
@@ -193,25 +226,27 @@ const MonthlyOverheadManager = ({
   };
 
   // ============================================
-  // SUMMARY
+  // SUMMARY  ⭐ uses frequency-aware monthly totals
   // ============================================
   const summary = useMemo(() => {
-    const total = filteredOverheads.reduce((s, o) => s + (o.amount || 0), 0);
+    const total = filteredOverheads.reduce((s, o) => s + getMonthlyTotalFor(o), 0);
     const workingDays = filteredOverheads.length > 0 ? (filteredOverheads[0].workingDays || 26) : 26;
-    const sitesCount = filteredOverheads.length > 0 ? (filteredOverheads[0].sitesCount || 1) : 1;
+    const sitesCount = filteredOverheads.length > 0
+      ? Math.max(...filteredOverheads.map(o => o.sitesCount || 1))
+      : 1;
     const perSite = sitesCount > 0 ? total / sitesCount : 0;
     const perDayPerSite = workingDays > 0 ? perSite / workingDays : 0;
     return { total, workingDays, sitesCount, perSite, perDayPerSite, count: filteredOverheads.length };
   }, [filteredOverheads]);
 
   // ============================================
-  // CHART DATA
+  // CHART DATA  ⭐ uses frequency-aware totals
   // ============================================
   const categoryChartData = useMemo(() => {
     const map = {};
     filteredOverheads.forEach(o => {
       const name = getCategoryName(o.categoryId);
-      map[name] = (map[name] || 0) + (o.amount || 0);
+      map[name] = (map[name] || 0) + getMonthlyTotalFor(o);
     });
     const palette = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#f97316', '#ec4899'];
     return Object.entries(map)
@@ -222,14 +257,15 @@ const MonthlyOverheadManager = ({
   const siteChartData = useMemo(() => {
     const map = {};
     filteredOverheads.forEach(o => {
+      const total = getMonthlyTotalFor(o);
       if (o.siteNames && o.siteNames.length > 0) {
-        const share = (o.amount || 0) / o.siteNames.length;
+        const share = total / o.siteNames.length;
         o.siteNames.forEach(n => { map[n] = (map[n] || 0) + share; });
       } else if (o.siteId) {
-        const n = sites.find(s => s.id === o.siteId)?.name || 'Unknown';
-        map[n] = (map[n] || 0) + (o.amount || 0);
+        const n = sites.find(s => s.id === o.siteId)?.name || 'Unassigned';
+        map[n] = (map[n] || 0) + total;
       } else {
-        const share = (o.amount || 0) / Math.max(1, sites.length);
+        const share = total / Math.max(1, sites.length);
         sites.forEach(s => { map[s.name] = (map[s.name] || 0) + share; });
       }
     });
@@ -245,19 +281,19 @@ const MonthlyOverheadManager = ({
       .slice(0, 8);
   }, [filteredOverheads, sites]);
 
-  // Monthly trend across the last 12 months (independent of filter)
   const monthlyTrend = useMemo(() => {
     const months = [];
     const now = new Date();
     for (let i = 11; i >= 0; i--) {
       const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      const total = overheads.filter(o => o.month === key).reduce((s, o) => s + (o.amount || 0), 0);
-      const count = overheads.filter(o => o.month === key).length;
+      const monthEntries = overheads.filter(o => o.month === key);
+      const total = monthEntries.reduce((s, o) => s + getMonthlyTotalFor(o), 0);
       months.push({
         label: d.toLocaleString('en-US', { month: 'short' }),
         month: key,
-        total, count
+        total,
+        count: monthEntries.length
       });
     }
     return months;
@@ -369,6 +405,18 @@ const MonthlyOverheadManager = ({
   };
   const handleDeselectAllSites = () => setFormData(prev => ({ ...prev, siteIds: [], sitesCount: '1' }));
 
+  // ⭐ Auto-fill amount on category change
+  const handleCategoryChange = (catId) => {
+    const cat = categories.find(c => c.id === catId);
+    setFormData(prev => ({
+      ...prev,
+      categoryId: catId,
+      amount: (cat && cat.defaultAmount != null && !prev.amount)
+        ? String(cat.defaultAmount)
+        : prev.amount,
+    }));
+  };
+
   // ============================================
   // RESET
   // ============================================
@@ -391,10 +439,12 @@ const MonthlyOverheadManager = ({
       if (!formData.categoryId) {
         setErrorMessage('Please select a category'); setLoading(false); return;
       }
+      const selectedCategory = categories.find(c => c.id === formData.categoryId);
       const base = {
         month: formData.month || getDisplayMonth(),
         categoryId: formData.categoryId,
         amount: parseFloat(formData.amount) || 0,
+        frequency: selectedCategory?.defaultFrequency || 'monthly',
         workingDays: parseInt(formData.workingDays) || 26,
         notes: formData.notes || ''
       };
@@ -412,7 +462,12 @@ const MonthlyOverheadManager = ({
         };
       } else {
         const singleSite = sites.find(s => s.id === formData.siteIds[0]);
-        createData = { ...base, siteId: formData.siteIds[0], sitesCount: 1, siteNames: [singleSite?.name || 'Unknown Site'] };
+        createData = {
+          ...base,
+          siteId: formData.siteIds[0],
+          sitesCount: 1,
+          siteNames: [singleSite?.name || 'Unknown Site']
+        };
       }
       if (editingId) await updateMonthlyOverhead(editingId, createData);
       else await addMonthlyOverhead(createData);
@@ -506,7 +561,6 @@ const MonthlyOverheadManager = ({
         </div>
       )}
 
-      {/* Row 1 — Monthly trend (12 months) + Category donut */}
       <div className="mo-grid-2-1">
         <div className="mo-card">
           <div className="mo-card-header">
@@ -576,7 +630,6 @@ const MonthlyOverheadManager = ({
         </div>
       </div>
 
-      {/* Row 2 — Site distribution */}
       <div className="mo-card">
         <div className="mo-card-header">
           <div className="mo-card-title">
@@ -606,7 +659,6 @@ const MonthlyOverheadManager = ({
         ) : <div className="mo-empty-mini">No sites</div>}
       </div>
 
-      {/* Row 3 — Category breakdown bars */}
       {categoryChartData.length > 0 && (
         <div className="mo-card">
           <div className="mo-card-header">
@@ -647,7 +699,7 @@ const MonthlyOverheadManager = ({
   );
 
   // ============================================
-  // ENTRIES TAB
+  // ENTRIES TAB  ⭐ Monthly Total column + frequency-aware
   // ============================================
   const renderEntriesTab = () => (
     <div className="mo-view">
@@ -674,7 +726,13 @@ const MonthlyOverheadManager = ({
         <div className="mo-empty">
           <div className="mo-empty-icon"><FileText size={40} /></div>
           <h3>No Overhead Entries</h3>
-          <p>Click "Add Overhead" to set up monthly overhead for {getMonthLabel(getDisplayMonth())}</p>
+          <p>
+            No entries for {getMonthLabel(getDisplayMonth())}.
+            Click <strong>Add Overhead</strong> to add one manually.
+          </p>
+          <button className="mo-btn mo-btn-primary" onClick={() => { resetForm(); setShowForm(true); }} style={{ marginTop: 12 }}>
+            <Plus size={14} /> Add Overhead
+          </button>
         </div>
       ) : (
         <>
@@ -683,42 +741,55 @@ const MonthlyOverheadManager = ({
               <thead>
                 <tr>
                   <th>Category</th>
+                  <th>Frequency</th>
                   <th className="right">Amount</th>
                   <th>Site(s)</th>
                   <th className="center">Sites</th>
-                  <th className="right">Working Days</th>
+                  <th className="right">Days</th>
+                  <th className="right">Monthly Total</th>
                   <th className="right">Per Site</th>
                   <th className="right">Per Day/Site</th>
                   <th className="center">Actions</th>
                 </tr>
               </thead>
               <tbody>
-                {paginatedOverheads.map((o, i) => (
-                  <tr key={o.id} style={{ animationDelay: `${Math.min(i * 30, 400)}ms` }}>
-                    <td><span className="mo-category-badge">{getCategoryName(o.categoryId)}</span></td>
-                    <td className="right mo-td-blue"><strong>{Utils.formatCurrencyShort(o.amount)}</strong></td>
-                    <td><div className="mo-site-names">{getSiteNames(o)}</div></td>
-                    <td className="center"><span className="mo-count-badge">{o.sitesCount || 1}</span></td>
-                    <td className="right">{o.workingDays || 26}</td>
-                    <td className="right mo-td-green">{Utils.formatCurrencyShort(o.perSite || 0)}</td>
-                    <td className="right mo-td-amber">{Utils.formatCurrencyShort(o.perDayPerSite || 0)}</td>
-                    <td className="center">
-                      <div className="mo-action-btns">
-                        <button className="mo-icon-btn mo-icon-edit" onClick={() => handleEdit(o)} title="Edit">
-                          <Edit size={13} />
-                        </button>
-                        <button className="mo-icon-btn mo-icon-danger" onClick={() => handleDelete(o.id)} title="Delete">
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {paginatedOverheads.map((o, i) => {
+                  const freq = o.frequency || getCategory(o.categoryId)?.defaultFrequency || 'monthly';
+                  const monthlyTotal = getMonthlyTotalFor(o);
+                  const perSite = (monthlyTotal) / Math.max(1, o.sitesCount || 1);
+                  const perDay = perSite / Math.max(1, o.workingDays || 26);
+                  return (
+                    <tr key={o.id} style={{ animationDelay: `${Math.min(i * 30, 400)}ms` }}>
+                      <td><span className="mo-category-badge">{getCategoryName(o.categoryId)}</span></td>
+                      <td>
+                        <span className="mo-freq-badge">{getFrequencyLabel(freq)}</span>
+                      </td>
+                      <td className="right mo-td-blue"><strong>{Utils.formatCurrencyShort(o.amount)}</strong></td>
+                      <td><div className="mo-site-names">{getSiteNames(o)}</div></td>
+                      <td className="center"><span className="mo-count-badge">{o.sitesCount || 1}</span></td>
+                      <td className="right">{o.workingDays || 26}</td>
+                      <td className="right mo-td-purple">
+                        <strong>{Utils.formatCurrencyShort(monthlyTotal)}</strong>
+                      </td>
+                      <td className="right mo-td-green">{Utils.formatCurrencyShort(perSite)}</td>
+                      <td className="right mo-td-amber">{Utils.formatCurrencyShort(perDay)}</td>
+                      <td className="center">
+                        <div className="mo-action-btns">
+                          <button className="mo-icon-btn mo-icon-edit" onClick={() => handleEdit(o)} title="Edit">
+                            <Edit size={13} />
+                          </button>
+                          <button className="mo-icon-btn mo-icon-danger" onClick={() => handleDelete(o.id)} title="Delete">
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
 
-          {/* Pagination */}
           <div className="mo-pagination">
             <div className="mo-pagination-info">
               Showing <strong>{((currentPage - 1) * itemsPerPage) + 1}</strong>–
@@ -760,121 +831,165 @@ const MonthlyOverheadManager = ({
   );
 
   // ============================================
-  // FORM MODAL
+  // FORM MODAL  ⭐ live preview + working site dropdown
   // ============================================
-  const renderFormModal = () => (
-    <ModalPortal>
-      <div className="mo-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowForm(false); resetForm(); } }}>
-        <div className="mo-modal" onClick={e => e.stopPropagation()}>
-          <div className="mo-modal-header" style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
-            <div className="mo-modal-header-left">
-              <div className="mo-modal-icon">
-                {editingId ? <Edit size={18} /> : <Plus size={18} />}
-              </div>
-              <div>
-                <h3>{editingId ? 'Edit Overhead' : 'Add Monthly Overhead'}</h3>
-                <p className="mo-modal-sub">{editingId ? 'Update overhead entry' : 'Create a new overhead record'}</p>
-              </div>
-            </div>
-            <button className="mo-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
-              <X size={18} />
-            </button>
-          </div>
-          <div className="mo-modal-body">
-            <form onSubmit={handleSubmit}>
-              <div className="mo-form-row">
-                <div className="mo-form-group">
-                  <label><Calendar size={12} /> Month <span className="mo-required">*</span></label>
-                  <input type="month" value={formData.month}
-                    onChange={e => setFormData({ ...formData, month: e.target.value })}
-                    required className="mo-form-input" />
-                </div>
-                <div className="mo-form-group">
-                  <label><Tag size={12} /> Category <span className="mo-required">*</span></label>
-                  <select value={formData.categoryId}
-                    onChange={e => setFormData({ ...formData, categoryId: e.target.value })}
-                    required className="mo-form-select">
-                    <option value="">Select Category</option>
-                    {loadingCategories ? (
-                      <option value="" disabled>Loading...</option>
-                    ) : categories.length === 0 ? (
-                      <option value="" disabled>No categories</option>
-                    ) : categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-                  </select>
-                </div>
-              </div>
+  const renderFormModal = () => {
+    const selectedCategory = categories.find(c => c.id === formData.categoryId);
+    const previewFreq = selectedCategory?.defaultFrequency || 'monthly';
+    const previewAmount = parseFloat(formData.amount) || 0;
+    const previewWorkingDays = parseInt(formData.workingDays) || 26;
+    const previewMonthly = computeMonthlyTotal(previewAmount, previewFreq, previewWorkingDays);
 
-              <div className="mo-form-row">
-                <div className="mo-form-group">
-                  <label><Banknote size={12} /> Amount (BD) <span className="mo-required">*</span></label>
-                  <input type="number" step="0.001" value={formData.amount}
-                    onChange={e => setFormData({ ...formData, amount: e.target.value })}
-                    required placeholder="0.000" className="mo-form-input" />
+    const freqLabel = {
+      daily: 'day', weekly: 'week', monthly: 'month',
+      quarterly: 'quarter', yearly: 'year'
+    }[previewFreq] || 'month';
+
+    return (
+      <ModalPortal>
+        <div className="mo-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowForm(false); resetForm(); } }}>
+          <div className="mo-modal" onClick={e => e.stopPropagation()}>
+            <div className="mo-modal-header" style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
+              <div className="mo-modal-header-left">
+                <div className="mo-modal-icon">
+                  {editingId ? <Edit size={18} /> : <Plus size={18} />}
                 </div>
-                <div className="mo-form-group">
-                  <label><Building2 size={12} /> Apply to Sites</label>
-                  <div className="mo-site-selector">
-                    <button type="button" className="mo-site-selector-btn"
-                      onClick={() => setShowSiteDropdown(!showSiteDropdown)}>
-                      <span className="mo-selected-text">{getSelectedSiteNames()}</span>
-                      <ChevronDown size={14} />
-                    </button>
-                    {showSiteDropdown && (
-                      <div className="mo-site-dropdown">
-                        <div className="mo-dropdown-actions">
-                          <button type="button" onClick={handleSelectAllSites}>Select All</button>
-                          <button type="button" onClick={handleDeselectAllSites}>Deselect All</button>
-                        </div>
-                        {sites.map(s => (
-                          <label key={s.id} className="mo-site-item">
-                            <input type="checkbox" checked={formData.siteIds.includes(s.id)}
-                              onChange={() => handleSiteToggle(s.id)} />
-                            <span>{s.name}</span>
-                          </label>
-                        ))}
-                        {sites.length === 0 && <div className="mo-no-sites">No sites available</div>}
-                      </div>
+                <div>
+                  <h3>{editingId ? 'Edit Overhead' : 'Add Monthly Overhead'}</h3>
+                  <p className="mo-modal-sub">{editingId ? 'Update overhead entry' : 'Create a new overhead record'}</p>
+                </div>
+              </div>
+              <button className="mo-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
+                <X size={18} />
+              </button>
+            </div>
+            <div className="mo-modal-body">
+              <form onSubmit={handleSubmit}>
+                <div className="mo-form-row">
+                  <div className="mo-form-group">
+                    <label><Calendar size={12} /> Month <span className="mo-required">*</span></label>
+                    <input type="month" value={formData.month}
+                      onChange={e => setFormData({ ...formData, month: e.target.value })}
+                      required className="mo-form-input" />
+                  </div>
+                  <div className="mo-form-group">
+                    <label><Tag size={12} /> Category <span className="mo-required">*</span></label>
+                    <select value={formData.categoryId}
+                      onChange={e => handleCategoryChange(e.target.value)}
+                      required className="mo-form-select">
+                      <option value="">Select Category</option>
+                      {loadingCategories ? (
+                        <option value="" disabled>Loading...</option>
+                      ) : categories.length === 0 ? (
+                        <option value="" disabled>No categories</option>
+                      ) : categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                    {selectedCategory && (
+                      <span style={{ fontSize: 11, color: '#64748b', marginTop: 4, display: 'block' }}>
+                        Template: {getFrequencyLabel(selectedCategory.defaultFrequency)} · Default {Utils.formatCurrencyShort(selectedCategory.defaultAmount || 0)}
+                      </span>
                     )}
                   </div>
                 </div>
-              </div>
 
-              <div className="mo-form-row">
-                <div className="mo-form-group">
-                  <label><Users size={12} /> Sites Count</label>
-                  <input type="number" value={formData.sitesCount}
-                    onChange={e => setFormData({ ...formData, sitesCount: e.target.value })}
-                    className="mo-form-input" />
+                <div className="mo-form-row">
+                  <div className="mo-form-group">
+                    <label><Banknote size={12} /> Amount (BD) <span className="mo-required">*</span></label>
+                    <input type="number" step="0.001" value={formData.amount}
+                      onChange={e => setFormData({ ...formData, amount: e.target.value })}
+                      required placeholder="0.000" className="mo-form-input" />
+                    {selectedCategory && selectedCategory.defaultAmount != null && String(selectedCategory.defaultAmount) !== formData.amount && (
+                      <button type="button"
+                        onClick={() => setFormData(prev => ({ ...prev, amount: String(selectedCategory.defaultAmount) }))}
+                        style={{ fontSize: 11, color: '#3b82f6', background: 'none', border: 'none', padding: 0, marginTop: 4, cursor: 'pointer', textDecoration: 'underline' }}>
+                        Use template amount ({Utils.formatCurrencyShort(selectedCategory.defaultAmount)})
+                      </button>
+                    )}
+
+                    {/* ⭐ Live preview */}
+                    {selectedCategory && previewAmount > 0 && (
+                      <div style={{
+                        fontSize: 12, marginTop: 6, padding: '6px 10px',
+                        background: 'rgba(139,92,246,0.06)', borderRadius: 6,
+                        borderLeft: '3px solid #8b5cf6', color: '#5b21b6',
+                      }}>
+                        <strong>{Utils.formatCurrencyShort(previewAmount)}</strong> per <strong>{freqLabel}</strong>
+                        {' '}·{' '}Monthly total ≈{' '}
+                        <strong>{Utils.formatCurrencyShort(previewMonthly)}</strong>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="mo-form-group">
+                    <label><Building2 size={12} /> Apply to Sites</label>
+                    <div className="mo-site-selector" ref={siteSelectorRef}>
+                      <button type="button" className="mo-site-selector-btn"
+                        onClick={(e) => { e.stopPropagation(); setShowSiteDropdown(v => !v); }}>
+                        <span className="mo-selected-text">{getSelectedSiteNames()}</span>
+                        <ChevronDown size={14} />
+                      </button>
+                      {showSiteDropdown && (
+                        <div className="mo-site-dropdown">
+                          <div className="mo-dropdown-actions">
+                            <button type="button" onClick={handleSelectAllSites}>Select All</button>
+                            <button type="button" onClick={handleDeselectAllSites}>Deselect All</button>
+                          </div>
+                          {sites.length === 0 ? (
+                            <div className="mo-no-sites" style={{ padding: 12, textAlign: 'center', color: '#b91c1c' }}>
+                              ⚠️ No sites available. Add sites first.
+                            </div>
+                          ) : (
+                            sites.map(s => (
+                              <label key={s.id} className="mo-site-item">
+                                <input type="checkbox" checked={formData.siteIds.includes(s.id)}
+                                  onChange={() => handleSiteToggle(s.id)} />
+                                <span>{s.name}</span>
+                              </label>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
-                <div className="mo-form-group">
-                  <label><Clock size={12} /> Working Days</label>
-                  <input type="number" value={formData.workingDays}
-                    onChange={e => setFormData({ ...formData, workingDays: e.target.value })}
-                    className="mo-form-input" />
+
+                <div className="mo-form-row">
+                  <div className="mo-form-group">
+                    <label><Users size={12} /> Sites Count</label>
+                    <input type="number" value={formData.sitesCount}
+                      onChange={e => setFormData({ ...formData, sitesCount: e.target.value })}
+                      className="mo-form-input" />
+                  </div>
+                  <div className="mo-form-group">
+                    <label><Clock size={12} /> Working Days</label>
+                    <input type="number" value={formData.workingDays}
+                      onChange={e => setFormData({ ...formData, workingDays: e.target.value })}
+                      className="mo-form-input" />
+                  </div>
                 </div>
-              </div>
 
-              <div className="mo-form-group">
-                <label><FileText size={12} /> Notes</label>
-                <input type="text" value={formData.notes}
-                  onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                  placeholder="Additional notes..." className="mo-form-input" />
-              </div>
+                <div className="mo-form-group">
+                  <label><FileText size={12} /> Notes</label>
+                  <input type="text" value={formData.notes}
+                    onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                    placeholder="Additional notes..." className="mo-form-input" />
+                </div>
 
-              <div className="mo-form-actions">
-                <button type="submit" className="mo-btn mo-btn-primary" disabled={loading}>
-                  <Save size={14} /> {loading ? 'Saving...' : (editingId ? 'Update' : 'Save')}
-                </button>
-                <button type="button" className="mo-btn mo-btn-secondary" onClick={() => { setShowForm(false); resetForm(); }}>
-                  Cancel
-                </button>
-              </div>
-            </form>
+                <div className="mo-form-actions">
+                  <button type="submit" className="mo-btn mo-btn-primary" disabled={loading}>
+                    <Save size={14} /> {loading ? 'Saving...' : (editingId ? 'Update' : 'Save')}
+                  </button>
+                  <button type="button" className="mo-btn mo-btn-secondary" onClick={() => { setShowForm(false); resetForm(); }}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
           </div>
         </div>
-      </div>
-    </ModalPortal>
-  );
+      </ModalPortal>
+    );
+  };
 
   const displayMonth = getDisplayMonth();
 
@@ -886,7 +1001,6 @@ const MonthlyOverheadManager = ({
         <div className="mo-orb mo-orb-3" />
       </div>
 
-      {/* Header */}
       <div className="mo-header">
         <div className="mo-header-left">
           <div className="mo-header-icon">
@@ -910,8 +1024,9 @@ const MonthlyOverheadManager = ({
               <ChevronRight size={16} />
             </button>
           </div>
-          <div className="mo-filter-dropdown">
-            <button className="mo-btn mo-btn-ghost" onClick={() => setShowFilterDropdown(!showFilterDropdown)}>
+          <div className="mo-filter-dropdown" ref={filterDropdownRef}>
+            <button className="mo-btn mo-btn-ghost"
+              onClick={(e) => { e.stopPropagation(); setShowFilterDropdown(v => !v); }}>
               <Filter size={14} /> {filterType === 'month' ? 'Current Month' : 'Custom'}
               <ChevronDown size={13} />
             </button>
@@ -940,7 +1055,6 @@ const MonthlyOverheadManager = ({
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="mo-tabs">
         {[
           { id: 'overview', label: 'Overview', icon: BarChart3 },

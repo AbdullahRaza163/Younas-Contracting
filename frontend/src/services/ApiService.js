@@ -271,23 +271,63 @@ class ApiService {
     return this.request(`/attendance/${id}`, { method: 'DELETE' });
   }
   static async editAttendanceTimes(attendanceId, times) {
-    return this.request(`/attendance/${attendanceId}/edit-times`, {
-      method: 'PUT',
-      body: JSON.stringify(times)
-    });
-  }
-  static async getTeamAttendance(teamId, date) {
-    return this.request(`/attendance/team/${teamId}?date=${date}`);
-  }
-  static async getAttendanceSettings() {
-    return this.request('/attendance/settings');
-  }
-  static async updateAttendanceSettings(settings) {
-    return this.request('/attendance/settings', {
-      method: 'PUT',
-      body: JSON.stringify(settings)
-    });
-  }
+  return this.request(`/attendance/${attendanceId}/edit-times`, {
+    method: 'PUT',
+    body: JSON.stringify(times)
+  });
+}
+
+// ⭐ MULTI-SITE SHIFTS
+static async getAttendanceShifts(attendanceId) {
+  return this.request(`/attendance/${attendanceId}/shifts`, {
+    method: 'GET'
+  });
+}
+
+static async addAttendanceShift(attendanceId, shift) {
+  return this.request(`/attendance/${attendanceId}/shifts`, {
+    method: 'POST',
+    body: JSON.stringify(shift)
+  });
+}
+
+// ⭐ CHANGED — POST instead of PUT, path adds /update
+static async updateAttendanceShift(shiftId, shift) {
+  return this.request(`/attendance/shifts/${shiftId}/update`, {
+    method: 'POST',
+    body: JSON.stringify(shift)
+  });
+}
+
+// ⭐ CHANGED — POST instead of DELETE, path adds /delete
+static async deleteAttendanceShift(shiftId) {
+  return this.request(`/attendance/shifts/${shiftId}/delete`, {
+    method: 'POST'
+  });
+}
+
+// ⭐ CHANGED — POST instead of PUT (avoids CORS preflight issue)
+static async replaceAttendanceShifts(attendanceId, shifts) {
+  return this.request(`/attendance/${attendanceId}/shifts`, {
+    method: 'POST',
+    body: JSON.stringify({ shifts })
+  });
+}
+
+static async getTeamAttendance(teamId, date) {
+  return this.request(`/attendance/team/${teamId}?date=${date}`);
+}
+
+static async getAttendanceSettings() {
+  return this.request('/attendance/settings');
+}
+
+static async updateAttendanceSettings(settings) {
+  return this.request('/attendance/settings', {
+    method: 'PUT',
+    body: JSON.stringify(settings)
+  });
+}
 
   // ============================================
   // UNITS ⭐ (now static — matches all other methods)

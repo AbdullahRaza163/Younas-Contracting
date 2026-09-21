@@ -12,7 +12,8 @@ import {
   PlayCircle, StopCircle, CalendarDays, FileSpreadsheet, Package, Box,
   Layers, BarChart3, PieChart as PieChartIcon, LineChart as LineChartIcon,
   ChevronLeft, ChevronsLeft, ChevronsRight, Flame, Target, Percent,
-  Banknote, Minus, List, Sun, Moon, Sliders, RotateCcw, Coffee, Ban
+  Banknote, Minus, List, Sun, Moon, Sliders, RotateCcw, Coffee, Ban,
+  ArrowUp, ArrowDown, Copy, GripVertical, GitBranch
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
@@ -37,7 +38,52 @@ const dbgErr = (...args) => { if (DEBUG) console.error('%c[AM-ERR]', 'color:#dc2
 const dbgWarn = (...args) => { if (DEBUG) console.warn('%c[AM-WARN]', 'color:#f59e0b;font-weight:bold', ...args); };
 
 // ============================================
-// DEFAULTS  ⭐ breakEnabled + overtimeEnabled added
+// ⭐ SELF-CONTAINED API HELPERS (no ApiService dependency)
+// ============================================
+const authHeaders = () => ({
+  'Accept': 'application/json',
+  'Content-Type': 'application/json',
+  'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
+});
+
+const apiGet = async (path) => {
+  const res = await fetch(`${CONFIG.API_BASE}${path}`, { headers: authHeaders() });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `GET ${path} failed (${res.status})`);
+  }
+  return res.json();
+};
+
+const apiSend = async (path, method, body) => {
+  const res = await fetch(`${CONFIG.API_BASE}${path}`, {
+    method,
+    headers: authHeaders(),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `${method} ${path} failed (${res.status})`);
+  }
+  return res.json();
+};
+
+// ⭐ Shifts API — self-contained
+const ShiftsApi = {
+  list: (attendanceId) => apiGet(`/attendance/${attendanceId}/shifts`),
+  replace: (attendanceId, shifts) => apiSend(`/attendance/${attendanceId}/shifts`, 'POST', { shifts }),
+  update: (shiftId, payload) => apiSend(`/attendance/shifts/${shiftId}/update`, 'POST', payload),
+  delete: (shiftId) => apiSend(`/attendance/shifts/${shiftId}/delete`, 'POST'),
+};
+
+// ⭐ Attendance meta API — self-contained (for siteId/notes/present patch)
+const AttendanceApi = {
+  update: (attendanceId, payload) => apiSend(`/attendance/${attendanceId}`, 'PUT', payload),
+  editTimes: (attendanceId, payload) => apiSend(`/attendance/${attendanceId}/edit-times`, 'PUT', payload),
+};
+
+// ============================================
+// DEFAULTS
 // ============================================
 const DEFAULT_SETTINGS = {
   shiftStartTime: '07:00',
@@ -46,9 +92,9 @@ const DEFAULT_SETTINGS = {
   breakStartTime: '12:00',
   breakEndTime: '13:00',
   breakHours: 1,
-  breakEnabled: true,          // ⭐ NEW — global break toggle
-  overtimeRate: 1.5,
-  overtimeEnabled: true,       // ⭐ global OT toggle
+  breakEnabled: true,
+  overtimeRate: 1,             // ⭐ default = 1 (no premium)
+  overtimeEnabled: true,
   earlyInThreshold: 15,
   lateInThreshold: 15,
   earlyOutThreshold: 15,
@@ -111,18 +157,31 @@ const getClockOutStatus = (checkedOut, cfg = DEFAULT_SETTINGS) => {
 
 const isoToLocalHHMM = (iso) => {
   if (!iso) return '';
+  const s = String(iso);
+  // ⭐ Extract HH:MM directly from the string — no Date, no timezone shifting.
+  const m = s.match(/T(\d{2}):(\d{2})/);
+  if (m) return `${m[1]}:${m[2]}`;
+  // Fallback (shouldn't normally run)
   const d = new Date(iso);
-  if (isNaN(d.getTime())) return '';
+  if (Number.isNaN(d.getTime())) return '';
   const pad = (n) => String(n).padStart(2, '0');
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
 const buildISO = (dateStr, hhmm) => {
   if (!dateStr || !hhmm) return null;
-  const [h, m] = hhmm.split(':').map(Number);
-  const d = new Date(`${dateStr}T00:00:00`);
-  d.setHours(h, m, 0, 0);
-  return d.toISOString();
+  const [hours, minutes] = hhmm.split(':').map(Number);
+  if (
+    !Number.isInteger(hours) ||
+    !Number.isInteger(minutes) ||
+    hours < 0 || hours > 23 ||
+    minutes < 0 || minutes > 59
+  ) {
+    return null;
+  }
+  // ⭐ WALL-CLOCK: send "YYYY-MM-DDTHH:MM:00" (no Z, no timezone conversion).
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${dateStr}T${pad(hours)}:${pad(minutes)}:00`;
 };
 
 const normalizeDate = (raw) => {
@@ -138,92 +197,113 @@ const normalizeDate = (raw) => {
   } catch { return ''; }
 };
 
-// ⭐⭐⭐ CORE: Compute hours with settings — respects breakEnabled & overtimeEnabled
-// record.breakEnabled  (per-record override)  → falls back to cfg.breakEnabled
-// record.overtimeEnabled (per-record override) → falls back to cfg.overtimeEnabled
-const computeHoursWithSettings = (record, cfg = DEFAULT_SETTINGS) => {
-  if (!record?.checkedIn || !record?.checkedOut) {
-    return {
-      hoursWorked: 0, overtimeHours: 0, normalHours: 0, breakHours: 0,
-      breakEnabled: cfg.breakEnabled !== false,
-      overtimeEnabled: cfg.overtimeEnabled !== false,
-    };
-  }
+// ============================================
+// CORE: Compute hours for a SINGLE shift-like object
+// ============================================
+const computeShiftHours = (shift, cfg = DEFAULT_SETTINGS) => {
+  const zero = { hours: 0, overtime: 0, normal: 0, breakH: 0 };
+  if (!shift?.checkedIn || !shift?.checkedOut) return zero;
 
-  const inMs = new Date(record.checkedIn).getTime();
-  const outMs = new Date(record.checkedOut).getTime();
-  if (isNaN(inMs) || isNaN(outMs) || outMs <= inMs) {
-    return {
-      hoursWorked: 0, overtimeHours: 0, normalHours: 0, breakHours: 0,
-      breakEnabled: cfg.breakEnabled !== false,
-      overtimeEnabled: cfg.overtimeEnabled !== false,
-    };
-  }
+  const inMs = new Date(shift.checkedIn).getTime();
+  const outMs = new Date(shift.checkedOut).getTime();
+  if (isNaN(inMs) || isNaN(outMs) || outMs <= inMs) return zero;
 
   const rawHours = (outMs - inMs) / (1000 * 60 * 60);
 
-  // ⭐ Resolve break toggle: record override → settings
-  const breakEnabled = record.breakEnabled !== undefined
-    ? record.breakEnabled !== false
+  const breakEnabled = shift.breakEnabled !== undefined
+    ? shift.breakEnabled !== false
     : cfg.breakEnabled !== false;
 
-  // ⭐ Resolve OT toggle: record override → settings
-  const overtimeEnabled = record.overtimeEnabled !== undefined
-    ? record.overtimeEnabled !== false
+  const overtimeEnabled = shift.overtimeEnabled !== undefined
+    ? shift.overtimeEnabled !== false
     : cfg.overtimeEnabled !== false;
 
-  // ⭐ Break hours — ONLY computed when breakEnabled is true
   let breakHours = 0;
   if (breakEnabled) {
-    const dateStr = normalizeDate(record.date);
-    const bStart = record.breakStart || (cfg.breakStartTime && dateStr
+    const dateStr = normalizeDate(shift.date);
+    const bStart = shift.breakStart || (cfg.breakStartTime && dateStr
       ? buildISO(dateStr, cfg.breakStartTime) : null);
-    const bEnd = record.breakEnd || (cfg.breakEndTime && dateStr
+    const bEnd = shift.breakEnd || (cfg.breakEndTime && dateStr
       ? buildISO(dateStr, cfg.breakEndTime) : null);
-
     if (bStart && bEnd) {
       const bsMs = new Date(bStart).getTime();
       const beMs = new Date(bEnd).getTime();
       if (!isNaN(bsMs) && !isNaN(beMs) && beMs > bsMs) {
         breakHours = (beMs - bsMs) / (1000 * 60 * 60);
       }
-    } else if (cfg.breakHours) {
-      breakHours = Number(cfg.breakHours) || 0;
-    }
-
-    // Auto-apply settings.breakHours if none computed and shift is long enough
-    if (breakHours === 0 && cfg.breakHours > 0) {
-      const shiftHoursCfg = Number(cfg.shiftHours) || 8;
-      if (rawHours >= shiftHoursCfg) breakHours = Number(cfg.breakHours) || 0;
     }
   }
 
-  // ⭐ Paid hours = raw - break (only when break enabled)
-  const paidHours = breakEnabled
-    ? Math.max(0, rawHours - breakHours)
-    : rawHours;
-
-  const shiftHours = Number(cfg.shiftHours) || 8;
-
-  // ⭐ OT only computed when enabled
-  const overtimeHours = overtimeEnabled
-    ? Math.max(0, paidHours - shiftHours)
-    : 0;
-
-  // ⭐ Normal hours = either capped at shift (when OT enabled)
-  //    or full paid hours (when OT disabled — all hours are normal)
-  const normalHours = overtimeEnabled
-    ? Math.min(paidHours, shiftHours)
-    : paidHours;
+  const paidHours = breakEnabled ? Math.max(0, rawHours - breakHours) : rawHours;
 
   return {
-    hoursWorked: paidHours,
+    hours: paidHours,
+    overtime: overtimeEnabled ? Math.max(0, paidHours - (Number(cfg.shiftHours) || 8)) : 0,
+    normal: paidHours,
+    breakH: breakHours,
+    overtimeEnabled,
+    breakEnabled,
+  };
+};
+
+// ============================================
+// AGGREGATE hours across shifts
+// ============================================
+const computeAggregateHours = (shifts, cfg = DEFAULT_SETTINGS) => {
+  const list = Array.isArray(shifts) ? shifts : [];
+  if (list.length === 0) {
+    return {
+      hoursWorked: 0, overtimeHours: 0, normalHours: 0, breakHours: 0,
+      breakEnabled: cfg.breakEnabled !== false,
+      overtimeEnabled: cfg.overtimeEnabled !== false,
+      shiftCount: 0,
+      perShift: [],
+    };
+  }
+
+  let totalPaid = 0;
+  let totalBreak = 0;
+  let anyOvertimeEnabled = false;
+  let anyBreakEnabled = false;
+
+  const perShift = list.map(sh => {
+    const r = computeShiftHours(sh, cfg);
+    totalPaid += r.hours;
+    totalBreak += r.breakH;
+    if (r.overtimeEnabled) anyOvertimeEnabled = true;
+    if (r.breakEnabled) anyBreakEnabled = true;
+    return { ...sh, computed: r };
+  });
+
+  const shiftHours = Number(cfg.shiftHours) || 8;
+  let overtimeHours = 0;
+  let normalHours = totalPaid;
+  if (anyOvertimeEnabled && totalPaid > shiftHours) {
+    normalHours = shiftHours;
+    overtimeHours = totalPaid - shiftHours;
+  } else if (!anyOvertimeEnabled) {
+    overtimeHours = 0;
+    normalHours = totalPaid;
+  }
+
+  return {
+    hoursWorked: totalPaid,
     overtimeHours,
     normalHours,
-    breakHours,
-    breakEnabled,
-    overtimeEnabled,
+    breakHours: totalBreak,
+    breakEnabled: anyBreakEnabled,
+    overtimeEnabled: anyOvertimeEnabled,
+    shiftCount: list.length,
+    perShift,
   };
+};
+
+const computeHoursWithSettings = (record, cfg = DEFAULT_SETTINGS) => {
+  if (!record) return computeAggregateHours([], cfg);
+  if (Array.isArray(record.shifts) && record.shifts.length > 0) {
+    return computeAggregateHours(record.shifts, cfg);
+  }
+  return computeAggregateHours([record], cfg);
 };
 
 const getClockInMinutes = (checkedIn, cfg = DEFAULT_SETTINGS) => {
@@ -242,9 +322,9 @@ const getClockOutMinutes = (checkedOut, cfg = DEFAULT_SETTINGS) => {
   return outMins - endMins;
 };
 
-// ⭐ Compute wage — respects per-record & global OT toggle
+// ⭐ FIXED: fallback 1.5 → 1.0
 const computeWage = (normalHours, overtimeHours, worker, cfg = DEFAULT_SETTINGS, record = null) => {
-  const otRate = Number(cfg.overtimeRate) || 1.5;
+  const otRate = Number(cfg.overtimeRate) || 1.0;
   const otEnabled = record?.overtimeEnabled !== undefined
     ? record.overtimeEnabled !== false
     : cfg.overtimeEnabled !== false;
@@ -326,6 +406,56 @@ const getDateFilterRange = (filterType) => {
 };
 
 // ============================================
+// SHIFT UTILITIES
+// ============================================
+const newShiftDraft = (dateStr, cfg, seedSiteId = '') => ({
+  _key: `s_${Math.random().toString(36).slice(2, 9)}`,
+  id: null,
+  siteId: seedSiteId || '',
+  checkedIn: '',
+  checkedOut: '',
+  breakStart: '',
+  breakEnd: '',
+  notes: '',
+  breakEnabled: cfg.breakEnabled !== false,
+  overtimeEnabled: cfg.overtimeEnabled !== false,
+  orderIndex: 0,
+});
+
+const normalizeShiftFromServer = (s, cfg) => ({
+  _key: `s_${s.id || Math.random().toString(36).slice(2, 9)}`,
+  id: s.id || null,
+  siteId: s.siteId || s.site_id || '',
+  checkedIn: isoToLocalHHMM(s.checkedIn || s.checked_in),
+  checkedOut: isoToLocalHHMM(s.checkedOut || s.checked_out),
+  breakStart: isoToLocalHHMM(s.breakStart || s.break_start),
+  breakEnd: isoToLocalHHMM(s.breakEnd || s.break_end),
+  notes: s.notes || '',
+  breakEnabled: s.breakEnabled !== undefined ? s.breakEnabled !== false
+    : (s.break_enabled !== undefined ? s.break_enabled !== false : cfg.breakEnabled !== false),
+  overtimeEnabled: s.overtimeEnabled !== undefined ? s.overtimeEnabled !== false
+    : (s.overtime_enabled !== undefined ? s.overtime_enabled !== false : cfg.overtimeEnabled !== false),
+  orderIndex: s.orderIndex ?? s.order_index ?? 0,
+});
+
+const legacyRecordToShift = (record, cfg) => {
+  const dateStr = normalizeDate(record.date);
+  const sh = newShiftDraft(dateStr, cfg, record.siteId || '');
+  sh.checkedIn = isoToLocalHHMM(record.checkedIn);
+  sh.checkedOut = isoToLocalHHMM(record.checkedOut);
+  sh.breakStart = isoToLocalHHMM(record.breakStart
+    || (cfg.breakEnabled !== false && cfg.breakStartTime ? buildISO(dateStr, cfg.breakStartTime) : null));
+  sh.breakEnd = isoToLocalHHMM(record.breakEnd
+    || (cfg.breakEnabled !== false && cfg.breakEndTime ? buildISO(dateStr, cfg.breakEndTime) : null));
+  sh.notes = record.notes || '';
+  sh.breakEnabled = record.breakEnabled !== undefined
+    ? record.breakEnabled !== false : cfg.breakEnabled !== false;
+  sh.overtimeEnabled = record.overtimeEnabled !== undefined
+    ? record.overtimeEnabled !== false : cfg.overtimeEnabled !== false;
+  return sh;
+};
+
+// ============================================
 // MAIN COMPONENT
 // ============================================
 const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData }) => {
@@ -361,23 +491,17 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const [showSiteModal, setShowSiteModal] = useState(false);
   const [siteModalContext, setSiteModalContext] = useState(null);
 
-  // ⭐ Edit Attendance Modal
+  // Edit Attendance Modal (shift-aware)
   const [showEditModal, setShowEditModal] = useState(false);
   const [editRecord, setEditRecord] = useState(null);
-  const [editForm, setEditForm] = useState({
-    checkedIn: '',
-    checkedOut: '',
-    breakStart: '',
-    breakEnd: '',
-    siteId: '',
-    notes: '',
-    present: true,
-    breakEnabled: true,       // ⭐ NEW
-    overtimeEnabled: true,    // ⭐ NEW
+  const [editShiftDrafts, setEditShiftDrafts] = useState([]);
+  const [editMeta, setEditMeta] = useState({
+    siteId: '', notes: '', present: true,
+    breakEnabled: true, overtimeEnabled: true,
   });
   const [editLoading, setEditLoading] = useState(false);
+  const [editShiftsLoading, setEditShiftsLoading] = useState(false);
 
-  // ⭐ Optimistic local overrides
   const [localAttendanceOverride, setLocalAttendanceOverride] = useState({});
 
   const [selectedMonth, setSelectedMonth] = useState(() => {
@@ -390,19 +514,16 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const [salaryReportData, setSalaryReportData] = useState(null);
   const [salaryReportLoading, setSalaryReportLoading] = useState(false);
 
-  // ⭐ DATE FILTER STATE
   const [activeDateFilter, setActiveDateFilter] = useState('today');
   const [customDateFrom, setCustomDateFrom] = useState('');
   const [customDateTo, setCustomDateTo] = useState('');
   const [showCustomDate, setShowCustomDate] = useState(false);
 
-  // ⭐ Attendance Settings
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [settingsForm, setSettingsForm] = useState(DEFAULT_SETTINGS);
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
 
-  // Pagination
   const [workerPage, setWorkerPage] = useState(1);
   const [workerPerPage, setWorkerPerPage] = useState(9);
   const [teamPage, setTeamPage] = useState(1);
@@ -525,18 +646,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     setSalaryReportLoading(true);
     setError('');
     try {
-      const response = await fetch(`${CONFIG.API_BASE}/attendance/salary-report/${selectedMonth}`, {
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
-        }
-      });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to load salary report');
-      }
-      const result = await response.json();
+      const result = await apiGet(`/attendance/salary-report/${selectedMonth}`);
       setSalaryReportData(result);
     } catch (err) {
       setError(err.message);
@@ -578,70 +688,100 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       let breakStart = null, breakEnd = null, breakHours = 0;
       let breakEnabled = cfg.breakEnabled !== false;
       let overtimeEnabled = cfg.overtimeEnabled !== false;
+      let siteIds = [];
+      let shiftCount = 0;
 
       if (isSingleDay) {
         record = mergedAttendance.find(
           a => a.workerId === worker.id && a.date === range.from
         );
         if (record) {
-          checkedInTime = record.checkedIn || null;
-          checkedOutTime = record.checkedOut || null;
+          const shifts = Array.isArray(record.shifts) && record.shifts.length > 0
+            ? record.shifts
+            : [record];
 
-          breakStart = record.breakStart || (cfg.breakEnabled !== false && cfg.breakStartTime
-            ? buildISO(range.from, cfg.breakStartTime) : null);
-          breakEnd = record.breakEnd || (cfg.breakEnabled !== false && cfg.breakEndTime
-            ? buildISO(range.from, cfg.breakEndTime) : null);
+          const completedShifts = shifts.filter(s => (s.checkedIn || s.checked_in) && (s.checkedOut || s.checked_out));
+          const anyActive = shifts.some(s => (s.checkedIn || s.checked_in) && !(s.checkedOut || s.checked_out));
 
-          breakEnabled = record.breakEnabled !== undefined
-            ? record.breakEnabled !== false
-            : cfg.breakEnabled !== false;
-          overtimeEnabled = record.overtimeEnabled !== undefined
-            ? record.overtimeEnabled !== false
-            : cfg.overtimeEnabled !== false;
+          shiftCount = shifts.length;
+          siteIds = [...new Set(shifts.map(s => s.siteId || s.site_id).filter(Boolean))];
 
-          if (record.checkedIn && !record.checkedOut) {
-            status = 'working';
-          } else if (record.checkedIn && record.checkedOut) {
-            status = 'completed';
+          const ins = shifts.map(s => s.checkedIn || s.checked_in).filter(Boolean).map(x => new Date(x).getTime());
+          const outs = shifts.map(s => s.checkedOut || s.checked_out).filter(Boolean).map(x => new Date(x).getTime());
+          checkedInTime = ins.length ? new Date(Math.min(...ins)).toISOString() : null;
+          checkedOutTime = outs.length ? new Date(Math.max(...outs)).toISOString() : null;
 
-            const computed = computeHoursWithSettings(record, cfg);
-            hoursWorked = computed.hoursWorked;
-            overtimeHours = computed.overtimeHours;
-            normalHours = computed.normalHours;
-            breakHours = computed.breakHours;
-            breakEnabled = computed.breakEnabled;
-            overtimeEnabled = computed.overtimeEnabled;
+          const agg = computeAggregateHours(shifts.map(s => ({
+            checkedIn: s.checkedIn || s.checked_in,
+            checkedOut: s.checkedOut || s.checked_out,
+            breakStart: s.breakStart || s.break_start,
+            breakEnd: s.breakEnd || s.break_end,
+            date: record.date,
+            breakEnabled: s.breakEnabled ?? s.break_enabled,
+            overtimeEnabled: s.overtimeEnabled ?? s.overtime_enabled,
+          })), cfg);
 
-            wageEarned = computeWage(normalHours, overtimeHours, worker, cfg, record);
-          } else if (record.present) {
-            status = 'pending';
-          }
+          hoursWorked = agg.hoursWorked;
+          overtimeHours = agg.overtimeHours;
+          normalHours = agg.normalHours;
+          breakHours = agg.breakHours;
+          breakEnabled = agg.breakEnabled;
+          overtimeEnabled = agg.overtimeEnabled;
 
-          const inStatus = getClockInStatus(record.checkedIn, cfg);
+          wageEarned = computeWage(normalHours, overtimeHours, worker, cfg, {
+            overtimeEnabled,
+          });
+
+          if (anyActive) status = 'working';
+          else if (completedShifts.length > 0) status = 'completed';
+          else if (record.present) status = 'pending';
+
+          const inStatus = getClockInStatus(checkedInTime, cfg);
           if (inStatus === 'early_in') earlyIn = true;
           if (inStatus === 'late_in') {
             lateIn = true;
-            lateInMinutes = Math.max(0, getClockInMinutes(record.checkedIn, cfg) || 0);
+            lateInMinutes = Math.max(0, getClockInMinutes(checkedInTime, cfg) || 0);
           }
-
-          const outStatus = getClockOutStatus(record.checkedOut, cfg);
+          const outStatus = getClockOutStatus(checkedOutTime, cfg);
           if (outStatus === 'late_out') {
             lateOut = true;
-            lateOutMinutes = Math.max(0, getClockOutMinutes(record.checkedOut, cfg) || 0);
+            lateOutMinutes = Math.max(0, getClockOutMinutes(checkedOutTime, cfg) || 0);
           }
           if (outStatus === 'early_out') earlyOut = true;
+
+          if (shiftCount === 1) {
+            const s0 = shifts[0];
+            breakStart = s0.breakStart || s0.break_start || null;
+            breakEnd = s0.breakEnd || s0.break_end || null;
+          }
         }
       } else {
-        const completed = workerRecords.filter(a => a.checkedIn && a.checkedOut);
-        const active = workerRecords.find(a => a.checkedIn && !a.checkedOut);
+        const completed = workerRecords.filter(a =>
+          (a.checkedIn || a.shifts?.some?.(s => s.checkedIn && s.checkedOut))
+        );
+        const active = workerRecords.find(a =>
+          a.checkedIn && !a.checkedOut ||
+          a.shifts?.some?.(s => s.checkedIn && !s.checkedOut)
+        );
 
-        completed.forEach(a => {
-          const computed = computeHoursWithSettings(a, cfg);
-          hoursWorked += computed.hoursWorked;
-          overtimeHours += computed.overtimeHours;
-          normalHours += computed.normalHours;
-          breakHours += computed.breakHours;
-          wageEarned += computeWage(computed.normalHours, computed.overtimeHours, worker, cfg, a);
+        workerRecords.forEach(a => {
+          const shifts = Array.isArray(a.shifts) && a.shifts.length > 0 ? a.shifts : [a];
+          const agg = computeAggregateHours(shifts.map(s => ({
+            checkedIn: s.checkedIn || s.checked_in,
+            checkedOut: s.checkedOut || s.checked_out,
+            breakStart: s.breakStart || s.break_start,
+            breakEnd: s.breakEnd || s.break_end,
+            date: a.date,
+            breakEnabled: s.breakEnabled ?? s.break_enabled,
+            overtimeEnabled: s.overtimeEnabled ?? s.overtime_enabled,
+          })), cfg);
+          hoursWorked += agg.hoursWorked;
+          overtimeHours += agg.overtimeHours;
+          normalHours += agg.normalHours;
+          breakHours += agg.breakHours;
+          wageEarned += computeWage(agg.normalHours, agg.overtimeHours, worker, cfg, {
+            overtimeEnabled: agg.overtimeEnabled,
+          });
         });
 
         const presentCount = workerRecords.filter(a => a.present).length;
@@ -657,8 +797,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         }
       }
 
-      const siteId = record?.siteId || (workerRecords[0]?.siteId || null);
-      const siteName = siteId ? (resolveSiteName(siteId) || record?.siteName || null) : null;
+      const firstSiteId = siteIds[0] || record?.siteId || null;
+      const siteName = firstSiteId ? (resolveSiteName(firstSiteId) || record?.siteName || null) : null;
 
       return {
         ...worker, record: record || null, status,
@@ -669,7 +809,10 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         breakStart, breakEnd, breakHours,
         breakEnabled, overtimeEnabled,
         present: status !== 'absent',
-        siteId, siteName,
+        siteId: firstSiteId, siteName,
+        siteIds,
+        siteCount: siteIds.length,
+        shiftCount,
         recordCount: workerRecords.length,
         isSingleDay
       };
@@ -721,12 +864,14 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     const lateOutCount = todayAttendance.filter(w => w.lateOut).length;
     const earlyOutCount = todayAttendance.filter(w => w.earlyOut).length;
     const totalOvertime = todayAttendance.reduce((sum, w) => sum + w.overtimeHours, 0);
+    const multiSiteWorkers = todayAttendance.filter(w => w.siteCount > 1).length;
     return {
       present: present.length, working: working.length, completed: completed.length,
       absent: absent.length, totalHours, totalWages, totalWorkers, totalOvertime,
       attendanceRate: totalWorkers > 0 ? (present.length / totalWorkers) * 100 : 0,
       avgHours: present.length > 0 ? totalHours / present.length : 0,
       earlyInCount, lateInCount, lateOutCount, earlyOutCount,
+      multiSiteWorkers,
     };
   }, [todayAttendance, data.workers]);
 
@@ -755,15 +900,22 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const siteBreakdown = useMemo(() => {
     const map = {};
     todayAttendance.filter(w => w.present).forEach(w => {
-      const key = w.siteName || 'Unassigned';
-      map[key] = (map[key] || 0) + 1;
+      const ids = w.siteIds && w.siteIds.length > 0 ? w.siteIds : (w.siteId ? [w.siteId] : []);
+      if (ids.length === 0) {
+        map['Unassigned'] = (map['Unassigned'] || 0) + 1;
+      } else {
+        ids.forEach(id => {
+          const name = resolveSiteName(id) || 'Unassigned';
+          map[name] = (map[name] || 0) + 1;
+        });
+      }
     });
     const palette = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4'];
     return Object.entries(map)
       .map(([name, value], i) => ({ name, value, color: palette[i % palette.length] }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 6);
-  }, [todayAttendance]);
+  }, [todayAttendance, resolveSiteName]);
 
   const roleBreakdown = useMemo(() => {
     const map = {};
@@ -826,10 +978,16 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up'
     },
     {
+      id: 'multiSite', icon: GitBranch, label: 'Multi-Site Workers',
+      value: dayStats.multiSiteWorkers,
+      meta: 'worked >1 site',
+      color: '#0ea5e9', accent: 'linear-gradient(90deg,#0ea5e9,#38bdf8)', trend: 'flat'
+    },
+    {
       id: 'earlyIn', icon: ArrowDownRight, label: 'Early In',
       value: dayStats.earlyInCount,
       meta: 'before expected start',
-      color: '#0ea5e9', accent: 'linear-gradient(90deg,#0ea5e9,#38bdf8)', trend: 'flat'
+      color: '#06b6d4', accent: 'linear-gradient(90deg,#06b6d4,#22d3ee)', trend: 'flat'
     },
     {
       id: 'lateIn', icon: ArrowUpRight, label: 'Late In',
@@ -885,6 +1043,14 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         { label: 'Avg Wage', value: dayStats.present > 0 ? fmtBD(dayStats.totalWages / dayStats.present) : '0.000 BD' },
         { label: 'Total Hours', value: `${dayStats.totalHours.toFixed(1)}h` },
         { label: 'Present', value: dayStats.present }
+      ]
+    },
+    multiSite: {
+      title: 'Multi-Site Workers', details: [
+        { label: 'Workers on >1 site', value: dayStats.multiSiteWorkers },
+        { label: 'Present', value: dayStats.present },
+        { label: 'Total Workers', value: dayStats.totalWorkers },
+        { label: 'Avg Sites/Worker', value: dayStats.present > 0 ? (todayAttendance.reduce((s, w) => s + (w.siteCount || 0), 0) / dayStats.present).toFixed(2) : '0' }
       ]
     },
     earlyIn: {
@@ -951,6 +1117,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             date: selectedDate,
             breakEnabled: m.attendance?.breakEnabled,
             overtimeEnabled: m.attendance?.overtimeEnabled,
+            shifts: m.attendance?.shifts,
           }, cfg);
 
           return {
@@ -971,6 +1138,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             breakHours: computed.breakHours,
             breakEnabled: computed.breakEnabled,
             overtimeEnabled: computed.overtimeEnabled,
+            shiftCount: computed.shiftCount,
             wageEarned: computeWage(computed.normalHours, computed.overtimeHours, m.worker || {}, cfg, m.attendance),
           };
         });
@@ -999,9 +1167,9 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   };
 
   // ============================================
-  // EDIT ATTENDANCE MODAL
+  // EDIT ATTENDANCE MODAL — SHIFT AWARE
   // ============================================
-  const openEditModal = (record, worker) => {
+  const openEditModal = async (record, worker) => {
     dbg('🔓 openEditModal', { recordId: record?.id, workerId: worker?.id, workerName: worker?.name });
 
     if (!record) {
@@ -1011,19 +1179,6 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     }
 
     const cfg = settings || DEFAULT_SETTINGS;
-    const dateStr = normalizeDate(record.date);
-
-    const fallbackBreakStart = record.breakStart
-      || (cfg.breakEnabled !== false && cfg.breakStartTime ? buildISO(dateStr, cfg.breakStartTime) : null);
-    const fallbackBreakEnd = record.breakEnd
-      || (cfg.breakEnabled !== false && cfg.breakEndTime ? buildISO(dateStr, cfg.breakEndTime) : null);
-
-    const parsed = {
-      checkedIn: isoToLocalHHMM(record.checkedIn),
-      checkedOut: isoToLocalHHMM(record.checkedOut),
-      breakStart: isoToLocalHHMM(fallbackBreakStart),
-      breakEnd: isoToLocalHHMM(fallbackBreakEnd),
-    };
 
     const breakEnabled = record.breakEnabled !== undefined
       ? record.breakEnabled !== false
@@ -1033,127 +1188,192 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       : cfg.overtimeEnabled !== false;
 
     setEditRecord({ ...record, _worker: worker });
-    setEditForm({
-      checkedIn: parsed.checkedIn,
-      checkedOut: parsed.checkedOut,
-      breakStart: parsed.breakStart,
-      breakEnd: parsed.breakEnd,
+    setEditMeta({
       siteId: record.siteId || '',
       notes: record.notes || '',
       present: record.present !== false,
       breakEnabled,
       overtimeEnabled,
     });
+
+    let drafts = [];
+    const embedded = Array.isArray(record.shifts) ? record.shifts : null;
+
+    if (embedded && embedded.length > 0) {
+      drafts = embedded
+        .slice()
+        .sort((a, b) => (a.orderIndex ?? a.order_index ?? 0) - (b.orderIndex ?? b.order_index ?? 0))
+        .map(s => normalizeShiftFromServer(s, cfg));
+    } else {
+      setEditShiftsLoading(true);
+      try {
+        const serverShifts = await ShiftsApi.list(record.id);
+        if (Array.isArray(serverShifts) && serverShifts.length > 0) {
+          drafts = serverShifts
+            .slice()
+            .sort((a, b) => (a.orderIndex ?? a.order_index ?? 0) - (b.orderIndex ?? b.order_index ?? 0))
+            .map(s => normalizeShiftFromServer(s, cfg));
+        }
+      } catch (err) {
+        dbgWarn('getShifts failed (probably no shifts yet):', err?.message);
+      } finally {
+        setEditShiftsLoading(false);
+      }
+    }
+
+    if (drafts.length === 0) {
+      drafts = [legacyRecordToShift(record, cfg)];
+    }
+
+    setEditShiftDrafts(drafts);
     setShowEditModal(true);
   };
 
   const closeEditModal = () => {
     setShowEditModal(false);
     setEditRecord(null);
+    setEditShiftDrafts([]);
   };
 
+  const addShiftDraft = () => {
+    const dateStr = normalizeDate(editRecord?.date);
+    const cfg = settings || DEFAULT_SETTINGS;
+    const last = editShiftDrafts[editShiftDrafts.length - 1];
+    const seed = newShiftDraft(dateStr, cfg, last?.siteId || editMeta.siteId || '');
+    if (last?.checkedOut) seed.checkedIn = last.checkedOut;
+    setEditShiftDrafts(prev => [...prev, seed]);
+  };
+
+  const removeShiftDraft = (key) => {
+    setEditShiftDrafts(prev => {
+      if (prev.length === 1) {
+        return [newShiftDraft(normalizeDate(editRecord?.date), settings || DEFAULT_SETTINGS)];
+      }
+      return prev.filter(s => s._key !== key);
+    });
+  };
+
+  const updateShiftDraft = (key, patch) => {
+    setEditShiftDrafts(prev => prev.map(s => s._key === key ? { ...s, ...patch } : s));
+  };
+
+  const duplicateShiftDraft = (key) => {
+    setEditShiftDrafts(prev => {
+      const idx = prev.findIndex(s => s._key === key);
+      if (idx === -1) return prev;
+      const src = prev[idx];
+      const copy = {
+        ...src,
+        _key: `s_${Math.random().toString(36).slice(2, 9)}`,
+        id: null,
+      };
+      const next = [...prev];
+      next.splice(idx + 1, 0, copy);
+      return next;
+    });
+  };
+
+  const moveShiftDraft = (key, dir) => {
+    setEditShiftDrafts(prev => {
+      const idx = prev.findIndex(s => s._key === key);
+      if (idx === -1) return prev;
+      const target = idx + dir;
+      if (target < 0 || target >= prev.length) return prev;
+      const next = [...prev];
+      [next[idx], next[target]] = [next[target], next[idx]];
+      return next;
+    });
+  };
+
+  // ============================================
+  // ⭐ SAVE — self-contained ShiftsApi
+  // ============================================
   const handleSaveEdit = async () => {
     console.log('═══════════════════════════════════════════');
-    console.log('💾 handleSaveEdit START');
+    console.log('💾 handleSaveEdit START (multi-shift)');
 
-    if (!editRecord) {
-      console.warn('⚠️ no editRecord — aborting');
-      return;
-    }
+    if (!editRecord) { console.warn('⚠️ no editRecord'); return; }
 
     setEditLoading(true); setError(''); setSuccess('');
 
     try {
-      const rawDate = editRecord.date;
-      const dateStr = normalizeDate(rawDate);
-      console.log('📅 dateStr:', dateStr);
-
+      const dateStr = normalizeDate(editRecord.date);
       if (!dateStr) throw new Error('Attendance record has no valid date');
 
-      // ── Build diff body ──
-      const origIn = isoToLocalHHMM(editRecord.checkedIn);
-      const origOut = isoToLocalHHMM(editRecord.checkedOut);
-      const origBreakStart = isoToLocalHHMM(editRecord.breakStart);
-      const origBreakEnd = isoToLocalHHMM(editRecord.breakEnd);
+      const cleaned = [];
+      for (let i = 0; i < editShiftDrafts.length; i++) {
+        const s = editShiftDrafts[i];
+        if (!s.checkedIn && !s.checkedOut) continue;
+        if (!s.checkedIn || !s.checkedOut) {
+          throw new Error(`Shift ${i + 1}: both check-in and check-out are required`);
+        }
+        const inISO = buildISO(dateStr, s.checkedIn);
+        const outISO = buildISO(dateStr, s.checkedOut);
+        if (new Date(outISO) <= new Date(inISO)) {
+          throw new Error(`Shift ${i + 1}: check-out must be after check-in`);
+        }
+        if (s.breakEnabled && s.breakStart && s.breakEnd) {
+          const bsISO = buildISO(dateStr, s.breakStart);
+          const beISO = buildISO(dateStr, s.breakEnd);
+          if (new Date(beISO) <= new Date(bsISO)) {
+            throw new Error(`Shift ${i + 1}: break end must be after break start`);
+          }
+        }
+        cleaned.push({
+          orderIndex: cleaned.length,
+          siteId: s.siteId || null,
+          checkedIn: inISO,
+          checkedOut: outISO,
+          breakStart: s.breakEnabled && s.breakStart ? buildISO(dateStr, s.breakStart) : null,
+          breakEnd: s.breakEnabled && s.breakEnd ? buildISO(dateStr, s.breakEnd) : null,
+          breakEnabled: !!s.breakEnabled,
+          overtimeEnabled: !!s.overtimeEnabled,
+          notes: s.notes || '',
+        });
+      }
+
+      if (cleaned.length === 0) {
+        throw new Error('At least one complete shift is required');
+      }
+
+      console.log('📦 Replacing shifts:', cleaned);
+
+      const shiftRes = await ShiftsApi.replace(editRecord.id, cleaned);
+      console.log('✅ replaceShifts response:', shiftRes);
+
+      const metaBody = {};
       const origSite = editRecord.siteId || '';
       const origNotes = editRecord.notes || '';
       const origPresent = editRecord.present !== false;
-      const origBreakEnabled = editRecord.breakEnabled !== undefined
-        ? editRecord.breakEnabled !== false
-        : (settings || DEFAULT_SETTINGS).breakEnabled !== false;
-      const origOvertimeEnabled = editRecord.overtimeEnabled !== undefined
-        ? editRecord.overtimeEnabled !== false
-        : (settings || DEFAULT_SETTINGS).overtimeEnabled !== false;
 
-      console.log('🔍 DIFF:', {
-        checkedIn: { orig: origIn, new: editForm.checkedIn, changed: origIn !== editForm.checkedIn },
-        checkedOut: { orig: origOut, new: editForm.checkedOut, changed: origOut !== editForm.checkedOut },
-        breakStart: { orig: origBreakStart, new: editForm.breakStart, changed: origBreakStart !== editForm.breakStart },
-        breakEnd: { orig: origBreakEnd, new: editForm.breakEnd, changed: origBreakEnd !== editForm.breakEnd },
-        breakEnabled: { orig: origBreakEnabled, new: editForm.breakEnabled, changed: origBreakEnabled !== editForm.breakEnabled },
-        overtimeEnabled: { orig: origOvertimeEnabled, new: editForm.overtimeEnabled, changed: origOvertimeEnabled !== editForm.overtimeEnabled },
-        siteId: { orig: origSite, new: editForm.siteId, changed: origSite !== editForm.siteId },
-        notes: { orig: origNotes, new: editForm.notes, changed: origNotes !== editForm.notes },
-        present: { orig: origPresent, new: editForm.present, changed: origPresent !== editForm.present },
-      });
+      const primarySiteFromShifts = cleaned[0]?.siteId || null;
+      const desiredSite = editMeta.siteId || primarySiteFromShifts || '';
+      if (desiredSite !== origSite) metaBody.siteId = desiredSite || null;
+      if (editMeta.notes !== origNotes) metaBody.notes = editMeta.notes;
+      if (editMeta.present !== origPresent) metaBody.present = editMeta.present;
 
-      const body = {};
-      if (editForm.checkedIn !== origIn)
-        body.checkedIn = editForm.checkedIn ? buildISO(dateStr, editForm.checkedIn) : null;
-      if (editForm.checkedOut !== origOut)
-        body.checkedOut = editForm.checkedOut ? buildISO(dateStr, editForm.checkedOut) : null;
-      if (editForm.breakStart !== origBreakStart)
-        body.breakStart = editForm.breakStart ? buildISO(dateStr, editForm.breakStart) : null;
-      if (editForm.breakEnd !== origBreakEnd)
-        body.breakEnd = editForm.breakEnd ? buildISO(dateStr, editForm.breakEnd) : null;
-      if (editForm.siteId && editForm.siteId !== origSite) body.siteId = editForm.siteId;
-      if (editForm.notes !== origNotes) body.notes = editForm.notes;
-      if (editForm.present !== origPresent) body.present = editForm.present;
-      if (editForm.breakEnabled !== origBreakEnabled) body.breakEnabled = editForm.breakEnabled;
-      if (editForm.overtimeEnabled !== origOvertimeEnabled) body.overtimeEnabled = editForm.overtimeEnabled;
-
-      console.log('📦 REQUEST BODY:', JSON.stringify(body, null, 2));
-
-      if (Object.keys(body).length === 0) {
-        console.warn('⚠️ BODY EMPTY — nothing changed, no request sent');
-        setSuccess('No changes to save');
-        closeEditModal();
-        setTimeout(() => setSuccess(''), 3000);
-        return;
+      if (Object.keys(metaBody).length > 0) {
+        console.log('🌐 PUT /attendance/' + editRecord.id, metaBody);
+        try {
+          await AttendanceApi.update(editRecord.id, metaBody);
+        } catch (metaErr) {
+          console.warn('⚠️ meta patch failed (continuing):', metaErr?.message);
+        }
       }
 
-      console.log('🌐 Calling PUT /attendance/' + editRecord.id + '/edit-times');
-      const res = await ApiService.editAttendanceTimes(editRecord.id, body);
-
-      console.log('✅ API RESPONSE:', res);
-      console.log('   res.record =', res?.record);
-      console.log('   res.record.id =', res?.record?.id);
-      console.log('   res.record.checkedIn =', res?.record?.checkedIn);
-      console.log('   res.record.checkedOut =', res?.record?.checkedOut);
-      console.log('   res.record.totalHours =', res?.record?.totalHours);
-      console.log('   res.record.wageEarned =', res?.record?.wageEarned);
-      console.log('   res.record.breakEnabled =', res?.record?.breakEnabled);
-      console.log('   res.record.overtimeEnabled =', res?.record?.overtimeEnabled);
-
-      // ⭐ Apply optimistic override
-      if (res?.record) {
-        console.log('💡 Applying optimistic override for id:', res.record.id);
-        setLocalAttendanceOverride(prev => {
-          const next = { ...prev, [res.record.id]: res.record };
-          console.log('   override map now has keys:', Object.keys(next));
-          return next;
-        });
-      } else {
-        console.warn('⚠️ Response has NO record object — cannot apply optimistic override');
+      if (shiftRes?.record) {
+        setLocalAttendanceOverride(prev => ({
+          ...prev,
+          [shiftRes.record.id]: shiftRes.record,
+        }));
       }
 
-      setSuccess(`Attendance updated (${res?.changes?.join(', ') || Object.keys(body).join(', ')})`);
+      setSuccess(`Attendance updated (${cleaned.length} shift${cleaned.length > 1 ? 's' : ''})`);
       closeEditModal();
 
       try {
         if (viewMode === 'teams') await loadTeamAttendance();
         await refreshData();
-        console.log('🔄 refreshData OK');
       } catch (refreshErr) {
         console.warn('⚠️ refreshData failed:', refreshErr);
         setError('Saved successfully, but reload failed. Refresh the page (F5).');
@@ -1166,8 +1386,6 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       console.log('═══════════════════════════════════════════');
     } catch (err) {
       console.error('❌ handleSaveEdit FAILED:', err);
-      console.error('   message:', err?.message);
-      console.error('   stack:', err?.stack);
       setError(err.message || 'Failed to update attendance');
       console.log('═══════════════════════════════════════════');
     } finally {
@@ -1195,20 +1413,30 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
 
       let totalHours = 0, totalOvertime = 0, totalNormal = 0, totalBreak = 0, totalWages = 0;
       const enrichedAttendances = attendances.map(a => {
-        const computed = computeHoursWithSettings(a, cfg);
-        const wage = computeWage(computed.normalHours, computed.overtimeHours, worker, cfg, a);
-        totalHours += computed.hoursWorked;
-        totalOvertime += computed.overtimeHours;
-        totalNormal += computed.normalHours;
-        totalBreak += computed.breakHours;
+        const shifts = Array.isArray(a.shifts) && a.shifts.length > 0 ? a.shifts : [a];
+        const agg = computeAggregateHours(shifts.map(s => ({
+          checkedIn: s.checkedIn || s.checked_in,
+          checkedOut: s.checkedOut || s.checked_out,
+          breakStart: s.breakStart || s.break_start,
+          breakEnd: s.breakEnd || s.break_end,
+          date: a.date,
+          breakEnabled: s.breakEnabled ?? s.break_enabled,
+          overtimeEnabled: s.overtimeEnabled ?? s.overtime_enabled,
+        })), cfg);
+        const wage = computeWage(agg.normalHours, agg.overtimeHours, worker, cfg, a);
+        totalHours += agg.hoursWorked;
+        totalOvertime += agg.overtimeHours;
+        totalNormal += agg.normalHours;
+        totalBreak += agg.breakHours;
         totalWages += wage;
         return {
           ...a,
-          totalHours: computed.hoursWorked,
-          overtimeHours: computed.overtimeHours,
-          normalHours: computed.normalHours,
-          breakHours: computed.breakHours,
+          totalHours: agg.hoursWorked,
+          overtimeHours: agg.overtimeHours,
+          normalHours: agg.normalHours,
+          breakHours: agg.breakHours,
           wageEarned: wage,
+          shiftCount: agg.shiftCount,
         };
       });
 
@@ -1237,12 +1465,12 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   }, [data.workers, mergedAttendance, selectedMonth, selectedReportWorkerId, settings]);
 
   // ============================================
-  // SALARY SLIP
+  // SALARY SLIP — ⭐ FIXED OT multiplier fallback
   // ============================================
   const generateSalarySlipHTML = (workerData) => {
     const worker = workerData.worker || workerData;
     const cfg = settings || DEFAULT_SETTINGS;
-    const otMultiplier = Number(cfg.overtimeRate) || 1.5;
+    const otMultiplier = Number(cfg.overtimeRate) || 1.0;
 
     const workerName = worker.name || workerData.workerName || 'Unknown';
     const workerRole = worker.role || workerData.role || 'N/A';
@@ -1288,7 +1516,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         const normalHours = (att.totalHours || 0) - (att.overtimeHours || 0);
         const status = att.present ? 'Present' : 'Absent';
         const siteName = att.siteId ? (resolveSiteName(att.siteId) || '') : '';
-        return `<tr><td>${day}</td><td>${dateStr}</td><td>${normalHours.toFixed(1)}h</td><td>${(att.overtimeHours || 0).toFixed(1)}h</td><td>${siteName}</td><td class="${att.present ? 'text-success' : 'text-danger'}">${status}</td></tr>`;
+        const shiftTag = att.shiftCount > 1 ? ` <span style="color:#8b5cf6;font-size:10px;">(${att.shiftCount} shifts)</span>` : '';
+        return `<tr><td>${day}</td><td>${dateStr}${shiftTag}</td><td>${normalHours.toFixed(1)}h</td><td>${(att.overtimeHours || 0).toFixed(1)}h</td><td>${siteName}</td><td class="${att.present ? 'text-success' : 'text-danger'}">${status}</td></tr>`;
       }).join('');
     } else {
       attendanceRows = `<tr><td colspan="6" style="text-align:center;padding:10px;color:${muted};">Present: ${presentDays} | Absent: ${absentDays} | Rate: ${attendanceRate.toFixed(1)}%</td></tr>`;
@@ -1509,16 +1738,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     if (!selectedTeamId) return;
     setTeamActionLoading(true); setError(''); setSuccess('');
     try {
-      const response = await fetch(`${CONFIG.API_BASE}/attendance/team/${selectedTeamId}/checkin-all`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
-        },
-        body: JSON.stringify({ date: selectedDate, siteId })
-      });
-      if (!response.ok) throw new Error('Failed to check in team');
+      await apiSend(`/attendance/team/${selectedTeamId}/checkin-all`, 'POST', { date: selectedDate, siteId });
       setSuccess('Team checked in successfully');
       await loadTeamAttendance(); await refreshData();
       setTimeout(() => setSuccess(''), 5000);
@@ -1529,16 +1749,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     if (!selectedTeamId) return;
     setTeamActionLoading(true); setError(''); setSuccess('');
     try {
-      const response = await fetch(`${CONFIG.API_BASE}/attendance/team/${selectedTeamId}/checkout-all`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
-        },
-        body: JSON.stringify({ date: selectedDate })
-      });
-      if (!response.ok) throw new Error('Failed to check out team');
+      await apiSend(`/attendance/team/${selectedTeamId}/checkout-all`, 'POST', { date: selectedDate });
       setSuccess('Team checked out successfully');
       await loadTeamAttendance(); await refreshData();
       setTimeout(() => setSuccess(''), 5000);
@@ -1548,16 +1759,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const handleTeamWorkerCheckIn = async (workerId, siteId) => {
     setTeamActionLoading(true); setError(''); setSuccess('');
     try {
-      const response = await fetch(`${CONFIG.API_BASE}/attendance/checkin`, {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
-        },
-        body: JSON.stringify({ workerId, teamId: selectedTeamId, siteId, date: selectedDate })
-      });
-      if (!response.ok) throw new Error('Failed to check in worker');
+      await apiSend(`/attendance/checkin`, 'POST', { workerId, teamId: selectedTeamId, siteId, date: selectedDate });
       setSuccess('Worker checked in successfully');
       await loadTeamAttendance(); await refreshData();
       setTimeout(() => setSuccess(''), 5000);
@@ -1567,15 +1769,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   const handleTeamWorkerCheckOut = async (attendanceId) => {
     setTeamActionLoading(true); setError(''); setSuccess('');
     try {
-      const response = await fetch(`${CONFIG.API_BASE}/attendance/${attendanceId}/checkout`, {
-        method: 'PUT',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('accessToken') || ''}`
-        }
-      });
-      if (!response.ok) throw new Error('Failed to check out worker');
+      await apiSend(`/attendance/${attendanceId}/checkout`, 'PUT');
       setSuccess('Worker checked out successfully');
       await loadTeamAttendance(); await refreshData();
       setTimeout(() => setSuccess(''), 5000);
@@ -1855,7 +2049,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
               </span>
               <div>
                 <h4>Workers by Site</h4>
-                <span>Distribution</span>
+                <span>Distribution (multi-site counted per site)</span>
               </div>
             </div>
           </div>
@@ -1925,7 +2119,6 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
 
     return (
       <div className="am-view">
-        {/* Settings banner */}
         <div style={{
           display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 12,
           padding: '8px 14px', background: 'rgba(59,130,246,0.06)',
@@ -1952,7 +2145,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
             <Target size={12} /> Thresholds: <strong>{cfg.earlyInThreshold}/{cfg.lateInThreshold}/{cfg.earlyOutThreshold}/{cfg.lateOutThreshold}m</strong>
           </span>
-          <span style={{ marginLeft: 'auto', opacity: 0.7 }}>Edit in Settings tab</span>
+          <span style={{ marginLeft: 'auto', opacity: 0.7 }}>Multi-site shifts supported · Edit to add</span>
         </div>
 
         <div className="am-filters">
@@ -2024,6 +2217,11 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                       {worker.siteName && (
                         <div className="am-worker-site">
                           <MapPin size={11} /> <span>{worker.siteName}</span>
+                          {worker.siteCount > 1 && (
+                            <span className="am-site-count-badge" title={`Worked at ${worker.siteCount} sites`}>
+                              <GitBranch size={10} /> {worker.siteCount} sites
+                            </span>
+                          )}
                         </div>
                       )}
 
@@ -2092,6 +2290,11 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                               <Ban size={11} /> No OT
                             </span>
                           )}
+                          {worker.shiftCount > 1 && (
+                            <span style={{ color: '#8b5cf6' }} title="Multiple shifts">
+                              <GitBranch size={11} /> {worker.shiftCount} shifts
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
@@ -2102,8 +2305,8 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                       {!isLoading && (
                         <>
                           {worker.record && (
-                            <button className="am-btn am-btn-edit" onClick={() => openEditModal(worker.record, worker)} title="Edit times">
-                              <Edit size={13} /> Edit
+                            <button className="am-btn am-btn-edit" onClick={() => openEditModal(worker.record, worker)} title="Edit shifts">
+                              <Edit size={13} /> Edit Shifts
                             </button>
                           )}
                           {worker.status === 'working' && (
@@ -2284,7 +2487,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                         {member.attendance && (
                           <button className="am-btn-icon am-btn-icon-edit"
                             onClick={() => openEditModal(member.attendance, worker)}
-                            title="Edit times">
+                            title="Edit shifts">
                             <Edit size={14} />
                           </button>
                         )}
@@ -2304,6 +2507,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                         {member.checkedOut && <div className="am-expand-item"><LogOut size={12} /><span><strong>Out:</strong> {Utils.formatTime(member.checkedOut)}</span></div>}
                         {member.breakEnabled && member.breakHours > 0 && <div className="am-expand-item"><Coffee size={12} /><span><strong>Break:</strong> {member.breakHours.toFixed(2)}h</span></div>}
                         {member.overtimeEnabled && member.overtimeHours > 0 && <div className="am-expand-item"><Flame size={12} /><span><strong>OT:</strong> {member.overtimeHours.toFixed(2)}h</span></div>}
+                        {member.shiftCount > 1 && <div className="am-expand-item"><GitBranch size={12} /><span><strong>Shifts:</strong> {member.shiftCount} sites</span></div>}
                       </div>
                     )}
                   </div>
@@ -2591,7 +2795,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   };
 
   // ============================================
-  // SETTINGS TAB  ⭐ WITH BREAK + OT TOGGLES
+  // SETTINGS TAB
   // ============================================
   const renderSettingsTab = () => {
     if (settingsLoading || !settingsForm) {
@@ -2609,7 +2813,6 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
       <div className="am-view">
         <div className="am-settings-grid">
 
-          {/* Shift Window */}
           <div className="am-card am-settings-card">
             <div className="am-card-header">
               <div className="am-card-title">
@@ -2618,7 +2821,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                 </span>
                 <div>
                   <h4>Shift Window</h4>
-                  <span>Expected daily work hours</span>
+                  <span>Expected daily work hours (applies to all shifts)</span>
                 </div>
               </div>
             </div>
@@ -2644,7 +2847,6 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             </div>
           </div>
 
-          {/* Break Times  ⭐ WITH BREAK TOGGLE */}
           <div className="am-card am-settings-card">
             <div className="am-card-header">
               <div className="am-card-title">
@@ -2653,7 +2855,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                 </span>
                 <div>
                   <h4>Break Times</h4>
-                  <span>Daily break period — deducted from hours</span>
+                  <span>Applied per shift (per site)</span>
                 </div>
               </div>
               <button
@@ -2690,15 +2892,12 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
               {!settingsForm.breakEnabled && (
                 <div className="am-settings-hint" style={{ gridColumn: '1 / -1', color: '#b91c1c' }}>
                   <AlertCircle size={13} />
-                  <span>
-                    Break is disabled. Total hours = raw clock-in → clock-out time. No break will be deducted.
-                  </span>
+                  <span>Break is disabled. Total hours = raw clock-in → clock-out time per shift.</span>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Overtime  ⭐ WITH OT TOGGLE */}
           <div className="am-card am-settings-card">
             <div className="am-card-header">
               <div className="am-card-title">
@@ -2707,7 +2906,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                 </span>
                 <div>
                   <h4>Overtime</h4>
-                  <span>Extra hours pay rate</span>
+                  <span>Extra hours pay rate (aggregated across shifts)</span>
                 </div>
               </div>
               <button
@@ -2722,23 +2921,22 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             <div className="am-settings-form">
               <div className="am-settings-field">
                 <label>Overtime Rate (multiplier)</label>
-                <input type="number" step="0.1" min="1" className="am-input"
+                <input type="number" step="0.1" min="0" className="am-input"
                   value={settingsForm.overtimeRate}
                   disabled={!settingsForm.overtimeEnabled}
-                  onChange={(e) => update({ overtimeRate: parseFloat(e.target.value) || 1 })} />
+                  onChange={(e) => update({ overtimeRate: parseFloat(e.target.value) || 0 })} />
               </div>
               <div className="am-settings-hint">
                 <Info size={13} />
                 <span>
                   {settingsForm.overtimeEnabled
-                    ? `Hours beyond ${settingsForm.shiftHours}h paid at ${settingsForm.overtimeRate}× hourly rate.`
+                    ? `Paid hours beyond ${settingsForm.shiftHours}h (summed across all shifts) paid at ${settingsForm.overtimeRate}× hourly rate. Set 1 for no premium.`
                     : 'OT disabled — all paid hours count as normal hours.'}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* Early / Late Thresholds */}
           <div className="am-card am-settings-card am-settings-card-wide">
             <div className="am-card-header">
               <div className="am-card-title">
@@ -2870,7 +3068,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   };
 
   // ============================================
-  // EDIT ATTENDANCE MODAL  ⭐ WITH BREAK + OT TOGGLES
+  // EDIT ATTENDANCE MODAL — SHIFT AWARE
   // ============================================
   const renderEditModal = () => {
     if (!showEditModal || !editRecord) return null;
@@ -2879,46 +3077,43 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     const dateStr = normalizeDate(rawDate);
     const cfg = settings || DEFAULT_SETTINGS;
 
-    // ⭐ Preview respects both per-record toggles
     const preview = (() => {
-      if (!editForm.checkedIn || !editForm.checkedOut) {
-        return { hours: 0, overtime: 0, normal: 0, breakH: 0, wage: 0, breakEnabled: editForm.breakEnabled, overtimeEnabled: editForm.overtimeEnabled };
-      }
-      const inISO = buildISO(dateStr, editForm.checkedIn);
-      const outISO = buildISO(dateStr, editForm.checkedOut);
-      const fakeRecord = {
-        checkedIn: inISO,
-        checkedOut: outISO,
-        breakStart: editForm.breakStart ? buildISO(dateStr, editForm.breakStart) : null,
-        breakEnd: editForm.breakEnd ? buildISO(dateStr, editForm.breakEnd) : null,
+      const shiftsForCalc = editShiftDrafts.map(s => ({
+        checkedIn: s.checkedIn ? buildISO(dateStr, s.checkedIn) : null,
+        checkedOut: s.checkedOut ? buildISO(dateStr, s.checkedOut) : null,
+        breakStart: s.breakEnabled && s.breakStart ? buildISO(dateStr, s.breakStart) : null,
+        breakEnd: s.breakEnabled && s.breakEnd ? buildISO(dateStr, s.breakEnd) : null,
         date: dateStr,
-        breakEnabled: editForm.breakEnabled,
-        overtimeEnabled: editForm.overtimeEnabled,
-      };
-      const computed = computeHoursWithSettings(fakeRecord, cfg);
-      const wage = computeWage(computed.normalHours, computed.overtimeHours, worker, cfg, fakeRecord);
+        breakEnabled: s.breakEnabled,
+        overtimeEnabled: s.overtimeEnabled,
+      }));
+      const agg = computeAggregateHours(shiftsForCalc, cfg);
+      const wage = computeWage(agg.normalHours, agg.overtimeHours, worker, cfg, {
+        overtimeEnabled: agg.overtimeEnabled,
+      });
       return {
-        hours: computed.hoursWorked,
-        overtime: computed.overtimeHours,
-        normal: computed.normalHours,
-        breakH: computed.breakHours,
+        hours: agg.hoursWorked,
+        overtime: agg.overtimeHours,
+        normal: agg.normalHours,
+        breakH: agg.breakHours,
         wage,
-        breakEnabled: computed.breakEnabled,
-        overtimeEnabled: computed.overtimeEnabled,
+        breakEnabled: agg.breakEnabled,
+        overtimeEnabled: agg.overtimeEnabled,
+        shiftCount: agg.shiftCount,
       };
     })();
 
     return (
       <ModalPortal>
         <div className="am-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) closeEditModal(); }}>
-          <div className="am-modal-content am-edit-modal" onClick={e => e.stopPropagation()}>
+          <div className="am-modal-content am-edit-modal am-edit-modal-wide" onClick={e => e.stopPropagation()}>
             <div className="am-modal-header" style={{ background: 'linear-gradient(135deg, #15dd9b, #10b981)' }}>
               <div className="am-modal-header-left">
-                <div className="am-modal-icon"><Edit size={18} /></div>
+                <div className="am-modal-icon"><GitBranch size={18} /></div>
                 <div>
-                  <h3>Edit Attendance Times</h3>
+                  <h3>Edit Attendance Shifts</h3>
                   <p className="am-modal-sub">
-                    {worker.name || 'Worker'} · {Utils.formatDate(dateStr)}
+                    {worker.name || 'Worker'} · {Utils.formatDate(dateStr)} · {preview.shiftCount} shift{preview.shiftCount !== 1 ? 's' : ''}
                   </p>
                 </div>
               </div>
@@ -2927,149 +3122,217 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
               </button>
             </div>
             <div className="am-modal-body">
-              <div className="am-edit-grid">
-                <div className="am-edit-field">
-                  <label><LogIn size={12} /> Check-In Time</label>
-                  <input type="time" value={editForm.checkedIn}
-                    onChange={(e) => setEditForm({ ...editForm, checkedIn: e.target.value })}
-                    className="am-input" />
-                </div>
-                <div className="am-edit-field">
-                  <label><LogOut size={12} /> Check-Out Time</label>
-                  <input type="time" value={editForm.checkedOut}
-                    onChange={(e) => setEditForm({ ...editForm, checkedOut: e.target.value })}
-                    className="am-input" />
-                </div>
-                <div className="am-edit-field">
-                  <label><Building2 size={12} /> Site</label>
-                  <select value={editForm.siteId}
-                    onChange={(e) => setEditForm({ ...editForm, siteId: e.target.value })}
-                    className="am-select">
-                    <option value="">— No site —</option>
-                    {sites.map(s => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="am-edit-field">
-                  <label><CheckCircle size={12} /> Present</label>
-                  <div className="am-toggle-wrap">
-                    <button type="button"
-                      className={`am-toggle ${editForm.present ? 'on' : 'off'}`}
-                      onClick={() => setEditForm({ ...editForm, present: !editForm.present })}>
-                      {editForm.present ? 'Present' : 'Absent'}
+              {editShiftsLoading ? (
+                <div className="am-loading"><div className="am-loading-spinner" /> Loading shifts...</div>
+              ) : (
+                <>
+                  <div className="am-shifts-list">
+                    <div className="am-shifts-list-head">
+                      <span className="am-shifts-list-title">
+                        <GitBranch size={14} /> Shifts ({editShiftDrafts.length})
+                      </span>
+                      <button className="am-btn am-btn-primary am-btn-sm" onClick={addShiftDraft}>
+                        <Plus size={13} /> Add Shift
+                      </button>
+                    </div>
+
+                    {editShiftDrafts.map((s, idx) => {
+                      const siteName = resolveSiteName(s.siteId);
+                      const shiftCalc = computeShiftHours({
+                        checkedIn: s.checkedIn ? buildISO(dateStr, s.checkedIn) : null,
+                        checkedOut: s.checkedOut ? buildISO(dateStr, s.checkedOut) : null,
+                        breakStart: s.breakEnabled && s.breakStart ? buildISO(dateStr, s.breakStart) : null,
+                        breakEnd: s.breakEnabled && s.breakEnd ? buildISO(dateStr, s.breakEnd) : null,
+                        date: dateStr,
+                        breakEnabled: s.breakEnabled,
+                        overtimeEnabled: s.overtimeEnabled,
+                      }, cfg);
+
+                      return (
+                        <div key={s._key} className="am-shift-card">
+                          <div className="am-shift-card-head">
+                            <div className="am-shift-index">
+                              <span className="am-shift-badge">#{idx + 1}</span>
+                              {siteName && (
+                                <span className="am-shift-site-tag">
+                                  <MapPin size={11} /> {siteName}
+                                </span>
+                              )}
+                            </div>
+                            <div className="am-shift-card-actions">
+                              <button className="am-btn-icon" onClick={() => moveShiftDraft(s._key, -1)}
+                                disabled={idx === 0} title="Move up">
+                                <ArrowUp size={13} />
+                              </button>
+                              <button className="am-btn-icon" onClick={() => moveShiftDraft(s._key, 1)}
+                                disabled={idx === editShiftDrafts.length - 1} title="Move down">
+                                <ArrowDown size={13} />
+                              </button>
+                              <button className="am-btn-icon" onClick={() => duplicateShiftDraft(s._key)}
+                                title="Duplicate">
+                                <Copy size={13} />
+                              </button>
+                              <button className="am-btn-icon am-btn-icon-danger"
+                                onClick={() => removeShiftDraft(s._key)}
+                                title="Remove">
+                                <Trash2 size={13} />
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="am-shift-grid">
+                            <div className="am-edit-field">
+                              <label><Building2 size={12} /> Site</label>
+                              <select value={s.siteId}
+                                onChange={(e) => updateShiftDraft(s._key, { siteId: e.target.value })}
+                                className="am-select">
+                                <option value="">— No site —</option>
+                                {sites.map(site => (
+                                  <option key={site.id} value={site.id}>{site.name}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div className="am-edit-field">
+                              <label><LogIn size={12} /> Check-In</label>
+                              <input type="time" value={s.checkedIn}
+                                onChange={(e) => updateShiftDraft(s._key, { checkedIn: e.target.value })}
+                                className="am-input" />
+                            </div>
+                            <div className="am-edit-field">
+                              <label><LogOut size={12} /> Check-Out</label>
+                              <input type="time" value={s.checkedOut}
+                                onChange={(e) => updateShiftDraft(s._key, { checkedOut: e.target.value })}
+                                className="am-input" />
+                            </div>
+                          </div>
+
+                          <div className="am-shift-toggle-row">
+                            <button
+                              type="button"
+                              className={`am-toggle am-toggle-sm ${s.breakEnabled ? 'on' : 'off'}`}
+                              onClick={() => updateShiftDraft(s._key, { breakEnabled: !s.breakEnabled })}
+                            >
+                              {s.breakEnabled ? <><Coffee size={11} /> Break on</> : <><Ban size={11} /> Break off</>}
+                            </button>
+                            <button
+                              type="button"
+                              className={`am-toggle am-toggle-sm ${s.overtimeEnabled ? 'on' : 'off'}`}
+                              onClick={() => updateShiftDraft(s._key, { overtimeEnabled: !s.overtimeEnabled })}
+                            >
+                              {s.overtimeEnabled ? <><Flame size={11} /> OT on</> : <><Ban size={11} /> OT off</>}
+                            </button>
+                            <span className="am-shift-hours-mini">
+                              <Timer size={11} /> {shiftCalc.hours.toFixed(2)}h
+                            </span>
+                          </div>
+
+                          {s.breakEnabled && (
+                            <div className="am-shift-break-row">
+                              <div className="am-edit-field">
+                                <label><Coffee size={12} /> Break start</label>
+                                <input type="time" value={s.breakStart}
+                                  onChange={(e) => updateShiftDraft(s._key, { breakStart: e.target.value })}
+                                  className="am-input" />
+                              </div>
+                              <div className="am-edit-field">
+                                <label><Coffee size={12} /> Break end</label>
+                                <input type="time" value={s.breakEnd}
+                                  onChange={(e) => updateShiftDraft(s._key, { breakEnd: e.target.value })}
+                                  className="am-input" />
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="am-edit-field am-edit-full">
+                            <label><FileText size={12} /> Notes</label>
+                            <input type="text" value={s.notes}
+                              onChange={(e) => updateShiftDraft(s._key, { notes: e.target.value })}
+                              className="am-input" placeholder="Optional shift notes" />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="am-edit-preview">
+                    <div className="am-edit-preview-item">
+                      <span>Normal</span>
+                      <strong>{preview.normal.toFixed(2)} h</strong>
+                    </div>
+                    <div className="am-edit-preview-item">
+                      <span>Break</span>
+                      <strong style={{ color: preview.breakEnabled ? undefined : '#94a3b8', textDecoration: preview.breakEnabled ? 'none' : 'line-through' }}>
+                        {preview.breakH.toFixed(2)} h
+                      </strong>
+                    </div>
+                    <div className="am-edit-preview-item">
+                      <span>OT</span>
+                      <strong style={{ color: preview.overtimeEnabled && preview.overtime > 0 ? '#d97706' : '#94a3b8', textDecoration: preview.overtimeEnabled ? 'none' : 'line-through' }}>
+                        {preview.overtime.toFixed(2)} h
+                      </strong>
+                    </div>
+                    <div className="am-edit-preview-item">
+                      <span>Total</span>
+                      <strong>{preview.hours.toFixed(2)} h</strong>
+                    </div>
+                    <div className="am-edit-preview-item">
+                      <span>Wage (BD)</span>
+                      <strong style={{ color: '#047857' }}>{fmtBD(preview.wage)}</strong>
+                    </div>
+                  </div>
+
+                  <div className="am-shift-record-meta">
+                    <div className="am-edit-field">
+                      <label><CheckCircle size={12} /> Present</label>
+                      <div className="am-toggle-wrap">
+                        <button type="button"
+                          className={`am-toggle ${editMeta.present ? 'on' : 'off'}`}
+                          onClick={() => setEditMeta(prev => ({ ...prev, present: !prev.present }))}>
+                          {editMeta.present ? 'Present' : 'Absent'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="am-edit-field am-edit-full">
+                      <label><Building2 size={12} /> Primary Site (overrides shift default)</label>
+                      <select value={editMeta.siteId}
+                        onChange={(e) => setEditMeta(prev => ({ ...prev, siteId: e.target.value }))}
+                        className="am-select">
+                        <option value="">— Auto (from first shift) —</option>
+                        {sites.map(site => (
+                          <option key={site.id} value={site.id}>{site.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="am-edit-field am-edit-full">
+                      <label><FileText size={12} /> Record Notes</label>
+                      <textarea value={editMeta.notes}
+                        onChange={(e) => setEditMeta(prev => ({ ...prev, notes: e.target.value }))}
+                        className="am-input" rows={2} placeholder="Optional notes for the attendance record" />
+                    </div>
+                  </div>
+
+                  <div style={{
+                    fontSize: 11, color: '#6b7280', marginTop: 8,
+                    padding: '6px 10px', background: 'rgba(139,92,246,0.06)',
+                    borderRadius: 6, borderLeft: '3px solid #8b5cf6',
+                  }}>
+                    <Info size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />
+                    Settings: shift {cfg.shiftStartTime}–{cfg.shiftEndTime} ({cfg.shiftHours}h),
+                    break {cfg.breakEnabled ? `${cfg.breakStartTime}–${cfg.breakEndTime} (${cfg.breakHours}h)` : 'DISABLED'},
+                    OT {cfg.overtimeEnabled ? `${cfg.overtimeRate}×` : 'DISABLED'}.
+                    Total paid hours = sum of all shifts.
+                  </div>
+
+                  <div className="am-edit-actions">
+                    <button className="am-btn am-btn-primary" onClick={handleSaveEdit} disabled={editLoading}>
+                      {editLoading ? 'Saving...' : <><Save size={14} /> Save Shifts</>}
+                    </button>
+                    <button className="am-btn am-btn-secondary" onClick={closeEditModal} disabled={editLoading}>
+                      Cancel
                     </button>
                   </div>
-                </div>
-
-                {/* ⭐ Break toggle + times */}
-                <div className="am-edit-field am-edit-full">
-                  <div className="am-edit-toggle-header">
-                    <label><Coffee size={12} /> Break Time</label>
-                    <button
-                      type="button"
-                      className={`am-toggle am-toggle-sm ${editForm.breakEnabled ? 'on' : 'off'}`}
-                      onClick={() => setEditForm({ ...editForm, breakEnabled: !editForm.breakEnabled })}
-                    >
-                      {editForm.breakEnabled ? 'Enabled' : 'Disabled'}
-                    </button>
-                  </div>
-                  <div className="am-edit-break-row">
-                    <input type="time" value={editForm.breakStart}
-                      disabled={!editForm.breakEnabled}
-                      onChange={(e) => setEditForm({ ...editForm, breakStart: e.target.value })}
-                      className="am-input" placeholder="Break start" />
-                    <span className="am-edit-arrow">→</span>
-                    <input type="time" value={editForm.breakEnd}
-                      disabled={!editForm.breakEnabled}
-                      onChange={(e) => setEditForm({ ...editForm, breakEnd: e.target.value })}
-                      className="am-input" placeholder="Break end" />
-                  </div>
-                  {!editForm.breakEnabled && (
-                    <div className="am-edit-hint danger">
-                      <Ban size={11} /> Break disabled — no break hours will be deducted
-                    </div>
-                  )}
-                </div>
-
-                {/* ⭐ Overtime toggle */}
-                <div className="am-edit-field am-edit-full">
-                  <div className="am-edit-toggle-header">
-                    <label><Flame size={12} /> Overtime</label>
-                    <button
-                      type="button"
-                      className={`am-toggle am-toggle-sm ${editForm.overtimeEnabled ? 'on' : 'off'}`}
-                      onClick={() => setEditForm({ ...editForm, overtimeEnabled: !editForm.overtimeEnabled })}
-                    >
-                      {editForm.overtimeEnabled ? 'Enabled' : 'Disabled'}
-                    </button>
-                  </div>
-                  {!editForm.overtimeEnabled && (
-                    <div className="am-edit-hint danger">
-                      <Ban size={11} /> OT disabled — all paid hours count as normal hours
-                    </div>
-                  )}
-                  {editForm.overtimeEnabled && (
-                    <div className="am-edit-hint">
-                      <Info size={11} /> OT hours beyond {cfg.shiftHours}h will be paid at {cfg.overtimeRate}×
-                    </div>
-                  )}
-                </div>
-
-                <div className="am-edit-field am-edit-full">
-                  <label><FileText size={12} /> Notes</label>
-                  <textarea value={editForm.notes}
-                    onChange={(e) => setEditForm({ ...editForm, notes: e.target.value })}
-                    className="am-input" rows={2} placeholder="Optional notes" />
-                </div>
-              </div>
-
-              <div className="am-edit-preview">
-                <div className="am-edit-preview-item">
-                  <span>Normal</span>
-                  <strong>{preview.normal.toFixed(2)} h</strong>
-                </div>
-                <div className="am-edit-preview-item">
-                  <span>Break</span>
-                  <strong style={{ color: preview.breakEnabled ? undefined : '#94a3b8', textDecoration: preview.breakEnabled ? 'none' : 'line-through' }}>
-                    {preview.breakH.toFixed(2)} h
-                  </strong>
-                </div>
-                <div className="am-edit-preview-item">
-                  <span>OT</span>
-                  <strong style={{ color: preview.overtimeEnabled && preview.overtime > 0 ? '#d97706' : '#94a3b8', textDecoration: preview.overtimeEnabled ? 'none' : 'line-through' }}>
-                    {preview.overtime.toFixed(2)} h
-                  </strong>
-                </div>
-                <div className="am-edit-preview-item">
-                  <span>Total</span>
-                  <strong>{preview.hours.toFixed(2)} h</strong>
-                </div>
-                <div className="am-edit-preview-item">
-                  <span>Wage (BD)</span>
-                  <strong style={{ color: '#047857' }}>{fmtBD(preview.wage)}</strong>
-                </div>
-              </div>
-
-              <div style={{
-                fontSize: 11, color: '#6b7280', marginTop: 8,
-                padding: '6px 10px', background: 'rgba(139,92,246,0.06)',
-                borderRadius: 6, borderLeft: '3px solid #8b5cf6',
-              }}>
-                <Info size={11} style={{ verticalAlign: 'middle', marginRight: 4 }} />
-                Using settings: shift {cfg.shiftStartTime}–{cfg.shiftEndTime} ({cfg.shiftHours}h),
-                break {cfg.breakEnabled ? `${cfg.breakStartTime}–${cfg.breakEndTime} (${cfg.breakHours}h)` : 'DISABLED'},
-                OT {cfg.overtimeEnabled ? `${cfg.overtimeRate}×` : 'DISABLED'}
-              </div>
-
-              <div className="am-edit-actions">
-                <button className="am-btn am-btn-primary" onClick={handleSaveEdit} disabled={editLoading}>
-                  {editLoading ? 'Saving...' : <><Save size={14} /> Save Changes</>}
-                </button>
-                <button className="am-btn am-btn-secondary" onClick={closeEditModal} disabled={editLoading}>
-                  Cancel
-                </button>
-              </div>
+                </>
+              )}
             </div>
           </div>
         </div>
@@ -3090,6 +3353,14 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
         <div className="am-row-tooltip-title"><User size={13} /> {worker.name}</div>
         <div className="am-row-tooltip-row"><Briefcase size={11} /><span>Role:</span><strong>{worker.role || 'N/A'}</strong></div>
         <div className="am-row-tooltip-row"><Building2 size={11} /><span>Site:</span><strong style={{ color: worker.siteName ? '#047857' : '#b91c1c' }}>{worker.siteName || 'Not assigned'}</strong></div>
+        {worker.siteCount > 1 && (
+          <div className="am-row-tooltip-row">
+            <GitBranch size={11} /><span>Sites:</span>
+            <strong style={{ color: '#8b5cf6' }}>
+              {worker.siteIds.map(id => resolveSiteName(id)).filter(Boolean).join(' → ')}
+            </strong>
+          </div>
+        )}
         <div className="am-row-tooltip-row"><Clock size={11} /><span>Status:</span><strong style={{ textTransform: 'capitalize' }}>{worker.status}</strong></div>
         {worker.checkedInTime && <div className="am-row-tooltip-row"><LogIn size={11} /><span>In:</span><strong>{Utils.formatTime(worker.checkedInTime)}</strong></div>}
         {worker.checkedOutTime && <div className="am-row-tooltip-row"><LogOut size={11} /><span>Out:</span><strong>{Utils.formatTime(worker.checkedOutTime)}</strong></div>}
