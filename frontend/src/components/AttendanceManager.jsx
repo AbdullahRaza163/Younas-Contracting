@@ -38,7 +38,7 @@ const dbgErr = (...args) => { if (DEBUG) console.error('%c[AM-ERR]', 'color:#dc2
 const dbgWarn = (...args) => { if (DEBUG) console.warn('%c[AM-WARN]', 'color:#f59e0b;font-weight:bold', ...args); };
 
 // ============================================
-// ⭐ SELF-CONTAINED API HELPERS (no ApiService dependency)
+// SELF-CONTAINED API HELPERS
 // ============================================
 const authHeaders = () => ({
   'Accept': 'application/json',
@@ -68,7 +68,6 @@ const apiSend = async (path, method, body) => {
   return res.json();
 };
 
-// ⭐ Shifts API — self-contained
 const ShiftsApi = {
   list: (attendanceId) => apiGet(`/attendance/${attendanceId}/shifts`),
   replace: (attendanceId, shifts) => apiSend(`/attendance/${attendanceId}/shifts`, 'POST', { shifts }),
@@ -76,7 +75,6 @@ const ShiftsApi = {
   delete: (shiftId) => apiSend(`/attendance/shifts/${shiftId}/delete`, 'POST'),
 };
 
-// ⭐ Attendance meta API — self-contained (for siteId/notes/present patch)
 const AttendanceApi = {
   update: (attendanceId, payload) => apiSend(`/attendance/${attendanceId}`, 'PUT', payload),
   editTimes: (attendanceId, payload) => apiSend(`/attendance/${attendanceId}/edit-times`, 'PUT', payload),
@@ -93,7 +91,7 @@ const DEFAULT_SETTINGS = {
   breakEndTime: '13:00',
   breakHours: 1,
   breakEnabled: true,
-  overtimeRate: 1,             // ⭐ default = 1 (no premium)
+  overtimeRate: 1,
   overtimeEnabled: true,
   earlyInThreshold: 15,
   lateInThreshold: 15,
@@ -157,11 +155,6 @@ const getClockOutStatus = (checkedOut, cfg = DEFAULT_SETTINGS) => {
 
 const isoToLocalHHMM = (iso) => {
   if (!iso) return '';
-  const s = String(iso);
-  // ⭐ Extract HH:MM directly from the string — no Date, no timezone shifting.
-  const m = s.match(/T(\d{2}):(\d{2})/);
-  if (m) return `${m[1]}:${m[2]}`;
-  // Fallback (shouldn't normally run)
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return '';
   const pad = (n) => String(n).padStart(2, '0');
@@ -179,7 +172,6 @@ const buildISO = (dateStr, hhmm) => {
   ) {
     return null;
   }
-  // ⭐ WALL-CLOCK: send "YYYY-MM-DDTHH:MM:00" (no Z, no timezone conversion).
   const pad = (n) => String(n).padStart(2, '0');
   return `${dateStr}T${pad(hours)}:${pad(minutes)}:00`;
 };
@@ -198,10 +190,10 @@ const normalizeDate = (raw) => {
 };
 
 // ============================================
-// CORE: Compute hours for a SINGLE shift-like object
+// CORE: Compute hours for a SINGLE shift
 // ============================================
 const computeShiftHours = (shift, cfg = DEFAULT_SETTINGS) => {
-  const zero = { hours: 0, overtime: 0, normal: 0, breakH: 0 };
+  const zero = { hours: 0, overtime: 0, normal: 0, breakH: 0, overtimeEnabled: cfg.overtimeEnabled !== false, breakEnabled: cfg.breakEnabled !== false };
   if (!shift?.checkedIn || !shift?.checkedOut) return zero;
 
   const inMs = new Date(shift.checkedIn).getTime();
@@ -231,15 +223,26 @@ const computeShiftHours = (shift, cfg = DEFAULT_SETTINGS) => {
       if (!isNaN(bsMs) && !isNaN(beMs) && beMs > bsMs) {
         breakHours = (beMs - bsMs) / (1000 * 60 * 60);
       }
+    } else {
+      const cfgBreakHours = Number(cfg.breakHours) || 0;
+      if (cfgBreakHours > 0) breakHours = cfgBreakHours;
     }
   }
 
   const paidHours = breakEnabled ? Math.max(0, rawHours - breakHours) : rawHours;
+  const shiftHours = Number(cfg.shiftHours) || 8;
+
+  let normal = paidHours;
+  let overtime = 0;
+  if (overtimeEnabled && paidHours > shiftHours) {
+    normal = shiftHours;
+    overtime = paidHours - shiftHours;
+  }
 
   return {
     hours: paidHours,
-    overtime: overtimeEnabled ? Math.max(0, paidHours - (Number(cfg.shiftHours) || 8)) : 0,
-    normal: paidHours,
+    overtime,
+    normal,
     breakH: breakHours,
     overtimeEnabled,
     breakEnabled,
@@ -263,6 +266,8 @@ const computeAggregateHours = (shifts, cfg = DEFAULT_SETTINGS) => {
 
   let totalPaid = 0;
   let totalBreak = 0;
+  let totalOvertime = 0;
+  let totalNormal = 0;
   let anyOvertimeEnabled = false;
   let anyBreakEnabled = false;
 
@@ -270,26 +275,17 @@ const computeAggregateHours = (shifts, cfg = DEFAULT_SETTINGS) => {
     const r = computeShiftHours(sh, cfg);
     totalPaid += r.hours;
     totalBreak += r.breakH;
+    totalOvertime += r.overtime;
+    totalNormal += r.normal;
     if (r.overtimeEnabled) anyOvertimeEnabled = true;
     if (r.breakEnabled) anyBreakEnabled = true;
     return { ...sh, computed: r };
   });
 
-  const shiftHours = Number(cfg.shiftHours) || 8;
-  let overtimeHours = 0;
-  let normalHours = totalPaid;
-  if (anyOvertimeEnabled && totalPaid > shiftHours) {
-    normalHours = shiftHours;
-    overtimeHours = totalPaid - shiftHours;
-  } else if (!anyOvertimeEnabled) {
-    overtimeHours = 0;
-    normalHours = totalPaid;
-  }
-
   return {
     hoursWorked: totalPaid,
-    overtimeHours,
-    normalHours,
+    overtimeHours: totalOvertime,
+    normalHours: totalNormal,
     breakHours: totalBreak,
     breakEnabled: anyBreakEnabled,
     overtimeEnabled: anyOvertimeEnabled,
@@ -322,22 +318,60 @@ const getClockOutMinutes = (checkedOut, cfg = DEFAULT_SETTINGS) => {
   return outMins - endMins;
 };
 
-// ⭐ FIXED: fallback 1.5 → 1.0
+// ============================================
+// ⭐ SINGLE SOURCE OF TRUTH — effective hourly rate
+//
+// Your Workers module has ONE rate field, and you intend it as
+// an HOURLY rate. Backend stores it in `dailyRate` (legacy name).
+// This helper:
+//   1. Uses worker.hourlyRate if > 0 (future-proof)
+//   2. Otherwise treats worker.dailyRate AS-IS (it IS the hourly rate)
+//   3. Otherwise 0
+//
+// NO division by shiftHours — the value is already per-hour.
+// ============================================
+const resolveHourlyRate = (worker) => {
+  if (!worker) return 0;
+  const h = Number(worker.hourlyRate);
+  if (h && h > 0) return h;
+  const d = Number(worker.dailyRate);
+  if (d && d > 0) return d;
+  return 0;
+};
+
+// ============================================
+// computeWage — uses resolveHourlyRate
+// ============================================
 const computeWage = (normalHours, overtimeHours, worker, cfg = DEFAULT_SETTINGS, record = null) => {
   const otRate = Number(cfg.overtimeRate) || 1.0;
+  const hourlyRate = resolveHourlyRate(worker);
+
   const otEnabled = record?.overtimeEnabled !== undefined
     ? record.overtimeEnabled !== false
     : cfg.overtimeEnabled !== false;
-  const shiftHours = Number(cfg.shiftHours) || 8;
 
-  let hourlyRate = Number(worker?.hourlyRate) || 0;
-  if (!hourlyRate && Number(worker?.dailyRate) && shiftHours) {
-    hourlyRate = Number(worker.dailyRate) / shiftHours;
-  }
+  const safeNormalHours = Math.max(0, Number(normalHours) || 0);
+  const rawOtHours = Math.max(0, Number(overtimeHours) || 0);
+  const safeOtHours = otEnabled ? rawOtHours : 0;
 
-  const normalPay = normalHours * hourlyRate;
-  const otPay = otEnabled ? overtimeHours * hourlyRate * otRate : overtimeHours * hourlyRate;
-  return normalPay + otPay;
+  const normalPay = safeNormalHours * hourlyRate;
+  const otPay = safeOtHours * hourlyRate * otRate;
+
+  const total = normalPay + otPay;
+
+  dbg('💰 computeWage', {
+    worker: worker?.name,
+    hourlyRate: hourlyRate.toFixed(4),
+    normalHours: safeNormalHours.toFixed(3),
+    otHours: safeOtHours.toFixed(3),
+    otRate,
+    otEnabled,
+    normalPay: normalPay.toFixed(4),
+    otPay: otPay.toFixed(4),
+    total: total.toFixed(4),
+  });
+
+  return total;
 };
 
 // ============================================
@@ -729,7 +763,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
           overtimeEnabled = agg.overtimeEnabled;
 
           wageEarned = computeWage(normalHours, overtimeHours, worker, cfg, {
-            overtimeEnabled,
+            overtimeEnabled: agg.overtimeEnabled,
           });
 
           if (anyActive) status = 'working';
@@ -1139,7 +1173,9 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             breakEnabled: computed.breakEnabled,
             overtimeEnabled: computed.overtimeEnabled,
             shiftCount: computed.shiftCount,
-            wageEarned: computeWage(computed.normalHours, computed.overtimeHours, m.worker || {}, cfg, m.attendance),
+            wageEarned: computeWage(computed.normalHours, computed.overtimeHours, m.worker || {}, cfg, {
+              overtimeEnabled: computed.overtimeEnabled,
+            }),
           };
         });
       }
@@ -1286,7 +1322,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   };
 
   // ============================================
-  // ⭐ SAVE — self-contained ShiftsApi
+  // SAVE — self-contained ShiftsApi
   // ============================================
   const handleSaveEdit = async () => {
     console.log('═══════════════════════════════════════════');
@@ -1423,7 +1459,9 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
           breakEnabled: s.breakEnabled ?? s.break_enabled,
           overtimeEnabled: s.overtimeEnabled ?? s.overtime_enabled,
         })), cfg);
-        const wage = computeWage(agg.normalHours, agg.overtimeHours, worker, cfg, a);
+        const wage = computeWage(agg.normalHours, agg.overtimeHours, worker, cfg, {
+          overtimeEnabled: agg.overtimeEnabled,
+        });
         totalHours += agg.hoursWorked;
         totalOvertime += agg.overtimeHours;
         totalNormal += agg.normalHours;
@@ -1465,7 +1503,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
   }, [data.workers, mergedAttendance, selectedMonth, selectedReportWorkerId, settings]);
 
   // ============================================
-  // SALARY SLIP — ⭐ FIXED OT multiplier fallback
+  // SALARY SLIP
   // ============================================
   const generateSalarySlipHTML = (workerData) => {
     const worker = workerData.worker || workerData;
@@ -1475,7 +1513,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     const workerName = worker.name || workerData.workerName || 'Unknown';
     const workerRole = worker.role || workerData.role || 'N/A';
     const workerCpr = worker.cpr || 'N/A';
-    const rate = workerData.rate || worker.hourlyRate || 0;
+    const rate = workerData.rate || resolveHourlyRate(worker) || 0;
     const totalDays = workerData.totalDays || 0;
     const presentDays = workerData.presentDays || 0;
     const absentDays = workerData.absentDays || (totalDays - presentDays);
@@ -2184,6 +2222,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
             <div className="am-workers-grid">
               {items.map(worker => {
                 const isLoading = loading[worker.id];
+                const displayRate = resolveHourlyRate(worker);
                 return (
                   <div key={worker.id} className="am-worker-card"
                     onMouseEnter={(e) => handleWorkerEnter(worker.id, e)}
@@ -2253,7 +2292,9 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                       <div className="am-worker-stats">
                         <div className="am-worker-stat">
                           <span className="am-worker-stat-label">Rate</span>
-                          <span className="am-worker-stat-value">{fmtBDShort(worker.dailyRate)}</span>
+                          <span className="am-worker-stat-value">
+                            {fmtBDShort(displayRate)}
+                          </span>
                         </div>
                         <div className="am-worker-stat">
                           <span className="am-worker-stat-label">Hours</span>
@@ -2266,6 +2307,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                           </span>
                         </div>
                       </div>
+
                       {(worker.checkedInTime || worker.checkedOutTime) && (
                         <div className="am-worker-times">
                           {worker.checkedInTime && <span><LogIn size={11} /> {Utils.formatTime(worker.checkedInTime)}</span>}
@@ -2439,6 +2481,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                 const isPending = member.attendance && !member.checkedIn;
                 const memberId = member.id || worker.id;
                 const isExpanded = expandedMembers[memberId];
+                const displayRate = resolveHourlyRate(worker);
                 return (
                   <div key={worker.id} className="am-member-card"
                     onMouseEnter={(e) => handleMemberEnter(memberId, e)}
@@ -2500,7 +2543,10 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                       <div className="am-member-expanded">
                         <div className="am-expand-item"><User size={12} /><span><strong>ID:</strong> {worker.id}</span></div>
                         <div className="am-expand-item"><Briefcase size={12} /><span><strong>Role:</strong> {worker.role || 'N/A'}</span></div>
-                        <div className="am-expand-item"><Banknote size={12} /><span><strong>Rate:</strong> {fmtBD(worker.dailyRate)}</span></div>
+                        <div className="am-expand-item">
+                          <Banknote size={12} />
+                          <span><strong>Rate:</strong> {displayRate.toFixed(3)} BD/hr</span>
+                        </div>
                         <div className="am-expand-item"><Phone size={12} /><span><strong>Phone:</strong> {worker.phone || 'N/A'}</span></div>
                         {member.siteName && <div className="am-expand-item"><Building2 size={12} /><span><strong>Site:</strong> {member.siteName}</span></div>}
                         {member.checkedIn && <div className="am-expand-item"><LogIn size={12} /><span><strong>In:</strong> {Utils.formatTime(member.checkedIn)}</span></div>}
@@ -2645,13 +2691,12 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                         <td className="right am-td-green">{fmtBDShort(w.totalWages)}</td>
                         <td className="center">
                           <button className="am-btn-small" onClick={() => {
-                            const hourlyRate = w.worker.hourlyRate
-                              || (w.worker.dailyRate && cfg.shiftHours ? w.worker.dailyRate / cfg.shiftHours : 0);
+                            const hourlyRate = resolveHourlyRate(w.worker);
                             const basicHours = w.totalNormal || (w.totalHours - w.totalOvertime);
                             const basicSalary = basicHours * hourlyRate;
                             const overtimeSalary = cfg.overtimeEnabled
                               ? w.totalOvertime * hourlyRate * cfg.overtimeRate
-                              : w.totalOvertime * hourlyRate;
+                              : 0;
                             const totalSalary = basicSalary + overtimeSalary;
 
                             const pct = Number(w.worker.deductionPercentage || 0);
@@ -2930,7 +2975,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                 <Info size={13} />
                 <span>
                   {settingsForm.overtimeEnabled
-                    ? `Paid hours beyond ${settingsForm.shiftHours}h (summed across all shifts) paid at ${settingsForm.overtimeRate}× hourly rate. Set 1 for no premium.`
+                    ? `Paid hours beyond ${settingsForm.shiftHours}h (per shift) paid at ${settingsForm.overtimeRate}× hourly rate. Set 1 for no premium.`
                     : 'OT disabled — all paid hours count as normal hours.'}
                 </span>
               </div>
@@ -3223,6 +3268,9 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
                             </button>
                             <span className="am-shift-hours-mini">
                               <Timer size={11} /> {shiftCalc.hours.toFixed(2)}h
+                              {s.overtimeEnabled && shiftCalc.overtime > 0 && (
+                                <> · <Flame size={10} style={{ verticalAlign: 'middle' }} /> {shiftCalc.overtime.toFixed(2)}h OT</>
+                              )}
                             </span>
                           </div>
 
@@ -3348,6 +3396,7 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     const worker = todayAttendance.find(w => w.id === hoveredWorker);
     if (!worker) return null;
     const cfg = settings || DEFAULT_SETTINGS;
+    const displayRate = resolveHourlyRate(worker);
     return (
       <div className="am-row-tooltip" style={{ position: 'fixed', left: workerTooltipPos.x, top: workerTooltipPos.y, zIndex: 9998 }}>
         <div className="am-row-tooltip-title"><User size={13} /> {worker.name}</div>
@@ -3362,6 +3411,10 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
           </div>
         )}
         <div className="am-row-tooltip-row"><Clock size={11} /><span>Status:</span><strong style={{ textTransform: 'capitalize' }}>{worker.status}</strong></div>
+        <div className="am-row-tooltip-row">
+          <Banknote size={11} /><span>Rate/hr:</span>
+          <strong style={{ color: '#047857' }}>{displayRate.toFixed(3)} BD</strong>
+        </div>
         {worker.checkedInTime && <div className="am-row-tooltip-row"><LogIn size={11} /><span>In:</span><strong>{Utils.formatTime(worker.checkedInTime)}</strong></div>}
         {worker.checkedOutTime && <div className="am-row-tooltip-row"><LogOut size={11} /><span>Out:</span><strong>{Utils.formatTime(worker.checkedOutTime)}</strong></div>}
         {worker.breakEnabled && worker.breakStart && worker.breakEnd && (
@@ -3404,11 +3457,16 @@ const AttendanceManager = ({ data, clockInWorker, clockOutWorker, refreshData })
     const member = (teamAttendance?.members || []).find(m => (m.id || m.worker?.id) === hoveredMember);
     if (!member) return null;
     const worker = member.worker || {};
+    const displayRate = resolveHourlyRate(worker);
     return (
       <div className="am-row-tooltip" style={{ position: 'fixed', left: memberTooltipPos.x, top: memberTooltipPos.y, zIndex: 9998 }}>
         <div className="am-row-tooltip-title"><User size={13} /> {worker.name}</div>
         <div className="am-row-tooltip-row"><Briefcase size={11} /><span>Role:</span><strong>{worker.role || 'N/A'}</strong></div>
         <div className="am-row-tooltip-row"><Building2 size={11} /><span>Site:</span><strong style={{ color: member.siteName ? '#047857' : '#b91c1c' }}>{member.siteName || 'Not assigned'}</strong></div>
+        <div className="am-row-tooltip-row">
+          <Banknote size={11} /><span>Rate/hr:</span>
+          <strong style={{ color: '#047857' }}>{displayRate.toFixed(3)} BD</strong>
+        </div>
         {member.checkedIn && <div className="am-row-tooltip-row"><LogIn size={11} /><span>In:</span><strong>{Utils.formatTime(member.checkedIn)}</strong></div>}
         {member.checkedOut && <div className="am-row-tooltip-row"><LogOut size={11} /><span>Out:</span><strong>{Utils.formatTime(member.checkedOut)}</strong></div>}
         {member.breakEnabled && member.breakHours > 0 && <div className="am-row-tooltip-row"><Coffee size={11} /><span>Break:</span><strong>{member.breakHours.toFixed(2)}h</strong></div>}

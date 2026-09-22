@@ -28,7 +28,6 @@ const Utils = {
       'July', 'August', 'September', 'October', 'November', 'December'
     ];
 
-    // If monthStr is in YYYY-MM format
     if (typeof monthStr === 'string' && monthStr.includes('-')) {
       const parts = monthStr.split('-');
       if (parts.length === 2) {
@@ -39,13 +38,11 @@ const Utils = {
       }
     }
 
-    // If monthStr is a number
     const num = parseInt(monthStr);
     if (!isNaN(num) && num >= 1 && num <= 12) {
       return monthNames[num - 1];
     }
 
-    // Try parsing as date
     try {
       const date = new Date(monthStr);
       if (!isNaN(date.getTime())) {
@@ -268,20 +265,7 @@ const Utils = {
   // CALCULATION FUNCTIONS
   // ============================================
 
-  // ⭐ Backwards-compatible: still works with 2 args (raw hours),
-  // and now accepts optional `record` to respect break toggles.
-  //
-  //   Utils.calculateHoursWorked(checkIn, checkOut)
-  //     → raw clock-diff (legacy behaviour)
-  //
-  //   Utils.calculateHoursWorked(checkIn, checkOut, record)
-  //     → respects record.totalHours if present
-  //     → else computes clock-diff minus break when breakEnabled === true
-  //
-  //   Utils.calculateHoursWorked(null, null, record)
-  //     → uses record.totalHours if present, else 0
   calculateHoursWorked: (checkIn, checkOut, record = null) => {
-    // ⭐ Prefer backend-computed totalHours whenever we have the record
     if (record && typeof record.totalHours === 'number' && record.totalHours > 0) {
       return record.totalHours;
     }
@@ -297,7 +281,6 @@ const Utils = {
 
     let hours = diff / 3600000;
 
-    // ⭐ Subtract break ONLY when the record explicitly enables it
     if (
       record &&
       record.breakEnabled === true &&
@@ -315,16 +298,13 @@ const Utils = {
     return Math.round(hours * 100) / 100;
   },
 
-  // ⭐ New helper — always correct for any record from the API
   calculateRecordHours: (record) => {
     if (!record) return 0;
 
-    // 1. Backend-computed totalHours (source of truth)
     if (typeof record.totalHours === 'number' && record.totalHours > 0) {
       return record.totalHours;
     }
 
-    // 2. Fallback: compute from clock times + break toggle
     if (record.checkedIn && record.checkedOut) {
       const inMs = new Date(record.checkedIn).getTime();
       const outMs = new Date(record.checkedOut).getTime();
@@ -350,7 +330,6 @@ const Utils = {
     return 0;
   },
 
-  // ⭐ New helper — wage from record, prefers backend wageEarned
   calculateRecordWage: (record, worker) => {
     if (!record) return 0;
     if (typeof record.wageEarned === 'number' && record.wageEarned > 0) {
@@ -373,9 +352,118 @@ const Utils = {
     return overtimeHours * hourlyRate * 1.5;
   },
 
-  calculateDailyOH: (monthlyOH, date = new Date()) => {
-    const days = Utils.getDaysInMonth(date);
-    return monthlyOH / days;
+  // ============================================
+  // ⭐ OVERHEAD HELPERS — FREQUENCY + SITE-AWARE
+  // ============================================
+
+  /**
+   * Compute the monthly total for a single overhead record.
+   *
+   *   daily     → amount × workingDays
+   *   weekly    → amount × ceil(wd / 7)
+   *   quarterly → amount ÷ 3
+   *   yearly    → amount ÷ 12
+   *   monthly   → amount (default)
+   */
+  computeMonthlyTotal: (amount, frequency, workingDays = 26) => {
+    const amt = Math.max(0, Number(amount) || 0);
+    const wd = Math.max(1, Number(workingDays) || 26);
+    const f = String(frequency || 'monthly').toLowerCase();
+
+    if (f === 'daily')     return amt * wd;
+    if (f === 'weekly')    return amt * Math.max(1, Math.ceil(wd / 7));
+    if (f === 'quarterly') return amt / 3;
+    if (f === 'yearly')    return amt / 12;
+    return amt;
+  },
+
+  /**
+   * ⭐ Compute the daily overhead for a given date, optionally scoped to a site.
+   *
+   * Mirrors backend `_resolve_overhead_for_site` EXACTLY.
+   *
+   * @param {Array} monthlyOverhead  array of overhead rows
+   * @param {Date|string} date       any date in the target month
+   * @param {string|null} siteId     optional — only rows applying to this site
+   * @param {Array} sites            optional — sites list (for name matching)
+   *
+   * Rules (matching backend):
+   *
+   *  A. Row has `siteId === target site`                        → divisor 1
+   *  B. Row has `siteNames` including target site's name        → divisor 1
+   *  C. Row has NO siteId AND NO siteNames                      → divisor = sitesCount
+   *  D. Row has NO siteId AND MULTIPLE named sites              → divisor = namedSites.length
+   *  E. Row has NO siteId AND ONE named site that is NOT target → divisor = 1
+   *
+   * Site filter (when `siteId` is provided):
+   *  - A and B apply to this site
+   *  - C (company-wide) applies to every site
+   *  - D/E apply only if they include this site
+   */
+  calculateDailyOH: (monthlyOverhead, date = new Date(), siteId = null, sites = null) => {
+    if (!monthlyOverhead || !Array.isArray(monthlyOverhead)) return 0;
+
+    const d = new Date(date);
+    if (isNaN(d.getTime())) return 0;
+
+    const monthKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+
+    // Resolve the target site's name (for matching siteNames arrays)
+    let targetSiteName = null;
+    if (siteId) {
+      const list = Array.isArray(sites) ? sites
+        : (Array.isArray(window.__sitesCache) ? window.__sitesCache : []);
+      const s = list.find(x => x.id === siteId);
+      targetSiteName = s?.name || null;
+    }
+
+    let total = 0;
+
+    for (const o of monthlyOverhead) {
+      if (!o || o.month !== monthKey) continue;
+
+      // ⭐ Daily cost for this row (frequency-aware)
+      const wd = Math.max(1, Number(o.workingDays) || 26);
+      const monthlyTotal = Utils.computeMonthlyTotal(o.amount, o.frequency, wd);
+      const dailyCost = monthlyTotal / wd;
+
+      const rowSiteId = o.siteId || o.site_id || null;
+      const namedSites = Array.isArray(o.siteNames)
+        ? o.siteNames
+        : (Array.isArray(o.site_names) ? o.site_names : []);
+      const sitesCount = Math.max(1, Number(o.sitesCount) || 1);
+
+      // ⭐ Compute the divisor for THIS row
+      //    Site-specific rows → 1
+      //    Company-wide rows  → sitesCount
+      //    Named-multi-site   → namedSites.length
+      let divisor;
+      if (rowSiteId) {
+        divisor = 1;                                   // A: single site
+      } else if (namedSites.length === 0) {
+        divisor = sitesCount;                          // C: company-wide
+      } else if (namedSites.length > 1) {
+        divisor = namedSites.length;                   // D: multi-named
+      } else {
+        divisor = 1;                                   // E: one named site
+      }
+
+      // ⭐ Apply site filter
+      if (siteId) {
+        const rowIsCompanyWide = !rowSiteId && namedSites.length === 0;
+        const rowMatchesThisSite =
+          rowSiteId === siteId ||
+          (targetSiteName && namedSites.includes(targetSiteName));
+
+        if (!rowIsCompanyWide && !rowMatchesThisSite) {
+          continue; // skip rows that don't apply to this site
+        }
+      }
+
+      total += dailyCost / divisor;
+    }
+
+    return Number(total.toFixed(3));
   },
 
   calculateEntryProfit: (entry) => {
@@ -404,8 +492,6 @@ const Utils = {
     return kamai - labour - overhead - oneTime;
   },
 
-  // ⭐ Worker salary — now uses calculateRecordHours so it respects
-  //   breakEnabled / overtimeEnabled toggles via stored totalHours.
   calculateWorkerSalary: (worker, attendanceRecords) => {
     if (!worker || !attendanceRecords) {
       return { totalHours: 0, totalWage: 0, daysPresent: 0, overtimeHours: 0, overtimePay: 0, totalEarnings: 0 };
@@ -417,7 +503,6 @@ const Utils = {
       0
     );
 
-    // Prefer backend wageEarned, fall back to hours × rate
     const totalWage = workerAttendance.reduce((sum, a) => {
       if (typeof a.wageEarned === 'number' && a.wageEarned > 0) return sum + a.wageEarned;
       return sum + Utils.calculateDailyWage(Utils.calculateRecordHours(a), worker.dailyRate);

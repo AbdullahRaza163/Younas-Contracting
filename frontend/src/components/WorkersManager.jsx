@@ -7,7 +7,7 @@ import {
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, AlertCircle,
   CheckCircle, LayoutDashboard, User, UserPlus, Crown, Activity, Timer,
   Info, Hash, Layers, Sparkles, Zap, FileText, Target, Star, CircleDot,
-  Sun, Moon, Percent, ToggleLeft, ToggleRight, Calculator
+  Sun, Moon, Percent, ToggleLeft, ToggleRight, Calculator, AlertTriangle
 } from 'lucide-react';
 import Utils from '../utils/Utils';
 import { useTheme } from '../context/ThemeContext';
@@ -25,6 +25,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   const [roleFilter, setRoleFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
   const [deductionFilter, setDeductionFilter] = useState('all'); // all | with | without
+  const [rateFilter, setRateFilter] = useState('all'); // all | hourly | daily | conflict
   const [expandedWorkers, setExpandedWorkers] = useState({});
   const [hoveredCard, setHoveredCard] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
@@ -39,7 +40,8 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   const [formData, setFormData] = useState({
     name: '',
     role: '',
-    dailyRate: '',
+    hourlyRate: '',          // ⭐ NEW
+    dailyRate: '',           // existing
     phone: '',
     email: '',
     address: '',
@@ -48,7 +50,6 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     skills: '',
     experience: '',
     notes: '',
-    // ⭐ NEW deduction fields
     deductionEnabled: false,
     deductionPercentage: ''
   });
@@ -93,15 +94,27 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
       else filtered = filtered.filter(w => w.status === 'inactive');
     }
 
-    // ⭐ Deduction filter
     if (deductionFilter === 'with') {
       filtered = filtered.filter(w => w.deductionEnabled && Number(w.deductionPercentage) > 0);
     } else if (deductionFilter === 'without') {
       filtered = filtered.filter(w => !w.deductionEnabled || Number(w.deductionPercentage) === 0);
     }
 
+    // ⭐ Rate filter
+    if (rateFilter === 'hourly') {
+      filtered = filtered.filter(w => Number(w.hourlyRate) > 0 && Number(w.dailyRate) === 0);
+    } else if (rateFilter === 'daily') {
+      filtered = filtered.filter(w => Number(w.dailyRate) > 0 && Number(w.hourlyRate) === 0);
+    } else if (rateFilter === 'conflict') {
+      filtered = filtered.filter(w =>
+        Number(w.hourlyRate) > 0 &&
+        Number(w.dailyRate) > 0 &&
+        Number(w.hourlyRate) !== Number(w.dailyRate)
+      );
+    }
+
     return filtered;
-  }, [workers, searchTerm, roleFilter, statusFilter, deductionFilter]);
+  }, [workers, searchTerm, roleFilter, statusFilter, deductionFilter, rateFilter]);
 
   // ============================================
   // PAGINATION
@@ -114,7 +127,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     return filteredWorkers.slice(startIndex, endIndex);
   }, [filteredWorkers, currentPage, itemsPerPage]);
 
-  useEffect(() => { setCurrentPage(1); }, [searchTerm, roleFilter, statusFilter, deductionFilter, itemsPerPage]);
+  useEffect(() => { setCurrentPage(1); }, [searchTerm, roleFilter, statusFilter, deductionFilter, rateFilter, itemsPerPage]);
   useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
 
   const goToPage = (page) => {
@@ -138,17 +151,47 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   }, [data.workers]);
 
   // ============================================
+  // RATE HELPERS
+  // ============================================
+  // Effective hourly rate used by the Attendance module (matches backend)
+  const getEffectiveHourlyRate = (worker) => {
+    if (!worker) return 0;
+    const h = Number(worker.hourlyRate);
+    if (h && h > 0) return h;
+    const d = Number(worker.dailyRate);
+    if (d && d > 0) return d;
+    return 0;
+  };
+
+  // Does this worker have both rates set with different values?
+  const hasRateConflict = (worker) => {
+    const h = Number(worker.hourlyRate) || 0;
+    const d = Number(worker.dailyRate) || 0;
+    return h > 0 && d > 0 && h !== d;
+  };
+
+  // Effective daily rate (from dailyRate, with deduction applied)
+  const getEffectiveDailyRate = (worker) => {
+    const base = Number(worker.dailyRate) || 0;
+    if (!worker.deductionEnabled) return base;
+    const pct = Math.max(0, Math.min(100, Number(worker.deductionPercentage) || 0));
+    return base * (1 - pct / 100);
+  };
+
+  // ============================================
   // STATS
   // ============================================
   const stats = useMemo(() => {
     const total = workers.length;
     const active = workers.filter(w => w.status !== 'inactive').length;
     const inactive = total - active;
-    const totalDailyCost = workers.reduce((sum, w) => sum + (w.dailyRate || 0), 0);
-    const avgRate = total > 0 ? totalDailyCost / total : 0;
+
+    const totalHourlyCost = workers.reduce((sum, w) => sum + (getEffectiveHourlyRate(w) || 0), 0);
+    const totalDailyCost = workers.reduce((sum, w) => sum + (Number(w.dailyRate) || 0), 0);
+    const avgDailyRate = total > 0 ? totalDailyCost / total : 0;
+    const avgHourlyRate = total > 0 ? totalHourlyCost / total : 0;
     const totalRoles = roles.length - 1;
 
-    // ⭐ Deduction stats
     const withDeduction = workers.filter(w => w.deductionEnabled && Number(w.deductionPercentage) > 0);
     const deductionCount = withDeduction.length;
     const avgDeductionPct = deductionCount > 0
@@ -156,12 +199,29 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
       : 0;
     const totalDeductionImpact = withDeduction.reduce((s, w) => {
       const pct = Math.max(0, Math.min(100, Number(w.deductionPercentage) || 0));
-      return s + (w.dailyRate || 0) * (pct / 100);
+      return s + (Number(w.dailyRate) || 0) * (pct / 100);
     }, 0);
 
+    // ⭐ Rate consistency stats
+    const withHourlyOnly = workers.filter(w => Number(w.hourlyRate) > 0 && !(Number(w.dailyRate) > 0)).length;
+    const withDailyOnly = workers.filter(w => Number(w.dailyRate) > 0 && !(Number(w.hourlyRate) > 0)).length;
+    const withBothSame = workers.filter(w => {
+      const h = Number(w.hourlyRate) || 0;
+      const d = Number(w.dailyRate) || 0;
+      return h > 0 && d > 0 && h === d;
+    }).length;
+    const withConflict = workers.filter(hasRateConflict).length;
+    const withNeither = workers.filter(w =>
+      !(Number(w.hourlyRate) > 0) && !(Number(w.dailyRate) > 0)
+    ).length;
+
     return {
-      total, active, inactive, totalDailyCost, avgRate, totalRoles,
-      deductionCount, avgDeductionPct, totalDeductionImpact
+      total, active, inactive,
+      totalHourlyCost, totalDailyCost,
+      avgDailyRate, avgHourlyRate,
+      totalRoles,
+      deductionCount, avgDeductionPct, totalDeductionImpact,
+      withHourlyOnly, withDailyOnly, withBothSame, withConflict, withNeither
     };
   }, [workers, roles]);
 
@@ -185,12 +245,22 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
       ]
     },
     cost: {
-      title: 'Daily Labor Cost',
+      title: 'Hourly Labor Cost',
       details: [
-        { label: 'Total Daily Cost', value: Utils.formatCurrency(stats.totalDailyCost) },
-        { label: 'Average Rate', value: Utils.formatCurrency(stats.avgRate) },
-        { label: 'Total Workers', value: stats.total },
-        { label: 'Monthly Estimate', value: Utils.formatCurrency(stats.totalDailyCost * 26) }
+        { label: 'Total Hourly Rate', value: `${stats.totalHourlyCost.toFixed(3)} BD` },
+        { label: 'Average Hourly', value: `${stats.avgHourlyRate.toFixed(3)} BD` },
+        { label: 'Total Daily Rate', value: `${stats.totalDailyCost.toFixed(3)} BD` },
+        { label: 'Average Daily', value: `${stats.avgDailyRate.toFixed(3)} BD` }
+      ]
+    },
+    rateHealth: {
+      title: 'Rate Configuration',
+      details: [
+        { label: 'Hourly only', value: stats.withHourlyOnly },
+        { label: 'Daily only', value: stats.withDailyOnly },
+        { label: 'Both (same value)', value: stats.withBothSame },
+        { label: '⚠ Conflict (diff values)', value: stats.withConflict },
+        { label: '⚠ Neither set', value: stats.withNeither }
       ]
     },
     deduction: {
@@ -198,8 +268,8 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
       details: [
         { label: 'Workers with Deduction', value: stats.deductionCount },
         { label: 'Average Deduction %', value: `${stats.avgDeductionPct.toFixed(1)}%` },
-        { label: 'Daily Impact', value: Utils.formatCurrency(stats.totalDeductionImpact) },
-        { label: 'Monthly Impact (26d)', value: Utils.formatCurrency(stats.totalDeductionImpact * 26) }
+        { label: 'Daily Impact', value: `${stats.totalDeductionImpact.toFixed(3)} BD` },
+        { label: 'Monthly Impact (26d)', value: `${(stats.totalDeductionImpact * 26).toFixed(3)} BD` }
       ]
     },
     inactive: {
@@ -231,7 +301,8 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     }, 0);
 
     const daysPresent = workerAttendance.filter(a => a.present).length;
-    const hourlyRate = (data.workers?.find(w => w.id === workerId)?.dailyRate / 8) || 0;
+    const worker = data.workers?.find(w => w.id === workerId);
+    const hourlyRate = getEffectiveHourlyRate(worker);
     const totalWages = workerAttendance.reduce((sum, a) => {
       if (typeof a.wageEarned === 'number' && a.wageEarned > 0) return sum + a.wageEarned;
       const h = a.checkedIn && a.checkedOut
@@ -248,8 +319,12 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   // ============================================
   const resetForm = () => {
     setFormData({
-      name: '', role: '', dailyRate: '', phone: '', email: '', address: '',
-      emergencyContact: '', emergencyPhone: '', skills: '', experience: '', notes: '',
+      name: '', role: '',
+      hourlyRate: '',
+      dailyRate: '',
+      phone: '', email: '', address: '',
+      emergencyContact: '', emergencyPhone: '',
+      skills: '', experience: '', notes: '',
       deductionEnabled: false, deductionPercentage: ''
     });
     setEditingId(null);
@@ -262,7 +337,6 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
       return;
     }
 
-    // ⭐ Validate deduction percentage
     const pct = parseFloat(formData.deductionPercentage) || 0;
     if (formData.deductionEnabled && (pct < 0 || pct > 100)) {
       showToast('Deduction % must be between 0 and 100', 'error');
@@ -271,6 +345,8 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
 
     const payload = {
       ...formData,
+      hourlyRate: formData.hourlyRate === '' ? 0 : parseFloat(formData.hourlyRate) || 0,
+      dailyRate: formData.dailyRate === '' ? 0 : parseFloat(formData.dailyRate) || 0,
       deductionPercentage: formData.deductionEnabled ? pct : 0,
       deductionEnabled: !!formData.deductionEnabled
     };
@@ -292,7 +368,8 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     setFormData({
       name: worker.name || '',
       role: worker.role || '',
-      dailyRate: worker.dailyRate || '',
+      hourlyRate: worker.hourlyRate != null ? String(worker.hourlyRate) : '',
+      dailyRate: worker.dailyRate != null ? String(worker.dailyRate) : '',
       phone: worker.phone || '',
       email: worker.email || '',
       address: worker.address || '',
@@ -322,20 +399,15 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     setRoleFilter('all');
     setStatusFilter('all');
     setDeductionFilter('all');
+    setRateFilter('all');
   };
 
   const hasActiveFilters =
     searchTerm.trim() !== '' ||
     roleFilter !== 'all' ||
     statusFilter !== 'all' ||
-    deductionFilter !== 'all';
-
-  // ⭐ Compute effective daily rate after deduction
-  const getEffectiveDailyRate = (worker) => {
-    if (!worker.deductionEnabled) return worker.dailyRate || 0;
-    const pct = Math.max(0, Math.min(100, Number(worker.deductionPercentage) || 0));
-    return (worker.dailyRate || 0) * (1 - pct / 100);
-  };
+    deductionFilter !== 'all' ||
+    rateFilter !== 'all';
 
   // ============================================
   // ROLE COLORS
@@ -360,11 +432,16 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     const roleStyle = getRoleStyle(worker.role);
     const isActive = worker.status !== 'inactive';
     const hasDeduction = worker.deductionEnabled && Number(worker.deductionPercentage) > 0;
+    const hasConflict = hasRateConflict(worker);
+    const effectiveHourly = getEffectiveHourlyRate(worker);
+
+    const hourlyRate = Number(worker.hourlyRate) || 0;
+    const dailyRate = Number(worker.dailyRate) || 0;
 
     return (
       <div
         key={worker.id}
-        className={`wk-card ${hasDeduction ? 'wk-card-with-deduction' : ''}`}
+        className={`wk-card ${hasDeduction ? 'wk-card-with-deduction' : ''} ${hasConflict ? 'wk-card-conflict' : ''}`}
         style={{ animationDelay: `${Math.min(index * 60, 480)}ms` }}
       >
         <div className="wk-card-accent" style={{ background: roleStyle.gradient }} />
@@ -383,19 +460,54 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               </div>
             </div>
           </div>
-          <div className="wk-rate-chip">
+
+          {/* ⭐ Effective hourly rate chip — this is what Attendance uses */}
+          <div className="wk-rate-chip" title="Effective hourly rate used by Attendance">
             <Banknote size={12} />
-            <span>{Utils.formatCurrencyShort(worker.dailyRate || 0)}</span>
-            <span className="wk-rate-unit">/day</span>
+            <span>{effectiveHourly.toFixed(3)}</span>
+            <span className="wk-rate-unit">/hr</span>
           </div>
         </div>
 
-        {/* ⭐ Deduction badge — only if enabled */}
+        {/* ⭐ Rate Conflict Warning */}
+        {hasConflict && (
+          <div className="wk-rate-conflict-banner">
+            <AlertTriangle size={12} />
+            <span>
+              Rate conflict — hourly <strong>{hourlyRate.toFixed(3)}</strong> vs daily <strong>{dailyRate.toFixed(3)}</strong>.
+              Attendance uses <strong>{hourlyRate.toFixed(3)}</strong>.
+            </span>
+          </div>
+        )}
+
+        {/* ⭐ NEW: Dual rate display — hourly & daily side by side */}
+        <div className="wk-rate-dual">
+          <div className={`wk-rate-block ${hourlyRate > 0 ? 'set' : 'unset'} ${hasConflict ? 'conflict' : ''}`}>
+            <div className="wk-rate-block-label">
+              <Timer size={11} />
+              <span>Hourly</span>
+            </div>
+            <div className="wk-rate-block-value">
+              {hourlyRate > 0 ? `${hourlyRate.toFixed(3)} BD` : <span className="wk-rate-unset">not set</span>}
+            </div>
+          </div>
+          <div className={`wk-rate-block ${dailyRate > 0 ? 'set' : 'unset'}`}>
+            <div className="wk-rate-block-label">
+              <Calendar size={11} />
+              <span>Daily</span>
+            </div>
+            <div className="wk-rate-block-value">
+              {dailyRate > 0 ? `${dailyRate.toFixed(3)} BD` : <span className="wk-rate-unset">not set</span>}
+            </div>
+          </div>
+        </div>
+
+        {/* Deduction badge */}
         {hasDeduction && (
           <div className="wk-deduction-banner">
             <div className="wk-deduction-badge">
               <Percent size={11} />
-              <span>Deduction Applied</span>
+              <span>Deduction</span>
               <strong>{Number(worker.deductionPercentage).toFixed(2)}%</strong>
             </div>
             <div className="wk-deduction-net">
@@ -548,7 +660,21 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                 </div>
               )}
 
-              {/* ⭐ Deduction info in expanded section */}
+              {/* ⭐ Rate breakdown in expanded */}
+              <div className="wk-expanded-item wk-expanded-full">
+                <Banknote size={13} />
+                <div>
+                  <span className="wk-expanded-label">Rate Breakdown</span>
+                  <span className="wk-expanded-value">
+                    Hourly: <strong>{hourlyRate > 0 ? `${hourlyRate.toFixed(3)} BD` : '—'}</strong>
+                    {' · '}
+                    Daily: <strong>{dailyRate > 0 ? `${dailyRate.toFixed(3)} BD` : '—'}</strong>
+                    {' · '}
+                    Effective: <strong>{effectiveHourly.toFixed(3)} BD/hr</strong>
+                  </span>
+                </div>
+              </div>
+
               <div className={`wk-expanded-item wk-expanded-full wk-expanded-deduction ${hasDeduction ? 'active' : 'inactive'}`}>
                 {hasDeduction ? <ToggleRight size={13} /> : <ToggleLeft size={13} />}
                 <div>
@@ -587,8 +713,13 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     const roleStyle = getRoleStyle(w.role);
     const isActive = w.status !== 'inactive';
     const hasDeduction = w.deductionEnabled && Number(w.deductionPercentage) > 0;
-    const effectiveRate = getEffectiveDailyRate(w);
-    const dailyDeductionAmount = (w.dailyRate || 0) - effectiveRate;
+    const hasConflict = hasRateConflict(w);
+
+    const hourlyRate = Number(w.hourlyRate) || 0;
+    const dailyRate = Number(w.dailyRate) || 0;
+    const effectiveHourly = getEffectiveHourlyRate(w);
+    const effectiveDaily = getEffectiveDailyRate(w);
+    const dailyDeductionAmount = dailyRate - effectiveDaily;
 
     return (
       <div className="wk-modal-overlay" onClick={() => setShowDetailModal(false)}>
@@ -601,7 +732,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               <div className="wk-modal-header-text">
                 <h3>{w.name}</h3>
                 <p className="wk-modal-subtitle">
-                  {w.role || 'No role'} · {Utils.formatCurrency(w.dailyRate || 0)}/day
+                  {w.role || 'No role'} · {effectiveHourly.toFixed(3)} BD/hr effective
                 </p>
               </div>
             </div>
@@ -631,6 +762,22 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                 </div>
               </div>
             </div>
+
+            {/* ⭐ Rate conflict alert */}
+            {hasConflict && (
+              <div className="wk-detail-conflict-banner">
+                <AlertTriangle size={16} />
+                <div>
+                  <strong>Rate Conflict Detected</strong>
+                  <p>
+                    This worker has hourly rate <strong>{hourlyRate.toFixed(3)} BD</strong> and
+                    daily rate <strong>{dailyRate.toFixed(3)} BD</strong>. Attendance will use{' '}
+                    <strong>{hourlyRate.toFixed(3)} BD/hr</strong> because hourly takes priority.
+                    Edit this worker to clear one of the values.
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="wk-detail-stats">
               <div className="wk-detail-stat">
@@ -665,13 +812,41 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                   <Banknote size={16} />
                 </div>
                 <div>
-                  <span className="wk-detail-stat-label">Daily Rate</span>
-                  <span className="wk-detail-stat-value">{Utils.formatCurrency(w.dailyRate || 0)}</span>
+                  <span className="wk-detail-stat-label">Effective Hourly</span>
+                  <span className="wk-detail-stat-value">{effectiveHourly.toFixed(3)} BD</span>
                 </div>
               </div>
             </div>
 
-            {/* ⭐ Deduction card in detail modal */}
+            {/* ⭐ NEW: Rate breakdown card */}
+            <div className="wk-detail-rate-card">
+              <div className="wk-detail-rate-header">
+                <Banknote size={16} />
+                <span>Rate Configuration</span>
+              </div>
+              <div className="wk-detail-rate-rows">
+                <div className={`wk-detail-rate-row ${hourlyRate > 0 ? 'set' : 'unset'}`}>
+                  <span className="wk-detail-rate-label"><Timer size={12} /> Hourly Rate</span>
+                  <strong>{hourlyRate > 0 ? `${hourlyRate.toFixed(3)} BD/hr` : 'Not set'}</strong>
+                </div>
+                <div className={`wk-detail-rate-row ${dailyRate > 0 ? 'set' : 'unset'}`}>
+                  <span className="wk-detail-rate-label"><Calendar size={12} /> Daily Rate</span>
+                  <strong>{dailyRate > 0 ? `${dailyRate.toFixed(3)} BD/day` : 'Not set'}</strong>
+                </div>
+                <div className="wk-detail-rate-row effective">
+                  <span className="wk-detail-rate-label"><Zap size={12} /> Effective (Attendance uses)</span>
+                  <strong>{effectiveHourly.toFixed(3)} BD/hr</strong>
+                </div>
+                {hourlyRate > 0 && dailyRate > 0 && (
+                  <div className="wk-detail-rate-row note">
+                    <span className="wk-detail-rate-label"><Info size={12} /> Note</span>
+                    <strong>Hourly takes priority when both are set</strong>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Deduction card */}
             <div className={`wk-detail-deduction-card ${hasDeduction ? 'active' : ''}`}>
               <div className="wk-detail-deduction-icon">
                 {hasDeduction ? <ToggleRight size={22} /> : <ToggleLeft size={22} />}
@@ -691,7 +866,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                     </div>
                     <div className="wk-detail-deduction-row">
                       <span>Gross daily rate</span>
-                      <strong>{Utils.formatCurrency(w.dailyRate || 0)}</strong>
+                      <strong>{Utils.formatCurrency(dailyRate)}</strong>
                     </div>
                     <div className="wk-detail-deduction-row deduction">
                       <span>Daily deduction</span>
@@ -699,7 +874,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                     </div>
                     <div className="wk-detail-deduction-row net">
                       <span>Effective daily rate</span>
-                      <strong>{Utils.formatCurrency(effectiveRate)}</strong>
+                      <strong>{Utils.formatCurrency(effectiveDaily)}</strong>
                     </div>
                   </div>
                 ) : (
@@ -825,7 +1000,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   };
 
   // ============================================
-  // RENDER FORM MODAL (with deduction fields)
+  // RENDER FORM MODAL
   // ============================================
   const renderFormModal = () => (
     <div
@@ -880,18 +1055,82 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               </div>
             </div>
 
-            <div className="wk-form-row">
-              <div className="wk-form-group">
-                <label><Banknote size={12} /> Daily Rate (BD)</label>
-                <input
-                  type="number"
-                  step="0.001"
-                  value={formData.dailyRate}
-                  onChange={e => setFormData({ ...formData, dailyRate: e.target.value })}
-                  placeholder="0.000"
-                  className="wk-form-input"
-                />
+            {/* ⭐ RATE SECTION — both hourly & daily */}
+            <div className="wk-form-rate-block">
+              <div className="wk-form-rate-header">
+                <div className="wk-form-rate-icon">
+                  <Banknote size={16} />
+                </div>
+                <div>
+                  <div className="wk-form-rate-title">Rate Configuration</div>
+                  <div className="wk-form-rate-subtitle">
+                    Set hourly rate (used by Attendance), daily rate, or both.
+                    When both are set, hourly takes priority.
+                  </div>
+                </div>
               </div>
+
+              <div className="wk-form-row">
+                <div className="wk-form-group">
+                  <label>
+                    <Timer size={12} /> Hourly Rate (BD/hour)
+                    <span className="wk-form-optional">— used by Attendance</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    min="0"
+                    value={formData.hourlyRate}
+                    onChange={e => setFormData({ ...formData, hourlyRate: e.target.value })}
+                    placeholder="0.000"
+                    className="wk-form-input"
+                  />
+                </div>
+                <div className="wk-form-group">
+                  <label>
+                    <Calendar size={12} /> Daily Rate (BD/day)
+                    <span className="wk-form-optional">— optional</span>
+                  </label>
+                  <input
+                    type="number"
+                    step="0.001"
+                    min="0"
+                    value={formData.dailyRate}
+                    onChange={e => setFormData({ ...formData, dailyRate: e.target.value })}
+                    placeholder="0.000"
+                    className="wk-form-input"
+                  />
+                </div>
+              </div>
+
+              {/* Live preview of effective rate */}
+              {(parseFloat(formData.hourlyRate) > 0 || parseFloat(formData.dailyRate) > 0) && (
+                <div className="wk-form-rate-preview">
+                  <div className="wk-form-rate-preview-row">
+                    <span>Effective hourly rate for Attendance:</span>
+                    <strong>
+                      {parseFloat(formData.hourlyRate) > 0
+                        ? `${parseFloat(formData.hourlyRate).toFixed(3)} BD/hr (from hourly)`
+                        : parseFloat(formData.dailyRate) > 0
+                          ? `${parseFloat(formData.dailyRate).toFixed(3)} BD/hr (from daily)`
+                          : '0.000 BD/hr'}
+                    </strong>
+                  </div>
+                  {parseFloat(formData.hourlyRate) > 0 && parseFloat(formData.dailyRate) > 0 &&
+                    parseFloat(formData.hourlyRate) !== parseFloat(formData.dailyRate) && (
+                    <div className="wk-form-rate-preview-warning">
+                      <AlertTriangle size={12} />
+                      <span>
+                        Both rates are set with different values.
+                        Hourly ({parseFloat(formData.hourlyRate).toFixed(3)}) wins.
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="wk-form-row">
               <div className="wk-form-group">
                 <label><Phone size={12} /> Phone</label>
                 <input
@@ -902,9 +1141,6 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                   className="wk-form-input"
                 />
               </div>
-            </div>
-
-            <div className="wk-form-row">
               <div className="wk-form-group">
                 <label><Mail size={12} /> Email</label>
                 <input
@@ -915,6 +1151,9 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                   className="wk-form-input"
                 />
               </div>
+            </div>
+
+            <div className="wk-form-row">
               <div className="wk-form-group">
                 <label><MapPin size={12} /> Address</label>
                 <input
@@ -925,9 +1164,6 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                   className="wk-form-input"
                 />
               </div>
-            </div>
-
-            <div className="wk-form-row">
               <div className="wk-form-group">
                 <label><Shield size={12} /> Emergency Contact</label>
                 <input
@@ -938,6 +1174,9 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                   className="wk-form-input"
                 />
               </div>
+            </div>
+
+            <div className="wk-form-row">
               <div className="wk-form-group">
                 <label><Phone size={12} /> Emergency Phone</label>
                 <input
@@ -948,9 +1187,6 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                   className="wk-form-input"
                 />
               </div>
-            </div>
-
-            <div className="wk-form-row">
               <div className="wk-form-group">
                 <label><Award size={12} /> Skills</label>
                 <input
@@ -961,6 +1197,9 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                   className="wk-form-input"
                 />
               </div>
+            </div>
+
+            <div className="wk-form-row">
               <div className="wk-form-group">
                 <label><Timer size={12} /> Experience (years)</label>
                 <input
@@ -973,7 +1212,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
               </div>
             </div>
 
-            {/* ⭐ DEDUCTION SECTION */}
+            {/* DEDUCTION SECTION */}
             <div className={`wk-form-deduction-block ${formData.deductionEnabled ? 'active' : ''}`}>
               <div className="wk-form-deduction-header">
                 <div className="wk-form-deduction-header-left">
@@ -1018,7 +1257,6 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
                     </div>
                   </div>
 
-                  {/* Live preview */}
                   {parseFloat(formData.dailyRate) > 0 && parseFloat(formData.deductionPercentage) > 0 && (
                     <div className="wk-form-deduction-preview">
                       <div className="wk-preview-row">
@@ -1077,7 +1315,7 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
   );
 
   // ============================================
-  // STAT CARDS (now 5 cards including deduction)
+  // STAT CARDS
   // ============================================
   const statItems = [
     {
@@ -1105,14 +1343,27 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
     {
       id: 'cost',
       icon: Banknote,
-      label: 'Daily Labor Cost',
-      value: Utils.formatCurrencyShort(stats.totalDailyCost),
-      meta: `avg ${Utils.formatCurrencyShort(stats.avgRate)}/worker`,
+      label: 'Hourly Labor Cost',
+      value: `${stats.totalHourlyCost.toFixed(3)}`,
+      meta: `avg ${stats.avgHourlyRate.toFixed(3)}/hr`,
       color: '#f59e0b',
       bg: 'rgba(245, 158, 11, 0.12)',
       accent: 'linear-gradient(90deg, #f59e0b, #fbbf24)'
     },
-    // ⭐ NEW deduction stat card
+    {
+      id: 'rateHealth',
+      icon: AlertTriangle,
+      label: 'Rate Conflicts',
+      value: stats.withConflict,
+      meta: stats.withConflict > 0
+        ? `${stats.withConflict} worker${stats.withConflict !== 1 ? 's' : ''} with mismatched rates`
+        : 'all rates consistent',
+      color: stats.withConflict > 0 ? '#dc2626' : '#22c55e',
+      bg: stats.withConflict > 0 ? 'rgba(220, 38, 38, 0.12)' : 'rgba(34, 197, 94, 0.12)',
+      accent: stats.withConflict > 0
+        ? 'linear-gradient(90deg, #dc2626, #ef4444)'
+        : 'linear-gradient(90deg, #009846, #00b856)'
+    },
     {
       id: 'deduction',
       icon: Percent,
@@ -1285,7 +1536,10 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
           <div>
             <h2>Workers</h2>
             <p className="wk-header-subtitle">
-              {stats.total} worker{stats.total !== 1 ? 's' : ''} · {stats.active} active · {stats.totalRoles} role{stats.totalRoles !== 1 ? 's' : ''} · {stats.deductionCount} with deduction
+              {stats.total} worker{stats.total !== 1 ? 's' : ''} · {stats.active} active · {stats.totalRoles} role{stats.totalRoles !== 1 ? 's' : ''}
+              {stats.withConflict > 0 && (
+                <> · <span style={{ color: '#dc2626' }}>{stats.withConflict} rate conflict{stats.withConflict !== 1 ? 's' : ''}</span></>
+              )}
             </p>
           </div>
         </div>
@@ -1310,7 +1564,6 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
             className="wk-btn-ghost wk-theme-toggle"
             onClick={toggleTheme}
             title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            aria-label={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
           >
             {isDark ? <Sun size={14} /> : <Moon size={14} />}
             <span>{isDark ? 'Light' : 'Dark'}</span>
@@ -1357,7 +1610,22 @@ const WorkersManagerComponent = ({ data, addWorker, updateWorker, deleteWorker }
           })}
         </div>
 
-        {/* ⭐ Deduction filter */}
+        {/* ⭐ Rate filter */}
+        <div className="wk-deduction-filter">
+          <Banknote size={13} className="wk-deduction-filter-icon" />
+          <select
+            value={rateFilter}
+            onChange={(e) => setRateFilter(e.target.value)}
+            className="wk-deduction-select"
+          >
+            <option value="all">All Rates</option>
+            <option value="hourly">Hourly only ({stats.withHourlyOnly})</option>
+            <option value="daily">Daily only ({stats.withDailyOnly})</option>
+            <option value="conflict">⚠ Conflict ({stats.withConflict})</option>
+          </select>
+        </div>
+
+        {/* Deduction filter */}
         <div className="wk-deduction-filter">
           <Percent size={13} className="wk-deduction-filter-icon" />
           <select

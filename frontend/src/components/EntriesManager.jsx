@@ -44,6 +44,35 @@ const ChartTooltip = ({ active, payload, label }) => {
 };
 
 // ============================================
+// SITE RESOLVER
+// ============================================
+const makeSiteResolver = (sites) => {
+  const byId = {};
+  const byName = {};
+  (sites || []).forEach(s => {
+    if (s.id) byId[String(s.id)] = s;
+    if (s.name) byName[String(s.name).toLowerCase()] = s;
+  });
+  return (entryOrId) => {
+    if (!entryOrId) return null;
+    if (typeof entryOrId === 'object') {
+      if (entryOrId.site && entryOrId.site.name) return entryOrId.site;
+      const sid = entryOrId.siteId || entryOrId.site_id;
+      if (sid && byId[String(sid)]) return byId[String(sid)];
+      const sname = entryOrId.siteName || entryOrId.site_name;
+      if (sname && byName[String(sname).toLowerCase()]) {
+        return byName[String(sname).toLowerCase()];
+      }
+      if (sname) return { id: sid || null, name: sname };
+      if (sid) return { id: sid, name: `Site ${String(sid).slice(0, 6)}` };
+      return null;
+    }
+    const s = byId[String(entryOrId)];
+    return s || null;
+  };
+};
+
+// ============================================
 // MAIN COMPONENT
 // ============================================
 const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) => {
@@ -59,18 +88,39 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
-  const [hoveredEntry, setHoveredEntry] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [hoveredCard, setHoveredCard] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
-  const [viewMode, setViewMode] = useState('overview'); // overview | entries
+  const [viewMode, setViewMode] = useState('overview');
   const [mounted, setMounted] = useState(false);
 
-  const dailyOH = useMemo(() =>
-    Utils.calculateDailyOH(data.monthlyOverhead, new Date(formData.date)),
-    [data.monthlyOverhead, formData.date]
-  );
+  // ⭐ Cache sites list globally so Utils.calculateDailyOH can resolve names
+  useEffect(() => {
+    window.__sitesCache = data.sites || [];
+  }, [data.sites]);
+
+  const resolveSite = useMemo(() => makeSiteResolver(data.sites || []), [data.sites]);
+
+  // ⭐ Daily overhead for the currently-selected form date + site
+  const dailyOH = useMemo(() => {
+    if (!formData.date) return 0;
+    return Utils.calculateDailyOH(
+      data.monthlyOverhead,
+      new Date(formData.date),
+      formData.siteId || null,   // ⭐ pass siteId
+    );
+  }, [data.monthlyOverhead, formData.date, formData.siteId]);
+
+  // ⭐ Compute what the auto-overhead should be for a given entry (per its own site)
+  const computeAutoOverheadForEntry = useCallback((entry) => {
+    if (!entry?.date) return 0;
+    return Utils.calculateDailyOH(
+      data.monthlyOverhead,
+      new Date(entry.date),
+      entry.siteId || null,      // ⭐ pass entry's siteId
+    );
+  }, [data.monthlyOverhead]);
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setMounted(true));
@@ -91,6 +141,11 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
     return { label: 'Manual', className: 'em-source-badge em-source-manual', icon: <Edit size={11} /> };
   };
 
+  const getSiteName = useCallback((entryOrId) => {
+    const s = resolveSite(entryOrId);
+    return s?.name || '—';
+  }, [resolveSite]);
+
   // ============================================
   // FILTERED
   // ============================================
@@ -101,9 +156,9 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
       if (filter.dateTo && entry.date > filter.dateTo) return false;
       if (searchTerm.trim()) {
         const s = searchTerm.toLowerCase();
-        const site = (data.sites.find(x => x.id === entry.siteId)?.name || '').toLowerCase();
+        const siteName = getSiteName(entry).toLowerCase();
         const note = (entry.note || '').toLowerCase();
-        if (!site.includes(s) && !note.includes(s) && !(entry.date || '').includes(s)) return false;
+        if (!siteName.includes(s) && !note.includes(s) && !(entry.date || '').includes(s)) return false;
       }
       return true;
     }).sort((a, b) => {
@@ -111,7 +166,7 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
       if (d !== 0) return d;
       return (b.id || '').localeCompare(a.id || '');
     });
-  }, [data.entries, data.sites, filter, searchTerm]);
+  }, [data.entries, filter, searchTerm, getSiteName]);
 
   // ============================================
   // PAGINATION
@@ -141,7 +196,6 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
   // ============================================
   // CHART DATA
   // ============================================
-  // Daily trend (last 14 days by date)
   const dailyTrend = useMemo(() => {
     const byDate = {};
     filteredEntries.forEach(e => {
@@ -162,11 +216,10 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
       }));
   }, [filteredEntries]);
 
-  // Top sites by profit
   const topSites = useMemo(() => {
     const bySite = {};
     filteredEntries.forEach(e => {
-      const name = data.sites.find(s => s.id === e.siteId)?.name || 'Unknown';
+      const name = getSiteName(e);
       if (!bySite[name]) bySite[name] = { name, revenue: 0, profit: 0, count: 0 };
       bySite[name].revenue += (e.kamai || 0);
       bySite[name].profit += Utils.calculateEntryProfit(e);
@@ -179,9 +232,8 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
         ...s,
         shortName: s.name.length > 12 ? s.name.slice(0, 12) + '…' : s.name
       }));
-  }, [filteredEntries, data.sites]);
+  }, [filteredEntries, getSiteName]);
 
-  // Source distribution
   const sourceData = useMemo(() => {
     const auto = filteredEntries.filter(e => isAutoEntry(e)).length;
     const override = filteredEntries.filter(e => !isAutoEntry(e) && e.manualOverride).length;
@@ -193,7 +245,6 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
     ].filter(d => d.value > 0);
   }, [filteredEntries]);
 
-  // Cost breakdown pie
   const costBreakdown = useMemo(() => [
     { name: 'Labour', value: totalLabour, color: '#ef4444' },
     { name: 'Overhead', value: totalOverhead, color: '#3b82f6' },
@@ -246,12 +297,20 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
       setTimeout(() => setErrorMessage(''), 3000);
       return;
     }
+
+    // ⭐ Recompute overhead for the SELECTED site (frequency-aware, per-site)
+    const entryOverhead = Utils.calculateDailyOH(
+      data.monthlyOverhead,
+      new Date(formData.date),
+      formData.siteId,                 // ⭐ pass siteId
+    );
+
     const entry = {
       date: formData.date,
       siteId: formData.siteId,
       kamai: parseFloat(formData.kamai) || 0,
       labour: parseFloat(formData.labour) || 0,
-      overhead: dailyOH,
+      overhead: entryOverhead,
       oneTime: parseFloat(formData.oneTime) || 0,
       note: formData.note,
       manualOverride: isOverrideMode || !!editingId
@@ -297,9 +356,13 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
   };
 
   const openEditModal = (entry) => {
+    const resolved = resolveSite(entry);
+    const resolvedSiteId = entry.siteId || entry.site_id || resolved?.id || '';
+
     setEditingId(entry.id); setIsOverrideMode(false);
     setFormData({
-      date: entry.date, siteId: entry.siteId,
+      date: entry.date,
+      siteId: resolvedSiteId,
       kamai: (entry.kamai || 0).toString(),
       labour: (entry.labour || 0).toString(),
       oneTime: (entry.oneTime || 0).toString(),
@@ -309,9 +372,13 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
   };
 
   const openOverrideModal = (entry) => {
+    const resolved = resolveSite(entry);
+    const resolvedSiteId = entry.siteId || entry.site_id || resolved?.id || '';
+
     setEditingId(null); setIsOverrideMode(true);
     setFormData({
-      date: entry.date, siteId: entry.siteId,
+      date: entry.date,
+      siteId: resolvedSiteId,
       kamai: (entry.kamai || 0).toString(),
       labour: (entry.labour || 0).toString(),
       oneTime: (entry.oneTime || 0).toString(),
@@ -321,8 +388,6 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
   };
 
   const openAddModal = () => { resetForm(); setShowModal(true); };
-
-  const getSiteName = (id) => data.sites.find(s => s.id === id)?.name || 'Unknown Site';
 
   const goToPage = (page) => setCurrentPage(Math.max(1, Math.min(page, totalPages)));
   const getPageNumbers = () => {
@@ -395,7 +460,6 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
         })}
       </div>
 
-      {/* Row 1 — daily trend (wide) + cost breakdown pie */}
       <div className="em-grid-2-1">
         <div className="em-card">
           <div className="em-card-header">
@@ -480,7 +544,6 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
         </div>
       </div>
 
-      {/* Row 2 — top sites bar + source distribution */}
       <div className="em-grid-1-1">
         <div className="em-card">
           <div className="em-card-header">
@@ -564,7 +627,6 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
   // ============================================
   const renderEntriesTab = () => (
     <div className="em-view">
-      {/* Filters */}
       <div className="em-filters">
         <div className="em-search">
           <Search size={15} className="em-search-icon" />
@@ -597,7 +659,6 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
         </span>
       </div>
 
-      {/* Entries grid */}
       {filteredEntries.length === 0 ? (
         <div className="em-empty">
           <div className="em-empty-icon-wrapper">
@@ -620,9 +681,15 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
           <div className="em-entries-grid">
             {paginatedEntries.map((entry, index) => {
               const profit = Utils.calculateEntryProfit(entry);
-              const siteName = getSiteName(entry.siteId);
+              const siteName = getSiteName(entry);
               const auto = isAutoEntry(entry);
               const badge = getSourceBadge(entry);
+
+              // ⭐ Stale check uses per-site calculation
+              const correctOH = computeAutoOverheadForEntry(entry);
+              const storedOH = Number(entry.overhead) || 0;
+              const isStale = Math.abs(storedOH - correctOH) > 0.01;
+
               return (
                 <div key={entry.id}
                   className={`em-entry-card ${auto ? 'em-entry-auto' : ''}`}
@@ -664,13 +731,24 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
                     </div>
                     <div className="em-detail-item">
                       <span className="em-detail-label">Overhead</span>
-                      <span className="em-detail-value">{Utils.formatCurrency(entry.overhead)}</span>
+                      <span className="em-detail-value">{Utils.formatCurrency(storedOH)}</span>
                     </div>
                     <div className="em-detail-item">
                       <span className="em-detail-label">One-Time</span>
                       <span className="em-detail-value">{Utils.formatCurrency(entry.oneTime)}</span>
                     </div>
                   </div>
+
+                  {isStale && !entry.manualOverride && (
+                    <div className="em-stale-warning">
+                      <AlertCircle size={12} />
+                      <span>
+                        Overhead is stale: stored {Utils.formatCurrencyShort(storedOH)} ·
+                        should be {Utils.formatCurrencyShort(correctOH)}.
+                        Edit and re-save to fix.
+                      </span>
+                    </div>
+                  )}
 
                   {entry.note && (
                     <div className="em-entry-note">
@@ -710,7 +788,6 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
             })}
           </div>
 
-          {/* Pagination */}
           <div className="em-pagination">
             <div className="em-pagination-info">
               Showing <strong>{((currentPage - 1) * itemsPerPage) + 1}</strong>–
@@ -929,7 +1006,6 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
         <div className="em-orb em-orb-3" />
       </div>
 
-      {/* Header */}
       <div className="em-header">
         <div className="em-header-left">
           <div className="em-header-icon-wrapper">
@@ -953,7 +1029,6 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="em-tabs">
         {[
           { id: 'overview', label: 'Overview', icon: BarChart3 },
@@ -972,7 +1047,6 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
         })}
       </div>
 
-      {/* Tooltip */}
       {hoveredCard && cardDetails[hoveredCard] && viewMode === 'overview' && (
         <div className="em-hover-tooltip"
           style={{ position: 'fixed', left: tooltipPosition.x, top: tooltipPosition.y, zIndex: 9999 }}>
@@ -988,14 +1062,11 @@ const EntriesManagerComponent = ({ data, addEntry, updateEntry, deleteEntry }) =
         </div>
       )}
 
-      {/* Messages */}
       {errorMessage && <div className="em-message error"><AlertCircle size={15} /> {errorMessage}</div>}
       {successMessage && <div className="em-message success"><CheckCircle size={15} /> {successMessage}</div>}
 
-      {/* View */}
       {viewMode === 'overview' ? renderOverviewTab() : renderEntriesTab()}
 
-      {/* Modals */}
       {showModal && renderFormModal()}
       {renderDeleteConfirm()}
     </div>
