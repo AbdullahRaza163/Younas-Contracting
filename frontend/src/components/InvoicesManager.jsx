@@ -10,7 +10,7 @@ import {
   ChevronsRight, Filter, Info, Clock, Send, MoreHorizontal, Layers,
   Wallet, Percent, Banknote, BarChart3, PieChart as PieChartIcon,
   LineChart as LineChartIcon, Flame, Target, Minus as MinusIcon, Crown as CrownIcon,
-  Package, Phone, Tag
+  Package, Phone, Tag, Heading, ChevronUp, ChevronDown, Users as UsersIcon, HardHat
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
@@ -68,18 +68,21 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   const [mounted, setMounted] = useState(false);
   const [viewMode, setViewMode] = useState('overview');
 
+  // ⭐ NEW: Track which item (by id) is being edited in the item form
+  const [editingItemId, setEditingItemId] = useState(null);
+
   // ============================================
-  // ⭐ CLIENTS + UNITS + ITEMS
+  // CLIENTS + UNITS + ITEMS
   // ============================================
   const { units: allUnits } = useUnits();
 
   const [clients, setClients] = useState([]);
   const [clientsLoading, setClientsLoading] = useState(false);
+  const [clientsLoaded, setClientsLoaded] = useState(false);
 
   const [items, setItems] = useState([]);
   const [itemsLoading, setItemsLoading] = useState(false);
 
-  // Load clients once
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -91,13 +94,15 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
         console.error('[Invoices] failed to load clients:', err);
         if (!cancelled) setClients([]);
       } finally {
-        if (!cancelled) setClientsLoading(false);
+        if (!cancelled) {
+          setClientsLoading(false);
+          setClientsLoaded(true);
+        }
       }
     })();
     return () => { cancelled = true; };
   }, []);
 
-  // ⭐ Load items once (fallback to data.items if API fails)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -119,13 +124,11 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     return () => { cancelled = true; };
   }, [data.items]);
 
-  // Invoice search/filter states
   const [invoiceSearchTerm, setInvoiceSearchTerm] = useState('');
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState('all');
   const [invoiceDateFrom, setInvoiceDateFrom] = useState('');
   const [invoiceDateTo, setInvoiceDateTo] = useState('');
 
-  // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [loading, setLoading] = useState(false);
@@ -135,7 +138,6 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     return () => cancelAnimationFrame(id);
   }, []);
 
-  // Generate invoice number
   const generateInvoiceNumber = () => {
     const year = new Date().getFullYear();
     const count = (data.invoices || []).length + 1;
@@ -144,7 +146,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
 
   const [formData, setFormData] = useState({
     invoiceNumber: generateInvoiceNumber(),
-    clientId: '',                     // ⭐ NEW — selected client ID
+    clientId: '',                     
     siteId: '',
     clientName: '', clientAddress: '', clientCrn: '',
     invoiceDate: Utils.today(),
@@ -153,25 +155,24 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     items: [], notes: '', subject: '', cpr: '', contactPerson: ''
   });
 
-  // ⭐ Item form now has `itemId` for source tracking
   const [itemForm, setItemForm] = useState({
     itemId: '',
     description: '',
     quantity: '1',
     unit: 'SQ.M',
     unitPrice: '',
-    total: ''
+    total: '',
+    isHeader: false,
+    itemType: 'Material',
+    workers: '1',
+    hours: '1',
   });
 
-  // ⭐ Item picker state
   const [itemSearchTerm, setItemSearchTerm] = useState('');
   const [showItemPicker, setShowItemPicker] = useState(false);
 
-  // ⭐ Active units from Units table (fallback to defaults if empty)
   const activeUnits = useMemo(
-    () => allUnits
-      .filter(u => u.isActive)
-      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)),
+    () => allUnits.filter(u => u.isActive).sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0)),
     [allUnits]
   );
 
@@ -194,7 +195,6 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     ];
   }, [activeUnits]);
 
-  // ⭐ Filtered items for the picker
   const filteredItems = useMemo(() => {
     if (!itemSearchTerm.trim()) return items.slice(0, 50);
     const q = itemSearchTerm.trim().toLowerCase();
@@ -208,22 +208,17 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   }, [items, itemSearchTerm]);
 
   // ============================================
-  // ⭐ CLIENT PICKER HANDLER
+  // CLIENT PICKER HANDLER
   // ============================================
   const handleClientSelect = (clientId) => {
     if (!clientId) {
       setFormData(prev => ({
         ...prev,
-        clientId: '',
-        clientName: '',
-        clientAddress: '',
-        clientCrn: '',
-        contactPerson: '',
-        cpr: '',
+        clientId: '', clientName: '', clientAddress: '',
+        clientCrn: '', contactPerson: '', cpr: '',
       }));
       return;
     }
-
     const c = clients.find(x => x.id === clientId);
     if (!c) return;
 
@@ -232,35 +227,17 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
       clientId,
       clientName: c.name || '',
       clientAddress: c.address || prev.clientAddress || '',
-      clientCrn:
-        c.crn ||
-        c.crNumber ||
-        c.commercialRegistration ||
-        c.clientCrn ||
-        prev.clientCrn ||
-        '',
-      contactPerson:
-        c.contactPerson ||
-        c.contact ||
-        c.contactName ||
-        prev.contactPerson ||
-        '',
-      cpr:
-        c.cpr ||
-        c.cprNumber ||
-        prev.cpr ||
-        '',
+      clientCrn: c.crn || c.crNumber || c.commercialRegistration || c.clientCrn || prev.clientCrn || '',
+      contactPerson: c.contactPerson || c.contact || c.contactName || prev.contactPerson || '',
+      cpr: c.cpr || c.cprNumber || prev.cpr || '',
     }));
   };
 
   // ============================================
-  // ⭐ ITEM PICKER HANDLER
+  // ITEM PICKER HANDLER
   // ============================================
   const handleItemSelect = (itemId) => {
-    if (!itemId) {
-      setItemForm(prev => ({ ...prev, itemId: '' }));
-      return;
-    }
+    if (!itemId) { setItemForm(prev => ({ ...prev, itemId: '' })); return; }
 
     const it = items.find(x => x.id === itemId);
     if (!it) return;
@@ -273,21 +250,26 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
       unitName = commonUnits[0]?.name || 'SQ.M';
     }
 
-    const price =
-      it.unitPrice ??
-      it.price ??
-      it.rate ??
-      it.sellingPrice ??
-      it.salePrice ??
-      '';
+    const price = it.unitPrice ?? it.price ?? it.rate ?? it.sellingPrice ?? it.salePrice ?? '';
+
+    const namePart = it.name || '';
+    const catPart = it.category || '';
+    const descPart = it.description || '';
+    const combinedDesc = [namePart, catPart, descPart].filter(part => part && part.trim() !== '').join(', ');
+
+    const isManpower = it.itemType === 'Manpower';
 
     setItemForm(prev => ({
       ...prev,
       itemId: it.id,
-      description: it.name || '',
-      unit: unitName,
+      description: combinedDesc,
+      unit: isManpower ? 'HOURS' : unitName,
       unitPrice: price !== '' && price !== null && price !== undefined ? String(price) : '',
       quantity: prev.quantity || '1',
+      isHeader: false,
+      itemType: it.itemType || 'Material',
+      workers: '1',
+      hours: '1',
     }));
   };
 
@@ -426,8 +408,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
         inv.invoiceDate && inv.invoiceDate.startsWith(key)
       );
       const total = monthInvoices.reduce((s, inv) => s + (inv.totalAmount || 0), 0);
-      const paid = monthInvoices
-        .filter(inv => inv.status === 'paid')
+      const paid = monthInvoices.filter(inv => inv.status === 'paid')
         .reduce((s, inv) => s + (inv.totalAmount || 0), 0);
       months.push({ label, total, paid, count: monthInvoices.length });
     }
@@ -447,9 +428,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
       .slice(0, 8)
       .map(c => ({
         name: c.name.length > 14 ? c.name.slice(0, 14) + '…' : c.name,
-        fullName: c.name,
-        value: c.total,
-        count: c.count
+        fullName: c.name, value: c.total, count: c.count
       }));
   }, [data.invoices]);
 
@@ -469,36 +448,115 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   // ============================================
   // ITEM HELPERS
   // ============================================
-  const handleItemAdd = () => {
-    if (!itemForm.description || !itemForm.unitPrice) return;
-    const quantity = parseFloat(itemForm.quantity) || 1;
-    const unitPrice = parseFloat(itemForm.unitPrice) || 0;
-    const newItem = {
-      id: Date.now().toString(),
-      itemId: itemForm.itemId || null,       // ⭐ source item
-      description: itemForm.description,
-      quantity, unit: itemForm.unit || 'SQ.M', unitPrice,
-      total: quantity * unitPrice
-    };
-    setFormData(prev => ({ ...prev, items: [...prev.items, newItem] }));
+
+  // ⭐ Reset just the item form (used by Add + Cancel edit)
+  const resetItemForm = () => {
     setItemForm({
-      itemId: '',
-      description: '',
-      quantity: '1',
-      unit: commonUnits[0]?.name || 'SQ.M',
-      unitPrice: '',
-      total: ''
+      itemId: '', description: '', quantity: '1', unit: commonUnits[0]?.name || 'SQ.M',
+      unitPrice: '', total: '', isHeader: false, itemType: 'Material', workers: '1', hours: '1'
+    });
+    setEditingItemId(null);
+    setItemSearchTerm('');
+    setShowItemPicker(false);
+  };
+
+  // ⭐ Load an existing item into the form for editing
+  const handleItemClick = (item) => {
+    // Don't edit headers this way — the header just needs to be reordered/removed
+    // But we still allow editing header description, so let's allow it
+    setEditingItemId(item.id);
+    setItemForm({
+      itemId: item.itemId || '',
+      description: item.description || '',
+      quantity: String(item.quantity || '1'),
+      unit: item.unit || 'SQ.M',
+      unitPrice: String(item.unitPrice || ''),
+      total: '',
+      isHeader: !!item.isHeader,
+      itemType: item.itemType || 'Material',
+      workers: item.manpowerDetails?.workers ? String(item.manpowerDetails.workers) : '1',
+      hours: item.manpowerDetails?.hours ? String(item.manpowerDetails.hours) : '1',
     });
     setItemSearchTerm('');
     setShowItemPicker(false);
   };
 
+  // ⭐ Add OR Update depending on editingItemId
+  const handleItemAdd = () => {
+    if (!itemForm.description) return;
+    if (!itemForm.isHeader && !itemForm.unitPrice) return;
+
+    let quantity = parseFloat(itemForm.quantity) || 1;
+    let unitPrice = parseFloat(itemForm.unitPrice) || 0;
+    let unit = itemForm.unit || 'SQ.M';
+    let total = 0;
+    let manpowerDetails = null;
+
+    if (itemForm.itemType === 'Manpower' && !itemForm.isHeader) {
+      const workers = parseFloat(itemForm.workers) || 1;
+      const hours = parseFloat(itemForm.hours) || 0;
+      quantity = hours;
+      total = hours * unitPrice;
+      unit = 'HOURS';
+
+      manpowerDetails = {
+        workers,
+        hours,
+        ratePerHour: unitPrice,
+      };
+    } else if (!itemForm.isHeader) {
+      total = quantity * unitPrice;
+    }
+
+    const itemData = {
+      id: editingItemId || Date.now().toString(),
+      itemId: itemForm.itemId || null,
+      description: itemForm.description,
+      quantity: itemForm.isHeader ? 0 : quantity,
+      unit: itemForm.isHeader ? '' : unit,
+      unitPrice: itemForm.isHeader ? 0 : unitPrice,
+      total: itemForm.isHeader ? 0 : total,
+      isHeader: itemForm.isHeader,
+      itemType: itemForm.itemType,
+      manpowerDetails,
+    };
+
+    if (editingItemId) {
+      // ⭐ Update existing item in place (keep its position)
+      setFormData(prev => ({
+        ...prev,
+        items: prev.items.map(it => it.id === editingItemId ? itemData : it)
+      }));
+    } else {
+      // ⭐ Add new item to the end
+      setFormData(prev => ({ ...prev, items: [...prev.items, itemData] }));
+    }
+
+    resetItemForm();
+  };
+
   const handleItemRemove = (id) => {
+    // If removing the item currently being edited, exit edit mode
+    if (editingItemId === id) {
+      resetItemForm();
+    }
     setFormData(prev => ({ ...prev, items: prev.items.filter(item => item.id !== id) }));
   };
 
+  const moveItem = (index, direction) => {
+    setFormData(prev => {
+      const newItems = [...prev.items];
+      const targetIndex = direction === 'up' ? index - 1 : index + 1;
+      if (targetIndex < 0 || targetIndex >= newItems.length) return prev;
+      [newItems[index], newItems[targetIndex]] = [newItems[targetIndex], newItems[index]];
+      return { ...prev, items: newItems };
+    });
+  };
+
   const calculateTotals = useMemo(() => {
-    const subtotal = formData.items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0);
+    const subtotal = formData.items
+      .filter(item => !item.isHeader)
+      .reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0);
     const vatAmount = formData.invoiceType === 'vat' ? subtotal * (parseFloat(formData.vatRate) / 100) : 0;
     return { subtotal, vatAmount, total: subtotal + vatAmount };
   }, [formData.items, formData.vatRate, formData.invoiceType]);
@@ -517,12 +575,8 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
       totalAmount: calculateTotals.total,
       amountInWords: Utils.convertAmountToWords(calculateTotals.total)
     };
-    if (editingId) {
-      updateInvoice(editingId, invoice);
-      setEditingId(null);
-    } else {
-      addInvoice(invoice);
-    }
+    if (editingId) { updateInvoice(editingId, invoice); setEditingId(null); }
+    else { addInvoice(invoice); }
     resetForm();
     setShowForm(false);
   };
@@ -530,8 +584,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   const resetForm = () => {
     setFormData({
       invoiceNumber: generateInvoiceNumber(),
-      clientId: '',
-      siteId: '',
+      clientId: '', siteId: '',
       clientName: '', clientAddress: '', clientCrn: '',
       invoiceDate: Utils.today(),
       dueDate: Utils.addDays(Utils.today(), 30),
@@ -539,13 +592,10 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
       items: [], notes: '', subject: '', cpr: '', contactPerson: ''
     });
     setEditingId(null);
+    setEditingItemId(null); // ⭐ Reset edit mode
     setItemForm({
-      itemId: '',
-      description: '',
-      quantity: '1',
-      unit: commonUnits[0]?.name || 'SQ.M',
-      unitPrice: '',
-      total: ''
+      itemId: '', description: '', quantity: '1', unit: commonUnits[0]?.name || 'SQ.M',
+      unitPrice: '', total: '', isHeader: false, itemType: 'Material', workers: '1', hours: '1'
     });
     setItemSearchTerm('');
     setShowItemPicker(false);
@@ -554,11 +604,16 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   const openAddModal = () => { resetForm(); setShowForm(true); };
 
   const openEditModal = (invoice) => {
-    const matched = clients.find(c => c.name === invoice.clientName);
+    let matchedClientId = invoice.clientId || '';
+    if (!matchedClientId && invoice.clientName) {
+      const matched = clients.find(c => c.name === invoice.clientName);
+      matchedClientId = matched?.id || '';
+    }
     setEditingId(invoice.id);
+    setEditingItemId(null); // ⭐ Ensure no lingering item edit
     setFormData({
       invoiceNumber: invoice.invoiceNumber || '',
-      clientId: invoice.clientId || matched?.id || '',
+      clientId: matchedClientId,
       siteId: invoice.siteId || '',
       clientName: invoice.clientName || '',
       clientAddress: invoice.clientAddress || '',
@@ -600,7 +655,8 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   const generateInvoiceHTML = (invoice) => {
     const companyPhone = data.companyPhone || '+973 37099957';
     const items = invoice.items || [];
-    const subtotal = items.reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0);
+    const subtotal = items.filter(item => !item.isHeader)
+      .reduce((sum, item) => sum + (parseFloat(item.total) || 0), 0);
     const vatAmount = invoice.invoiceType === 'vat' ? subtotal * (parseFloat(invoice.vatRate) / 100) : 0;
     const total = subtotal + vatAmount;
     const primary = '#1a3c6e';
@@ -655,6 +711,13 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     .inv-table th { color: #ffffff !important; padding: 8px 10px !important; text-align: center !important;
       font-size: 11px !important; text-transform: uppercase !important; font-weight: 700 !important; letter-spacing: 0.5px !important; }
     .inv-table td { padding: 6px 10px !important; border-bottom: 1px solid ${border} !important; text-align: center !important; }
+    .inv-table tr.section-header-row td {
+      background-color: ${light} !important; color: ${primary} !important; font-weight: 700 !important;
+      text-align: left !important; font-size: 13px !important; padding: 10px 12px !important;
+      border-bottom: 2px solid ${primary} !important; text-transform: uppercase !important;
+      letter-spacing: 0.5px !important;
+    }
+    .inv-manpower-desc { font-size: 11px !important; color: ${muted} !important; display: block !important; margin-top: 2px !important; }
     .inv-totals { margin: 10px 0 10px auto !important; padding: 10px 16px !important; background: ${light} !important;
       max-width: 320px !important; border: 2px solid ${secondary} !important; }
     .inv-total-row { display: flex !important; justify-content: space-between !important; padding: 3px 0 !important; font-size: 13px !important; }
@@ -698,17 +761,36 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
         <table class="inv-table">
           <thead><tr><th>Sr. No.</th><th>Description</th><th>Qty</th><th>Unit</th><th>Rate</th><th>Total</th></tr></thead>
           <tbody>
-            ${items.length === 0
-              ? `<tr><td colspan="6" style="text-align:center;padding:15px;color:${muted};">No items</td></tr>`
-              : items.map((item, i) => `
-              <tr>
-                <td>${i + 1}</td>
-                <td style="text-align:left;">${item.description || ''}</td>
-                <td>${item.quantity || 0}</td>
-                <td>${item.unit || 'SQ.M'}</td>
-                <td>${Utils.formatCurrencyShort(item.unitPrice || 0)}</td>
-                <td>${Utils.formatCurrencyShort(item.total || 0)}</td>
-              </tr>`).join('')}
+           ${items.length === 0
+  ? `<tr><td colspan="6" style="text-align:center;padding:15px;color:${muted};">No items</td></tr>`
+  : (() => {
+      let srNo = 0; // ⭐ Running counter for real items only
+      return items.map((item) => {
+        if (item.isHeader) {
+          return `<tr class="section-header-row"><td colspan="6">${item.description || ''}</td></tr>`;
+        }
+        srNo += 1; // ⭐ Increment only for real items
+        let qtyDisplay = item.quantity;
+        let descDisplay = item.description;
+        if (item.itemType === 'Manpower' && item.manpowerDetails) {
+          const { workers, hours } = item.manpowerDetails;
+          descDisplay = `
+            <strong>${item.description}</strong>
+            <span class="inv-manpower-desc">${workers} worker${workers > 1 ? 's' : ''} · ${hours} total hr${hours > 1 ? 's' : ''}</span>
+          `;
+          qtyDisplay = item.quantity;
+        }
+        return `
+        <tr>
+          <td>${srNo}</td>
+          <td style="text-align:left;">${descDisplay}</td>
+          <td>${qtyDisplay}</td>
+          <td>${item.unit || 'SQ.M'}</td>
+          <td>${Utils.formatCurrencyShort(item.unitPrice || 0)}</td>
+          <td>${Utils.formatCurrencyShort(item.total || 0)}</td>
+        </tr>`;
+      }).join('');
+    })()}
           </tbody>
         </table>
         <div class="inv-totals">
@@ -1030,7 +1112,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                       <Calendar size={11} /> {Utils.formatDate(invoice.invoiceDate)}
                     </span>
                     <span className="inv-card-meta-item">
-                      <Receipt size={11} /> {invoice.items?.length || 0} items
+                      <Receipt size={11} /> {invoice.items?.filter(i => !i.isHeader).length || 0} items
                     </span>
                   </div>
                 </div>
@@ -1104,9 +1186,11 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   const ViewInvoiceModal = ({ invoice, onClose }) => {
     if (!invoice) return null;
     const items = invoice.items || [];
-    const subtotal = items.reduce((s, i) => s + (parseFloat(i.total) || 0), 0);
+    const subtotal = items.filter(item => !item.isHeader)
+      .reduce((s, i) => s + (parseFloat(i.total) || 0), 0);
     const vatAmount = invoice.invoiceType === 'vat' ? subtotal * (parseFloat(invoice.vatRate) / 100) : 0;
     const total = subtotal + vatAmount;
+
     return (
       <ModalPortal>
         <div className="inv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
@@ -1156,16 +1240,34 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                   <tbody>
                     {items.length === 0 ? (
                       <tr><td colSpan="6" style={{ textAlign: 'center', padding: 15 }}>No items</td></tr>
-                    ) : items.map((it, i) => (
-                      <tr key={it.id || i}>
-                        <td>{i + 1}</td>
-                        <td>{it.description}</td>
-                        <td className="right">{it.quantity}</td>
-                        <td>{it.unit}</td>
-                        <td className="right">{Utils.formatCurrencyShort(it.unitPrice)}</td>
-                        <td className="right"><strong>{Utils.formatCurrencyShort(it.total)}</strong></td>
-                      </tr>
-                    ))}
+                    ) : items.map((it, i) => {
+                      if (it.isHeader) {
+                        return (
+                          <tr key={it.id || i} className="section-header-row">
+                            <td colSpan="6">{it.description || ''}</td>
+                          </tr>
+                        );
+                      }
+                      return (
+                        <tr key={it.id || i}>
+                          <td>{i + 1}</td>
+                          <td>
+                            {it.itemType === 'Manpower' && it.manpowerDetails ? (
+                              <>
+                                <strong>{it.description}</strong>
+                                <div style={{ fontSize: '11px', color: '#64748b' }}>
+                                  {it.manpowerDetails.workers} worker{it.manpowerDetails.workers > 1 ? 's' : ''} · {it.manpowerDetails.hours} total hr{it.manpowerDetails.hours > 1 ? 's' : ''}
+                                </div>
+                              </>
+                            ) : (it.description)}
+                          </td>
+                          <td className="right">{it.quantity}</td>
+                          <td>{it.unit}</td>
+                          <td className="right">{Utils.formatCurrencyShort(it.unitPrice)}</td>
+                          <td className="right"><strong>{Utils.formatCurrencyShort(it.total)}</strong></td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 <div className="inv-preview-totals">
@@ -1187,7 +1289,7 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
   };
 
   // ============================================
-  // FORM MODAL — ⭐ UPDATED with client + item + unit dropdowns
+  // FORM MODAL
   // ============================================
   const renderFormModal = () => {
     const selectedClient = formData.clientId
@@ -1197,6 +1299,10 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
     const selectedItem = itemForm.itemId
       ? items.find(it => it.id === itemForm.itemId)
       : null;
+
+    const isManpowerMode = itemForm.itemType === 'Manpower' && !itemForm.isHeader;
+    const clientNotInList = formData.clientId && !clients.some(c => c.id === formData.clientId);
+    const isEditingItem = !!editingItemId; // ⭐ Track edit mode
 
     return (
       <ModalPortal>
@@ -1226,7 +1332,6 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                     <small className="inv-hint">Auto-generated</small>
                   </div>
 
-                  {/* ⭐ CLIENT DROPDOWN */}
                   <div className="inv-form-group">
                     <label><Building2 size={12} /> Client <span className="inv-required">*</span></label>
                     <select
@@ -1234,10 +1339,10 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                       required
                       onChange={e => handleClientSelect(e.target.value)}
                       className="inv-form-select"
-                      disabled={clientsLoading}
+                      disabled={clientsLoading && !clientsLoaded}
                     >
                       <option value="">
-                        {clientsLoading
+                        {clientsLoading && !clientsLoaded
                           ? 'Loading clients…'
                           : clients.length === 0
                             ? 'No clients — type manually below'
@@ -1248,8 +1353,14 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                           {c.name}{c.crn ? ` · CRN ${c.crn}` : ''}
                         </option>
                       ))}
+                      {clientNotInList && (
+                        <option value={formData.clientId}>
+                          {formData.clientName || 'Unknown client'}
+                          {formData.clientCrn ? ` · CRN ${formData.clientCrn}` : ''}
+                        </option>
+                      )}
                     </select>
-                    {clients.length > 0 && (
+                    {clientsLoaded && clients.length > 0 && (
                       <small className="inv-hint">
                         <Info size={10} /> Selecting a client auto-fills address, CRN, contact &amp; CPR
                       </small>
@@ -1257,7 +1368,6 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                   </div>
                 </div>
 
-                {/* ⭐ Client preview */}
                 {selectedClient && (
                   <div className="inv-client-preview">
                     <div className="inv-client-preview-avatar">
@@ -1266,18 +1376,10 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                     <div className="inv-client-preview-info">
                       <div className="inv-client-preview-name">{selectedClient.name}</div>
                       <div className="inv-client-preview-meta">
-                        {selectedClient.crn && (
-                          <span><Building2 size={10} /> CRN: {selectedClient.crn}</span>
-                        )}
-                        {selectedClient.contactPerson && (
-                          <span><User size={10} /> {selectedClient.contactPerson}</span>
-                        )}
-                        {selectedClient.phone && (
-                          <span><Phone size={10} /> {selectedClient.phone}</span>
-                        )}
-                        {selectedClient.address && (
-                          <span><MapPin size={10} /> {selectedClient.address}</span>
-                        )}
+                        {selectedClient.crn && (<span><Building2 size={10} /> CRN: {selectedClient.crn}</span>)}
+                        {selectedClient.contactPerson && (<span><User size={10} /> {selectedClient.contactPerson}</span>)}
+                        {selectedClient.phone && (<span><Phone size={10} /> {selectedClient.phone}</span>)}
+                        {selectedClient.address && (<span><MapPin size={10} /> {selectedClient.address}</span>)}
                       </div>
                     </div>
                   </div>
@@ -1286,65 +1388,44 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                 <div className="inv-form-row">
                   <div className="inv-form-group">
                     <label>Client Name <span className="inv-required">*</span></label>
-                    <input
-                      type="text"
-                      value={formData.clientName}
-                      required
-                      readOnly={!!formData.clientId}
+                    <input type="text" value={formData.clientName} required readOnly={!!formData.clientId}
                       onChange={e => setFormData({ ...formData, clientName: e.target.value })}
                       placeholder={formData.clientId ? 'Auto-filled from selected client' : 'Type client name'}
-                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`}
-                    />
+                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`} />
                   </div>
                   <div className="inv-form-group">
                     <label>Client Address</label>
-                    <input
-                      type="text"
-                      value={formData.clientAddress}
-                      readOnly={!!formData.clientId}
+                    <input type="text" value={formData.clientAddress} readOnly={!!formData.clientId}
                       onChange={e => setFormData({ ...formData, clientAddress: e.target.value })}
                       placeholder="Client address"
-                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`}
-                    />
+                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`} />
                   </div>
                 </div>
 
                 <div className="inv-form-row">
                   <div className="inv-form-group">
                     <label>Client CRN</label>
-                    <input
-                      type="text"
-                      value={formData.clientCrn}
-                      readOnly={!!formData.clientId}
+                    <input type="text" value={formData.clientCrn} readOnly={!!formData.clientId}
                       onChange={e => setFormData({ ...formData, clientCrn: e.target.value })}
                       placeholder="Commercial Registration #"
-                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`}
-                    />
+                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`} />
                   </div>
                   <div className="inv-form-group">
                     <label>Contact Person</label>
-                    <input
-                      type="text"
-                      value={formData.contactPerson}
-                      readOnly={!!formData.clientId}
+                    <input type="text" value={formData.contactPerson} readOnly={!!formData.clientId}
                       onChange={e => setFormData({ ...formData, contactPerson: e.target.value })}
                       placeholder="Contact person name"
-                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`}
-                    />
+                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`} />
                   </div>
                 </div>
 
                 <div className="inv-form-row">
                   <div className="inv-form-group">
                     <label>CPR No.</label>
-                    <input
-                      type="text"
-                      value={formData.cpr}
-                      readOnly={!!formData.clientId}
+                    <input type="text" value={formData.cpr} readOnly={!!formData.clientId}
                       onChange={e => setFormData({ ...formData, cpr: e.target.value })}
                       placeholder="CPR Number"
-                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`}
-                    />
+                      className={`inv-form-input ${formData.clientId ? 'inv-disabled' : ''}`} />
                   </div>
                   <div className="inv-form-group">
                     <label>Site</label>
@@ -1404,168 +1485,266 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                   </div>
                   <div className="inv-form-group">
                     <label>VAT Rate (%)</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={formData.vatRate}
+                    <input type="number" step="0.01" value={formData.vatRate}
                       disabled={formData.invoiceType !== 'vat'}
                       onChange={e => setFormData({ ...formData, vatRate: parseFloat(e.target.value) || 0 })}
-                      className={`inv-form-input ${formData.invoiceType !== 'vat' ? 'inv-disabled' : ''}`}
-                    />
+                      className={`inv-form-input ${formData.invoiceType !== 'vat' ? 'inv-disabled' : ''}`} />
                   </div>
                 </div>
 
                 <div className="inv-items-section">
-                  <div className="inv-section-title">
-                    <Receipt size={14} /> Invoice Items
+                  <div className="inv-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Receipt size={14} /> Invoice Items
+                    </span>
+                    {/* ⭐ Edit Mode Badge */}
+                    {isEditingItem && (
+                      <span className="inv-edit-badge">
+                        <Edit size={11} /> Editing item — click Update to save changes
+                      </span>
+                    )}
                   </div>
 
+                  <div className="inv-form-group" style={{ marginBottom: '10px' }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={itemForm.isHeader}
+                        onChange={(e) => {
+                          const isHeader = e.target.checked;
+                          setItemForm(prev => ({
+                            ...prev, isHeader,
+                            quantity: isHeader ? '0' : '1',
+                            unitPrice: isHeader ? '0' : '',
+                            unit: isHeader ? '' : (commonUnits[0]?.name || 'SQ.M'),
+                            itemType: isHeader ? 'Material' : prev.itemType
+                          }));
+                        }} />
+                      <span style={{ fontWeight: 600, color: '#1e293b' }}>Add as Section Header</span>
+                    </label>
+                  </div>
+
+                  {isManpowerMode && (
+                    <div className="inv-manpower-banner">
+                      <UsersIcon size={14} />
+                      <span>Manpower Mode — Total = Hours × Rate per Hour</span>
+                    </div>
+                  )}
+
                   <div className="inv-item-form-grid">
-                    {/* ⭐ ITEM PICKER */}
                     <div className="inv-form-group" style={{ position: 'relative' }}>
-                      <label><Package size={11} /> Item</label>
+                      <label><Package size={11} /> Item / Description</label>
                       <div className="inv-item-combobox">
-                        <input
-                          type="text"
-                          value={selectedItem ? selectedItem.name : itemForm.description}
+                        <input type="text" value={selectedItem ? selectedItem.name : itemForm.description}
                           onChange={e => {
                             setItemSearchTerm(e.target.value);
                             setShowItemPicker(true);
-                            setItemForm(prev => ({
-                              ...prev,
-                              itemId: '',
-                              description: e.target.value,
-                            }));
+                            setItemForm(prev => ({ ...prev, itemId: '', description: e.target.value }));
                           }}
-                          onFocus={() => setShowItemPicker(true)}
+                          onFocus={() => !itemForm.isHeader && setShowItemPicker(true)}
                           onBlur={() => setTimeout(() => setShowItemPicker(false), 150)}
-                          placeholder={
-                            itemsLoading
-                              ? 'Loading items…'
-                              : items.length === 0
-                                ? 'No items — type description'
-                                : 'Search item name or SKU…'
-                          }
-                          className="inv-form-input"
-                          disabled={itemsLoading}
-                        />
-                        {selectedItem && (
-                          <button
-                            type="button"
-                            className="inv-clear-item"
+                          placeholder={itemForm.isHeader ? "Enter section title" : itemsLoading ? 'Loading items…' : 'Search item name or SKU…'}
+                          className="inv-form-input" disabled={itemsLoading} />
+                        {selectedItem && !itemForm.isHeader && (
+                          <button type="button" className="inv-clear-item"
                             onClick={() => {
-                              setItemForm(prev => ({ ...prev, itemId: '', description: '' }));
+                              setItemForm(prev => ({ ...prev, itemId: '', description: '', itemType: 'Material', workers: '1', hours: '1' }));
                               setItemSearchTerm('');
-                            }}
-                            title="Clear item"
-                          >
+                            }} title="Clear item">
                             <X size={12} />
                           </button>
                         )}
                       </div>
 
-                      {showItemPicker && !itemsLoading && items.length > 0 && (
+                      {showItemPicker && !itemsLoading && items.length > 0 && !itemForm.isHeader && (
                         <div className="inv-item-picker">
                           <div className="inv-item-picker-header">
                             <Package size={12} /> {filteredItems.length} item{filteredItems.length !== 1 ? 's' : ''}
                             {itemSearchTerm && ` matching "${itemSearchTerm}"`}
                           </div>
                           {filteredItems.length === 0 ? (
-                            <div className="inv-item-picker-empty">
-                              No items match — you can type a custom description instead
-                            </div>
+                            <div className="inv-item-picker-empty">No items match</div>
                           ) : (
                             <div className="inv-item-picker-list">
-                              {filteredItems.map(it => (
-                                <button
-                                  key={it.id}
-                                  type="button"
-                                  className="inv-item-picker-row"
-                                  onMouseDown={(e) => {
-                                    e.preventDefault();
-                                    handleItemSelect(it.id);
-                                    setShowItemPicker(false);
-                                    setItemSearchTerm('');
-                                  }}
-                                >
-                                  <div className="inv-item-picker-info">
-                                    <div className="inv-item-picker-name">{it.name}</div>
-                                    <div className="inv-item-picker-meta">
-                                      {it.sku && <span className="inv-item-picker-sku">SKU: {it.sku}</span>}
-                                      {it.category && <span><Tag size={9} /> {it.category}</span>}
-                                      {it.unit && <span>Unit: {it.unit}</span>}
+                              {filteredItems.map(it => {
+                                const isManpower = it.itemType === 'Manpower';
+                                return (
+                                  <button key={it.id} type="button" className="inv-item-picker-row"
+                                    onMouseDown={(e) => {
+                                      e.preventDefault();
+                                      handleItemSelect(it.id);
+                                      setShowItemPicker(false);
+                                      setItemSearchTerm('');
+                                    }}>
+                                    <div className="inv-item-picker-info">
+                                      <div className="inv-item-picker-name">
+                                        {isManpower && <UsersIcon size={11} style={{ marginRight: 4, verticalAlign: 'middle', color: '#f59e0b' }} />}
+                                        {it.name}
+                                      </div>
+                                      <div className="inv-item-picker-meta">
+                                        {it.sku && <span className="inv-item-picker-sku">SKU: {it.sku}</span>}
+                                        {it.category && <span><Tag size={9} /> {it.category}</span>}
+                                        {isManpower && (<span style={{ color: '#f59e0b', fontWeight: 600 }}><Clock size={9} /> Manpower</span>)}
+                                        {it.unit && <span>Unit: {it.unit}</span>}
+                                      </div>
                                     </div>
-                                  </div>
-                                  <div className="inv-item-picker-price">
-                                    {Utils.formatCurrency(it.unitPrice || it.price || 0)}
-                                  </div>
-                                </button>
-                              ))}
+                                    <div className="inv-item-picker-price">
+                                      {Utils.formatCurrency(it.unitPrice || it.price || 0)}
+                                      {isManpower && <span style={{ fontSize: '10px', color: '#94a3b8' }}>/hr</span>}
+                                    </div>
+                                  </button>
+                                );
+                              })}
                             </div>
                           )}
                         </div>
                       )}
                     </div>
 
-                    <div className="inv-form-group">
-                      <label>Qty</label>
-                      <input type="number" step="0.01" value={itemForm.quantity}
-                        onChange={e => setItemForm({ ...itemForm, quantity: e.target.value })}
-                        placeholder="Qty" className="inv-form-input" />
-                    </div>
-                    <div className="inv-form-group">
-                      <label>Unit</label>
-                      <select value={itemForm.unit}
-                        onChange={e => setItemForm({ ...itemForm, unit: e.target.value })}
-                        className="inv-form-select">
-                        {commonUnits.map(u => (
-                          <option key={u.id || u.name} value={u.name}>
-                            {u.name}{u.symbol ? ` (${u.symbol})` : ''}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="inv-form-group">
-                      <label>Unit Price</label>
-                      <input type="number" step="0.001" value={itemForm.unitPrice}
-                        onChange={e => setItemForm({ ...itemForm, unitPrice: e.target.value })}
-                        placeholder="Price" className="inv-form-input" />
-                    </div>
-                    <button type="button" className="inv-btn-add-item" onClick={handleItemAdd}>
-                      <Plus size={14} /> Add
+                    {isManpowerMode ? (
+                      <>
+                        <div className="inv-form-group">
+                          <label><UsersIcon size={11} /> Workers</label>
+                          <input type="number" min="1" step="1" value={itemForm.workers}
+                            onChange={e => setItemForm({ ...itemForm, workers: e.target.value })}
+                            className="inv-form-input" placeholder="1" />
+                        </div>
+                        <div className="inv-form-group">
+                          <label><Clock size={11} /> Total Hours</label>
+                          <input type="number" min="0.5" step="0.5" value={itemForm.hours}
+                            onChange={e => setItemForm({ ...itemForm, hours: e.target.value })}
+                            className="inv-form-input" placeholder="8" />
+                        </div>
+                        <div className="inv-form-group">
+                          <label>Rate / Hour</label>
+                          <input type="number" step="0.001" value={itemForm.unitPrice}
+                            onChange={e => setItemForm({ ...itemForm, unitPrice: e.target.value })}
+                            className="inv-form-input" placeholder="0.000" />
+                        </div>
+                      </>
+                    ) : !itemForm.isHeader ? (
+                      <>
+                        <div className="inv-form-group">
+                          <label>Qty</label>
+                          <input type="number" step="0.01" value={itemForm.quantity}
+                            onChange={e => setItemForm({ ...itemForm, quantity: e.target.value })}
+                            placeholder="Qty" className="inv-form-input" />
+                        </div>
+                        <div className="inv-form-group">
+                          <label>Unit</label>
+                          <select value={itemForm.unit}
+                            onChange={e => setItemForm({ ...itemForm, unit: e.target.value })}
+                            className="inv-form-select">
+                            {commonUnits.map(u => (
+                              <option key={u.id || u.name} value={u.name}>
+                                {u.name}{u.symbol ? ` (${u.symbol})` : ''}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="inv-form-group">
+                          <label>Unit Price</label>
+                          <input type="number" step="0.001" value={itemForm.unitPrice}
+                            onChange={e => setItemForm({ ...itemForm, unitPrice: e.target.value })}
+                            placeholder="Price" className="inv-form-input" />
+                        </div>
+                      </>
+                    ) : null}
+
+                    {/* ⭐ Add / Update buttons + Cancel edit */}
+                    <button
+                      type="button"
+                      className={`inv-btn-add-item ${isEditingItem ? 'is-update' : ''}`}
+                      onClick={handleItemAdd}
+                    >
+                      {isEditingItem ? <><Save size={14} /> Update</> : <><Plus size={14} /> Add</>}
                     </button>
+                    {isEditingItem && (
+                      <button
+                        type="button"
+                        className="inv-btn-cancel-edit"
+                        onClick={resetItemForm}
+                        title="Cancel editing"
+                      >
+                        <X size={14} /> Cancel
+                      </button>
+                    )}
                   </div>
 
-                  {/* ⭐ Selected item preview */}
-                  {selectedItem && (
+                  {isManpowerMode && itemForm.hours && itemForm.unitPrice && (
+                    <div className="inv-manpower-preview">
+                      <Info size={12} />
+                      <span>
+                        {itemForm.workers} worker{parseFloat(itemForm.workers) > 1 ? 's' : ''} · {itemForm.hours} total hr{parseFloat(itemForm.hours) > 1 ? 's' : ''} × {Utils.formatCurrency(parseFloat(itemForm.unitPrice))}/hr =
+                        <strong> {Utils.formatCurrency(parseFloat(itemForm.hours) * parseFloat(itemForm.unitPrice))}</strong>
+                      </span>
+                    </div>
+                  )}
+
+                  {selectedItem && !itemForm.isHeader && (
                     <div className="inv-item-preview">
-                      <Package size={12} />
+                      {itemForm.itemType === 'Manpower' ? <UsersIcon size={12} /> : <Package size={12} />}
                       <span className="inv-item-preview-name">{selectedItem.name}</span>
-                      {selectedItem.sku && (
-                        <span className="inv-item-preview-sku">SKU: {selectedItem.sku}</span>
-                      )}
-                      {selectedItem.category && (
-                        <span className="inv-item-preview-cat">{selectedItem.category}</span>
+                      {selectedItem.sku && <span className="inv-item-preview-sku">SKU: {selectedItem.sku}</span>}
+                      {selectedItem.category && <span className="inv-item-preview-cat">{selectedItem.category}</span>}
+                      {itemForm.itemType === 'Manpower' && (
+                        <span className="inv-item-preview-cat" style={{ color: '#f59e0b', fontWeight: 600 }}>
+                          Manpower · Hourly
+                        </span>
                       )}
                     </div>
                   )}
 
                   <div className="inv-items-list">
-                    {formData.items.map(item => (
-                      <div key={item.id} className="inv-item-row">
-                        <span className="inv-item-desc">
-                          {item.itemId && <Package size={10} style={{ marginRight: 4, verticalAlign: 'middle', opacity: 0.5 }} />}
-                          {item.description}
-                        </span>
-                        <span className="inv-item-qty">{item.quantity} × {item.unit}</span>
-                        <span className="inv-item-price">{Utils.formatCurrencyShort(item.unitPrice)}</span>
-                        <span className="inv-item-total">{Utils.formatCurrency(item.total)}</span>
-                        <button type="button" className="inv-btn-remove"
-                          onClick={() => handleItemRemove(item.id)}>
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ))}
+                    {formData.items.map((item, index) => {
+                      const isBeingEdited = editingItemId === item.id;
+                      return (
+                        <div
+                          key={item.id}
+                          className={`inv-item-row ${item.isHeader ? 'is-header' : ''} ${item.itemType === 'Manpower' ? 'is-manpower' : ''} ${isBeingEdited ? 'is-editing' : ''}`}
+                          onClick={(e) => {
+                            // Click row to load into form (unless clicking a button)
+                            if (e.target.closest('button')) return;
+                            handleItemClick(item);
+                          }}
+                          title="Click to edit this item"
+                        >
+                          <div className="inv-item-reorder">
+                            <button type="button" className="inv-icon-btn-sm" onClick={(e) => { e.stopPropagation(); moveItem(index, 'up'); }} disabled={index === 0} title="Move Up">
+                              <ChevronUp size={12} />
+                            </button>
+                            <button type="button" className="inv-icon-btn-sm" onClick={(e) => { e.stopPropagation(); moveItem(index, 'down'); }} disabled={index === formData.items.length - 1} title="Move Down">
+                              <ChevronDown size={12} />
+                            </button>
+                          </div>
+
+                          <span className="inv-item-desc">
+                            {item.isHeader ? <Heading size={12} style={{ marginRight: 6, verticalAlign: 'middle' }} /> :
+                             item.itemType === 'Manpower' ? <UsersIcon size={12} style={{ marginRight: 6, verticalAlign: 'middle', color: '#f59e0b' }} /> :
+                             item.itemId ? <Package size={10} style={{ marginRight: 4, verticalAlign: 'middle', opacity: 0.5 }} /> : null}
+                            {item.description}
+                            {item.itemType === 'Manpower' && item.manpowerDetails && (
+                              <span style={{ fontSize: '11px', color: '#64748b', marginLeft: '8px' }}>
+                                ({item.manpowerDetails.workers}w · {item.manpowerDetails.hours}h total)
+                              </span>
+                            )}
+                            {isBeingEdited && (
+                              <span className="inv-item-editing-tag">
+                                <Edit size={10} /> editing
+                              </span>
+                            )}
+                          </span>
+                          {!item.isHeader && (
+                            <>
+                              <span className="inv-item-qty">{item.quantity} × {item.unit}</span>
+                              <span className="inv-item-price">{Utils.formatCurrencyShort(item.unitPrice)}</span>
+                              <span className="inv-item-total">{Utils.formatCurrency(item.total)}</span>
+                            </>
+                          )}
+                          <button type="button" className="inv-btn-remove" onClick={(e) => { e.stopPropagation(); handleItemRemove(item.id); }}>
+                            <X size={12} />
+                          </button>
+                        </div>
+                      );
+                    })}
                     {formData.items.length === 0 && (
                       <div className="inv-empty-items">No items added yet</div>
                     )}
@@ -1587,17 +1766,14 @@ const InvoicesManagerComponent = ({ data, addInvoice, updateInvoice, deleteInvoi
                     <span>Total:</span>
                     <span>{Utils.formatCurrency(calculateTotals.total)}</span>
                   </div>
-                  <div className="inv-amount-words">
-                    {Utils.convertAmountToWords(calculateTotals.total)}
-                  </div>
+                  <div className="inv-amount-words">{Utils.convertAmountToWords(calculateTotals.total)}</div>
                 </div>
 
                 <div className="inv-form-group">
                   <label>Notes</label>
                   <textarea value={formData.notes}
                     onChange={e => setFormData({ ...formData, notes: e.target.value })}
-                    placeholder="Invoice notes (will appear on invoice)"
-                    rows="2" className="inv-form-textarea" />
+                    placeholder="Invoice notes" rows="2" className="inv-form-textarea" />
                 </div>
 
                 <div className="inv-form-actions">

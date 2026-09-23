@@ -1,16 +1,16 @@
 // src/components/ItemManager.jsx
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Edit, Trash2, Package, Plus, Save, X, Search, RefreshCw,
-   Tag, Box, Layers, Award, Star, TrendingUp, TrendingDown,
+  Tag, Box, Layers, Award, Star, TrendingUp, TrendingDown,
   AlertCircle, CheckCircle, User, Calendar, Building2, Settings,
   Zap, Shield, Crown, Sparkles, Briefcase, Timer, Activity, Gauge,
   ArrowUpRight, ArrowDownRight, Info, ChevronLeft, ChevronRight,
   ChevronsLeft, ChevronsRight, Filter, Clock, FileText, Wallet,
   CreditCard, Banknote, Percent, HardHat, Boxes, FolderKanban,
   BarChart3, PieChart as PieChartIcon, LineChart as LineChartIcon,
-  LayoutDashboard, Flame, Target, Minus, Crown as CrownIcon
+  LayoutDashboard, Flame, Target, Minus, Crown as CrownIcon, Users
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
@@ -55,20 +55,23 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
   const [editingId, setEditingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
+  const [itemTypeFilter, setItemTypeFilter] = useState('all');
   const [showForm, setShowForm] = useState(false);
   const [hoveredCard, setHoveredCard] = useState(null);
   const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(null);
-  const [viewMode, setViewMode] = useState('overview'); // overview | items
+  const [viewMode, setViewMode] = useState('overview');
   const [mounted, setMounted] = useState(false);
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
+  // ⭐ Form data with itemType
   const [formData, setFormData] = useState({
     name: '', category: 'Materials', unit: 'pcs', unitPrice: '',
-    description: '', sku: '', taxRate: '0', isTaxable: false
+    description: '', sku: '', taxRate: '0', isTaxable: false,
+    itemType: 'Material'
   });
 
   const categories = [
@@ -78,6 +81,14 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
   ];
 
   const units = ['SQ.M', 'SQ.FT', 'PCS', 'KG', 'TON', 'M3', 'M2', 'FT2', 'LITERS', 'HOURS', 'DAYS', 'BOX', 'ROLL'];
+
+  // ⭐ Item Types
+  const itemTypes = [
+    { value: 'Material',  label: 'Material',  icon: Package,   color: '#3b82f6' },
+    { value: 'Manpower',  label: 'Manpower',  icon: Users,     color: '#f59e0b' },
+    { value: 'Equipment', label: 'Equipment', icon: HardHat,   color: '#8b5cf6' },
+    { value: 'Service',   label: 'Service',   icon: Briefcase, color: '#10b981' }
+  ];
 
   useEffect(() => {
     const id = requestAnimationFrame(() => setMounted(true));
@@ -96,7 +107,10 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
   const maxPrice = totalItems > 0 ? Math.max(...items.map(i => i.unitPrice || 0)) : 0;
   const minPrice = totalItems > 0 ? Math.min(...items.map(i => i.unitPrice || 0)) : 0;
 
-  // Most popular category
+  // ⭐ Manpower stats
+  const manpowerItems = items.filter(i => i.itemType === 'Manpower').length;
+  const materialItems = items.filter(i => !i.itemType || i.itemType === 'Material').length;
+
   const mostPopularCategory = useMemo(() => {
     const map = {};
     items.forEach(i => { map[i.category] = (map[i.category] || 0) + 1; });
@@ -120,8 +134,11 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
       );
     }
     if (categoryFilter !== 'all') filtered = filtered.filter(i => i.category === categoryFilter);
+    if (itemTypeFilter !== 'all') {
+      filtered = filtered.filter(i => (i.itemType || 'Material') === itemTypeFilter);
+    }
     return filtered;
-  }, [items, searchTerm, categoryFilter]);
+  }, [items, searchTerm, categoryFilter, itemTypeFilter]);
 
   // ============================================
   // PAGINATION
@@ -132,7 +149,7 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
     return filteredItems.slice(start, start + itemsPerPage);
   }, [filteredItems, currentPage, itemsPerPage]);
 
-  useEffect(() => { setCurrentPage(1); }, [searchTerm, categoryFilter, itemsPerPage, viewMode]);
+  useEffect(() => { setCurrentPage(1); }, [searchTerm, categoryFilter, itemTypeFilter, itemsPerPage, viewMode]);
   useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
 
   const goToPage = (p) => setCurrentPage(Math.max(1, Math.min(p, totalPages)));
@@ -158,6 +175,26 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
       .slice(0, 8);
   }, [items]);
 
+  const itemTypeChartData = useMemo(() => {
+    const map = {};
+    items.forEach(i => {
+      const type = i.itemType || 'Material';
+      map[type] = (map[type] || 0) + 1;
+    });
+    const typeConfig = {
+      'Material': { color: '#3b82f6' },
+      'Manpower': { color: '#f59e0b' },
+      'Equipment': { color: '#8b5cf6' },
+      'Service': { color: '#10b981' }
+    };
+    return Object.entries(map)
+      .map(([name, value]) => ({
+        name, value,
+        color: typeConfig[name]?.color || '#94a3b8'
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [items]);
+
   const categoryValueData = useMemo(() => {
     const map = {};
     items.forEach(i => { map[i.category] = (map[i.category] || 0) + (i.unitPrice || 0); });
@@ -165,8 +202,7 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
     return Object.entries(map)
       .map(([name, value], i) => ({
         name: name.length > 12 ? name.slice(0, 12) + '…' : name,
-        fullName: name,
-        value,
+        fullName: name, value,
         color: palette[i % palette.length]
       }))
       .sort((a, b) => b.value - a.value)
@@ -203,10 +239,10 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
       value: Utils.formatCurrencyShort(totalValue),
       meta: `Avg ${Utils.formatCurrencyShort(avgPrice)}`,
       color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
-    { id: 'taxable', icon: Percent, label: 'Taxable Items', value: taxableItems,
-      meta: `${totalItems > 0 ? ((taxableItems / totalItems) * 100).toFixed(0) : 0}% of items`,
-      color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)',
-      trend: taxableItems > 0 ? 'up' : 'flat' }
+    { id: 'manpower', icon: Users, label: 'Manpower Items', value: manpowerItems,
+      meta: `${materialItems} materials`,
+      color: '#f59e0b', accent: 'linear-gradient(90deg,#f59e0b,#fbbf24)', 
+      trend: manpowerItems > 0 ? 'up' : 'flat' }
   ];
 
   const cardDetails = {
@@ -228,11 +264,11 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
       { label: 'Highest', value: Utils.formatCurrency(maxPrice) },
       { label: 'Lowest', value: Utils.formatCurrency(minPrice) }
     ]},
-    taxable: { title: 'Taxable Items', details: [
-      { label: 'Taxable', value: taxableItems },
-      { label: 'Non-Taxable', value: totalItems - taxableItems },
-      { label: 'Total', value: totalItems },
-      { label: 'Rate', value: `${totalItems > 0 ? ((taxableItems / totalItems) * 100).toFixed(1) : 0}%` }
+    manpower: { title: 'Item Types', details: [
+      { label: 'Manpower', value: manpowerItems },
+      { label: 'Materials', value: materialItems },
+      { label: 'Equipment', value: items.filter(i => i.itemType === 'Equipment').length },
+      { label: 'Services', value: items.filter(i => i.itemType === 'Service').length }
     ]}
   };
 
@@ -251,12 +287,17 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
       alert('Item name is required');
       return;
     }
+    // ⭐ Force HOURS unit for Manpower items
+    const unit = formData.itemType === 'Manpower' ? 'HOURS' : formData.unit;
+
     const item = {
       id: editingId || Date.now().toString(),
       ...formData,
+      unit,                                          // ⭐ Save forced unit
       unitPrice: parseFloat(formData.unitPrice) || 0,
       taxRate: parseFloat(formData.taxRate) || 0,
       isTaxable: formData.isTaxable,
+      itemType: formData.itemType || 'Material',
       createdAt: new Date().toISOString()
     };
     if (editingId) {
@@ -272,7 +313,8 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
   const resetForm = () => {
     setFormData({
       name: '', category: 'Materials', unit: 'pcs', unitPrice: '',
-      description: '', sku: '', taxRate: '0', isTaxable: false
+      description: '', sku: '', taxRate: '0', isTaxable: false,
+      itemType: 'Material'
     });
     setEditingId(null);
   };
@@ -287,7 +329,8 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
       description: item.description || '',
       sku: item.sku || '',
       taxRate: item.taxRate?.toString() || '0',
-      isTaxable: item.isTaxable || false
+      isTaxable: item.isTaxable || false,
+      itemType: item.itemType || 'Material'
     });
     setShowForm(true);
   };
@@ -295,6 +338,10 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
   const handleDelete = (id) => {
     deleteItem(id);
     setShowDeleteConfirm(null);
+  };
+
+  const getItemTypeConfig = (type) => {
+    return itemTypes.find(t => t.value === type) || itemTypes[0];
   };
 
   // ============================================
@@ -344,7 +391,6 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
         </div>
       )}
 
-      {/* Row 1 — category distribution donut + taxable donut */}
       <div className="im-grid-1-1">
         <div className="im-card">
           <div className="im-card-header">
@@ -386,27 +432,27 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
           <div className="im-card-header">
             <div className="im-card-title">
               <span className="im-card-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
-                <Percent size={16} />
+                <Layers size={16} />
               </span>
               <div>
-                <h4>Taxability</h4>
-                <span>Taxable vs non-taxable</span>
+                <h4>Items by Type</h4>
+                <span>Material vs Manpower vs Others</span>
               </div>
             </div>
           </div>
-          {taxableChartData.length > 0 ? (
+          {itemTypeChartData.length > 0 ? (
             <div className="im-donut-wrap">
               <ResponsiveContainer width="100%" height={200}>
                 <PieChart>
-                  <Pie data={taxableChartData} dataKey="value" nameKey="name"
+                  <Pie data={itemTypeChartData} dataKey="value" nameKey="name"
                     cx="50%" cy="50%" innerRadius={52} outerRadius={85} paddingAngle={3} stroke="none">
-                    {taxableChartData.map((d, i) => <Cell key={i} fill={d.color} />)}
+                    {itemTypeChartData.map((d, i) => <Cell key={i} fill={d.color} />)}
                   </Pie>
                   <ReTooltip content={<ChartTooltip />} />
                 </PieChart>
               </ResponsiveContainer>
               <div className="im-donut-legend">
-                {taxableChartData.map((d, i) => (
+                {itemTypeChartData.map((d, i) => (
                   <div key={i} className="im-donut-item">
                     <span className="im-donut-dot" style={{ background: d.color }} />
                     <span className="im-donut-name">{d.name}</span>
@@ -419,7 +465,6 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
         </div>
       </div>
 
-      {/* Row 2 — Top items bar chart */}
       <div className="im-card">
         <div className="im-card-header">
           <div className="im-card-title">
@@ -454,7 +499,6 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
         ) : <div className="im-empty-mini">No items</div>}
       </div>
 
-      {/* Row 3 — Category value */}
       <div className="im-card">
         <div className="im-card-header">
           <div className="im-card-title">
@@ -491,7 +535,6 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
   // ============================================
   const renderItemsTab = () => (
     <div className="im-view">
-      {/* Filters */}
       <div className="im-filters">
         <div className="im-search">
           <Search size={15} className="im-search-icon" />
@@ -508,6 +551,10 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
             <option value="all">All Categories</option>
             {categories.map(c => <option key={c} value={c}>{c}</option>)}
           </select>
+          <select value={itemTypeFilter} onChange={(e) => setItemTypeFilter(e.target.value)} className="im-select">
+            <option value="all">All Types</option>
+            {itemTypes.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
+          </select>
         </div>
         <span className="im-result-count">
           Showing {filteredItems.length} of {items.length}
@@ -521,7 +568,7 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
         <div className="im-empty">
           <div className="im-empty-icon"><Package size={40} /></div>
           <h3>No Items Found</h3>
-          <p>{searchTerm || categoryFilter !== 'all' ? 'Try adjusting your filters.' : 'Add your first item to get started.'}</p>
+          <p>{searchTerm || categoryFilter !== 'all' || itemTypeFilter !== 'all' ? 'Try adjusting your filters.' : 'Add your first item to get started.'}</p>
           <button className="im-btn im-btn-primary" onClick={() => { resetForm(); setShowForm(true); }}>
             <Plus size={14} /> Add Item
           </button>
@@ -529,48 +576,56 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
       ) : (
         <>
           <div className="im-items-grid">
-            {paginatedItems.map((item, index) => (
-              <div key={item.id} className="im-item-card" style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}>
-                <div className="im-item-card-accent" />
-                <div className="im-item-header">
-                  <div className="im-item-icon-wrapper">
-                    <Package size={18} />
-                  </div>
-                  <div className="im-item-info">
-                    <div className="im-item-name">{item.name}</div>
-                    <div className="im-item-meta">
-                      <span className="im-item-category">{item.category}</span>
-                      {item.sku && <span className="im-item-sku">SKU: {item.sku}</span>}
-                      <span className="im-item-unit">{item.unit}</span>
+            {paginatedItems.map((item, index) => {
+              const typeConfig = getItemTypeConfig(item.itemType);
+              const TypeIcon = typeConfig.icon;
+              
+              return (
+                <div key={item.id} className="im-item-card" style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}>
+                  <div className="im-item-card-accent" style={{ background: typeConfig.color }} />
+                  <div className="im-item-header">
+                    <div className="im-item-icon-wrapper" style={{ background: `${typeConfig.color}1f`, color: typeConfig.color }}>
+                      <TypeIcon size={18} />
+                    </div>
+                    <div className="im-item-info">
+                      <div className="im-item-name">{item.name}</div>
+                      <div className="im-item-meta">
+                        <span className="im-item-type-badge" style={{ background: `${typeConfig.color}1f`, color: typeConfig.color }}>
+                          {typeConfig.label}
+                        </span>
+                        <span className="im-item-category">{item.category}</span>
+                        {item.sku && <span className="im-item-sku">SKU: {item.sku}</span>}
+                        <span className="im-item-unit">{item.unit}</span>
+                      </div>
+                    </div>
+                    <div className="im-item-price">
+                      <span className="im-price-value">{Utils.formatCurrency(item.unitPrice)}</span>
+                      {item.itemType === 'Manpower' && <span className="im-rate-unit">/hr</span>}
+                      {item.isTaxable && <span className="im-tax-badge">+ VAT</span>}
                     </div>
                   </div>
-                  <div className="im-item-price">
-                    <span className="im-price-value">{Utils.formatCurrency(item.unitPrice)}</span>
-                    {item.isTaxable && <span className="im-tax-badge">+ VAT</span>}
+
+                  {item.description && (
+                    <div className="im-item-description">
+                      <FileText size={12} /> {item.description}
+                    </div>
+                  )}
+
+                  <div className="im-item-footer">
+                    <div className="im-item-actions">
+                      <button className="im-icon-btn im-icon-edit" onClick={() => handleEdit(item)}>
+                        <Edit size={13} />
+                      </button>
+                      <button className="im-icon-btn im-icon-danger" onClick={() => setShowDeleteConfirm(item.id)}>
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
                 </div>
-
-                {item.description && (
-                  <div className="im-item-description">
-                    <FileText size={12} /> {item.description}
-                  </div>
-                )}
-
-                <div className="im-item-footer">
-                  <div className="im-item-actions">
-                    <button className="im-icon-btn im-icon-edit" onClick={() => handleEdit(item)}>
-                      <Edit size={13} />
-                    </button>
-                    <button className="im-icon-btn im-icon-danger" onClick={() => setShowDeleteConfirm(item.id)}>
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
-          {/* Pagination */}
           <div className="im-pagination">
             <div className="im-pagination-info">
               Showing <strong>{((currentPage - 1) * itemsPerPage) + 1}</strong>–
@@ -634,12 +689,49 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
           </div>
           <div className="im-modal-body">
             <form onSubmit={handleSubmit}>
+              {/* ⭐ Item Type Selector */}
+              <div className="im-form-group" style={{ marginBottom: '16px' }}>
+                <label style={{ marginBottom: '8px', display: 'block' }}>Item Type <span className="im-required">*</span></label>
+                <div className="im-type-selector">
+                  {itemTypes.map(t => {
+                    const Icon = t.icon;
+                    const isSelected = formData.itemType === t.value;
+                    return (
+                      <button
+                        key={t.value}
+                        type="button"
+                        className={`im-type-btn ${isSelected ? 'active' : ''}`}
+                        onClick={() => {
+                          // ⭐ Force HOURS when Manpower is selected
+                          const newUnit = t.value === 'Manpower' ? 'HOURS' : formData.unit;
+                          setFormData({ ...formData, itemType: t.value, unit: newUnit });
+                        }}
+                        style={{
+                          borderColor: isSelected ? t.color : '#e2e8f0',
+                          background: isSelected ? `${t.color}15` : 'white',
+                          color: isSelected ? t.color : '#64748b'
+                        }}
+                      >
+                        <Icon size={16} />
+                        <span>{t.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {formData.itemType === 'Manpower' && (
+                  <small className="im-hint" style={{ color: '#f59e0b', marginTop: '6px', display: 'block' }}>
+                    <Clock size={10} /> Manpower items are billed per worker per hour in invoices. Unit is fixed to HOURS.
+                  </small>
+                )}
+              </div>
+
               <div className="im-form-row">
                 <div className="im-form-group">
                   <label>Item Name <span className="im-required">*</span></label>
                   <input type="text" value={formData.name} required autoFocus
                     onChange={e => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="Enter item name" className="im-form-input" />
+                    placeholder={formData.itemType === 'Manpower' ? 'e.g., Mason, Helper, Carpenter' : 'Enter item name'} 
+                    className="im-form-input" />
                 </div>
                 <div className="im-form-group">
                   <label>Category</label>
@@ -656,21 +748,37 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
                   <label>SKU</label>
                   <input type="text" value={formData.sku}
                     onChange={e => setFormData({ ...formData, sku: e.target.value })}
-                    placeholder="e.g., MAT-001" className="im-form-input" />
+                    placeholder={formData.itemType === 'Manpower' ? 'e.g., MAN-001' : 'e.g., MAT-001'} 
+                    className="im-form-input" />
                 </div>
                 <div className="im-form-group">
                   <label>Unit</label>
-                  <select value={formData.unit}
-                    onChange={e => setFormData({ ...formData, unit: e.target.value })}
-                    className="im-form-select">
-                    {units.map(u => <option key={u} value={u}>{u}</option>)}
-                  </select>
+                  {formData.itemType === 'Manpower' ? (
+                    // ⭐ Locked to HOURS for Manpower
+                    <input type="text" value="HOURS" disabled
+                      className="im-form-input inv-disabled"
+                      style={{ background: '#fef3c7', color: '#b45309', fontWeight: 600 }} />
+                  ) : (
+                    <select value={formData.unit}
+                      onChange={e => setFormData({ ...formData, unit: e.target.value })}
+                      className="im-form-select">
+                      {units.map(u => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  )}
+                  {formData.itemType === 'Manpower' && (
+                    <small className="im-hint" style={{ color: '#f59e0b' }}>
+                      <Info size={10} /> Unit is fixed to HOURS for manpower items
+                    </small>
+                  )}
                 </div>
               </div>
 
               <div className="im-form-row">
                 <div className="im-form-group">
-                  <label>Unit Price (BD) <span className="im-required">*</span></label>
+                  <label>
+                    {formData.itemType === 'Manpower' ? 'Rate per Hour (BD)' : 'Unit Price (BD)'}{' '}
+                    <span className="im-required">*</span>
+                  </label>
                   <input type="number" step="0.001" value={formData.unitPrice} required
                     onChange={e => setFormData({ ...formData, unitPrice: e.target.value })}
                     placeholder="0.000" className="im-form-input" />
@@ -769,7 +877,6 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
         <div className="im-orb im-orb-3" />
       </div>
 
-      {/* Header */}
       <div className="im-header">
         <div className="im-header-left">
           <div className="im-header-icon">
@@ -793,7 +900,6 @@ const ItemManagerComponent = ({ data, addItem, updateItem, deleteItem }) => {
         </div>
       </div>
 
-      {/* Tabs */}
       <div className="im-tabs">
         {[
           { id: 'overview', label: 'Overview', icon: BarChart3 },

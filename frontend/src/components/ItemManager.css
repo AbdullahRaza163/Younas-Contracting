@@ -1015,3 +1015,70 @@
   .im-item-info { grid-area: info; }
   .im-item-price { grid-area: price; align-items: flex-start; }
 }
+/* ⭐ Item Type Selector in Form */
+.im-type-selector {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.im-type-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 8px;
+  border: 2px solid #e2e8f0;
+  border-radius: 10px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.im-type-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+.im-type-btn.active {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  border-width: 2px;
+}
+
+/* ⭐ Item Type Badge on Cards */
+.im-item-type-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+/* ⭐ Per Hour Rate Indicator */
+.im-rate-unit {
+  font-size: 10px;
+  color: #94a3b8;
+  font-weight: 600;
+  margin-left: 2px;
+}
+
+.im-hint {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  margin-top: 4px;
+}
+
+/* Responsive: Stack type selector on small screens */
+@media (max-width: 600px) {
+  .im-type-selector {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

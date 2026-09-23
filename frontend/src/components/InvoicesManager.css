@@ -1421,3 +1421,179 @@
   font-size: 10px;
   font-weight: 600;
 }
+/* Add to InvoicesManager.css */
+.inv-item-reorder {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-right: 8px;
+}
+
+.inv-icon-btn-sm {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.inv-icon-btn-sm:hover:not(:disabled) {
+  background: #e2e8f0;
+  color: #1e293b;
+}
+
+.inv-icon-btn-sm:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Adjust existing row to accommodate buttons */
+.inv-item-row {
+  display: flex;
+  align-items: center;
+  /* ... your existing styles ... */
+}
+/* ⭐ Manpower row styling in items list */
+.inv-item-row.is-manpower {
+  background: rgba(245, 158, 11, 0.04);
+  border-left: 3px solid #f59e0b;
+}
+
+/* ⭐ Manpower badge in item preview */
+.inv-item-preview-cat[style*="#f59e0b"] {
+  background: rgba(245, 158, 11, 0.12);
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-size: 10px;
+}
+/* ⭐ Manpower Mode Banner */
+.inv-manpower-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.12), rgba(245, 158, 11, 0.04));
+  border-left: 4px solid #f59e0b;
+  border-radius: 8px;
+  color: #b45309;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+
+/* ⭐ Manpower Live Preview */
+.inv-manpower-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  color: #166534;
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.inv-manpower-preview strong {
+  color: #15803d;
+  font-weight: 700;
+}
+
+/* ⭐ Manpower row in items list */
+.inv-item-row.is-manpower {
+  background: rgba(245, 158, 11, 0.06);
+  border-left: 3px solid #f59e0b;
+  border-radius: 6px;
+}
+/* ⭐ Clickable row — cursor + hover effect */
+.inv-item-row {
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.inv-item-row:hover {
+  background: rgba(16, 185, 129, 0.05);
+  transform: translateX(2px);
+}
+
+/* ⭐ Highlight the row currently being edited */
+.inv-item-row.is-editing {
+  background: rgba(16, 185, 129, 0.12);
+  border-left: 4px solid #10b981;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.15);
+}
+
+/* ⭐ Small "editing" tag inside the row */
+.inv-item-editing-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #10b981;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  animation: inv-edit-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes inv-edit-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+/* ⭐ Edit badge in section title */
+.inv-edit-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, #10b981, #059669);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  animation: inv-edit-pulse 1.5s ease-in-out infinite;
+}
+
+/* ⭐ Update button variant (when editing) */
+.inv-btn-add-item.is-update {
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.inv-btn-add-item.is-update:hover {
+  background: linear-gradient(135deg, #059669, #047857);
+}
+
+/* ⭐ Cancel edit button */
+.inv-btn-cancel-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1.5px solid #ef4444;
+  color: #ef4444;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.inv-btn-cancel-edit:hover {
+  background: #ef4444;
+  color: #fff;
+}

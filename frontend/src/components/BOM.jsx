@@ -5,14 +5,16 @@ import {
   Package, ClipboardList, TrendingUp as TrendingUpIcon, Edit, Trash2,
   PlusCircle, Save, X, Plus, Search, RefreshCw, CheckCircle, AlertCircle,
   Banknote, Layers, BarChart3, PieChart as PieChartIcon,
-  Building2, Calendar, Sparkles, Minus,
+  Building2, Calendar, Sparkles, Minus, Users, Clock, Flame,
   ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
   LayoutDashboard, TrendingDown, Info, Loader2, AlertTriangle,
-  Lightbulb
+  Target, Calculator, ArrowUpRight, ArrowDownRight, Percent,
+  Coffee, MapPin, Zap, FileText, GitBranch
 } from 'lucide-react';
 import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip as ReTooltip,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, LineChart, Line,
+  ComposedChart, Area, Legend
 } from 'recharts';
 import Utils from '../utils/Utils';
 import './BOM.css';
@@ -40,7 +42,7 @@ const ChartTooltip = ({ active, payload, label, formatter }) => {
           <span className="bom-chart-tooltip-dot" style={{ background: p.color || p.fill || p.payload?.color }} />
           <span className="bom-chart-tooltip-name">{p.name}</span>
           <span className="bom-chart-tooltip-val">
-            {formatter ? formatter(p.value, p.name) : p.value}
+            {formatter ? formatter(p.value, p.name) : Utils.formatCurrency(p.value)}
           </span>
         </div>
       ))}
@@ -59,40 +61,199 @@ const DEFAULT_CATEGORIES = [
 
 const FALLBACK_UNITS = ['kg', 'ton', 'm3', 'm2', 'liters', 'pieces', 'rolls', 'sheets', 'bags', 'boxes'];
 
-const MATERIAL_RATES = {
-  residential: { cement: 0.15, steel: 0.08, sand: 0.12, gravel: 0.10, wood: 0.05, bricks: 50 },
-  commercial:  { cement: 0.20, steel: 0.12, sand: 0.15, gravel: 0.12, wood: 0.03, bricks: 40 },
-  industrial:  { cement: 0.25, steel: 0.18, sand: 0.10, gravel: 0.15, wood: 0.02, bricks: 30 },
+// ⭐ Benchmarking baselines — the industry-standard ranges we compare against.
+// These are only used when we don't have enough historical data yet.
+const BENCHMARKS = {
+  residential: {
+    cementPerM2: 0.18,   // tons/m²
+    steelPerM2: 0.10,
+    sandPerM2: 0.14,
+    gravelPerM2: 0.12,
+    woodPerM2: 0.05,
+    labourHoursPerM2: 2.5,
+    overheadPerM2: 8.0,  // BD/m² baseline
+  },
+  commercial: {
+    cementPerM2: 0.22,
+    steelPerM2: 0.14,
+    sandPerM2: 0.16,
+    gravelPerM2: 0.14,
+    woodPerM2: 0.03,
+    labourHoursPerM2: 3.2,
+    overheadPerM2: 11.0,
+  },
+  industrial: {
+    cementPerM2: 0.28,
+    steelPerM2: 0.20,
+    sandPerM2: 0.12,
+    gravelPerM2: 0.18,
+    woodPerM2: 0.02,
+    labourHoursPerM2: 4.0,
+    overheadPerM2: 14.0,
+  },
 };
 
-const FALLBACK_PRICES = {
-  cement: 45, steel: 350, sand: 25, gravel: 30, wood: 180, bricks: 0.25,
+// ============================================
+// ⭐ HELPERS
+// ============================================
+
+/** Get the previous N months as "YYYY-MM" strings */
+const getLastNMonths = (n = 6) => {
+  const out = [];
+  const now = new Date();
+  for (let i = 0; i < n; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    out.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
+  }
+  return out.reverse();
+};
+
+/** Days in a "YYYY-MM" month */
+const daysInMonth = (monthStr) => {
+  const [y, m] = monthStr.split('-').map(Number);
+  return new Date(y, m, 0).getDate();
+};
+
+/** Match a material to a category keyword (cement, steel, etc.) */
+const materialMatchesKeyword = (mat, keyword) => {
+  const name = (mat.name || '').toLowerCase();
+  const cat = (mat.category || '').toLowerCase();
+  const k = keyword.toLowerCase();
+  return name.includes(k) || cat.includes(k) || cat === k;
+};
+
+/** Match material keywords against entries — for historical consumption */
+const getKeywordForMaterial = (mat) => {
+  const name = (mat.name || '').toLowerCase();
+  for (const k of ['cement', 'steel', 'sand', 'gravel', 'wood', 'bricks', 'concrete']) {
+    if (name.includes(k)) return k;
+  }
+  return (mat.category || '').toLowerCase();
+};
+
+// ============================================
+// ⭐ CORE: Historical Estimation Engine
+// ============================================
+const buildHistoricalAnalysis = (data) => {
+  const entries = data?.entries || [];
+  const attendance = data?.attendance || [];
+  const workers = data?.workers || [];
+  const monthlyOverhead = data?.monthlyOverhead || [];
+  const sites = data?.sites || [];
+
+  const workersMap = {};
+  workers.forEach(w => { workersMap[w.id] = w; });
+
+  // Group everything by month
+  const byMonth = {};
+  const addToMonth = (month, key, value) => {
+    if (!byMonth[month]) byMonth[month] = {
+      month, entries: [], attendance: [], overhead: 0,
+      revenue: 0, materialCost: 0, labourCost: 0, equipmentCost: 0,
+      transportCost: 0, otherExpense: 0, oneTimeCost: 0, wages: 0,
+      totalHours: 0, presentDays: 0, sites: new Set(),
+    };
+    byMonth[month][key] += value;
+  };
+
+  // Entries
+  entries.forEach(e => {
+    const m = (e.date || '').slice(0, 7);
+    if (!m) return;
+    if (!byMonth[m]) byMonth[m] = {
+      month: m, entries: [], attendance: [], overhead: 0,
+      revenue: 0, materialCost: 0, labourCost: 0, equipmentCost: 0,
+      transportCost: 0, otherExpense: 0, oneTimeCost: 0, wages: 0,
+      totalHours: 0, presentDays: 0, sites: new Set(),
+    };
+    byMonth[m].entries.push(e);
+    byMonth[m].revenue += Number(e.kamai) || 0;
+    byMonth[m].materialCost += Number(e.materialCost) || 0;
+    byMonth[m].labourCost += Number(e.labour) || 0;
+    byMonth[m].equipmentCost += Number(e.equipmentCost) || 0;
+    byMonth[m].transportCost += Number(e.transportCost) || 0;
+    byMonth[m].otherExpense += Number(e.otherExpense) || 0;
+    byMonth[m].oneTimeCost += Number(e.oneTime) || 0;
+    byMonth[m].overhead += Number(e.overhead) || 0;
+    if (e.siteId) byMonth[m].sites.add(e.siteId);
+  });
+
+  // Attendance (for wages)
+  attendance.forEach(a => {
+    const m = (a.date || '').slice(0, 7);
+    if (!m) return;
+    if (!byMonth[m]) byMonth[m] = {
+      month: m, entries: [], attendance: [], overhead: 0,
+      revenue: 0, materialCost: 0, labourCost: 0, equipmentCost: 0,
+      transportCost: 0, otherExpense: 0, oneTimeCost: 0, wages: 0,
+      totalHours: 0, presentDays: 0, sites: new Set(),
+    };
+    byMonth[m].attendance.push(a);
+    byMonth[m].totalHours += Number(a.totalHours) || 0;
+    if (a.present) byMonth[m].presentDays += 1;
+
+    // Compute wage from worker rate
+    const w = workersMap[a.workerId];
+    if (w) {
+      const hourly = Number(w.hourlyRate) || Number(w.dailyRate) || 0;
+      const normal = Number(a.normalHours) || Number(a.totalHours) || 0;
+      const ot = Number(a.overtimeHours) || 0;
+      const otRate = Number(a.overtimeEnabled !== false ? 1.5 : 1.0);
+      byMonth[m].wages += (normal * hourly) + (ot * hourly * otRate);
+    }
+  });
+
+  // MonthlyOverhead — realized per month
+  monthlyOverhead.forEach(o => {
+    const m = o.month;
+    if (!byMonth[m]) byMonth[m] = {
+      month: m, entries: [], attendance: [], overhead: 0,
+      revenue: 0, materialCost: 0, labourCost: 0, equipmentCost: 0,
+      transportCost: 0, otherExpense: 0, oneTimeCost: 0, wages: 0,
+      totalHours: 0, presentDays: 0, sites: new Set(),
+    };
+    // Frequency-aware total
+    const freq = (o.frequency || 'monthly').toLowerCase();
+    const wd = Number(o.workingDays) || 26;
+    const amt = Number(o.amount) || 0;
+    let monthly = amt;
+    if (freq === 'daily') monthly = amt * wd;
+    else if (freq === 'weekly') monthly = amt * Math.ceil(wd / 7);
+    else if (freq === 'quarterly') monthly = amt / 3;
+    else if (freq === 'yearly') monthly = amt / 12;
+    byMonth[m].overhead += monthly;
+  });
+
+  // Convert Set → count
+  Object.values(byMonth).forEach(m => {
+    m.siteCount = m.sites.size;
+    delete m.sites;
+  });
+
+  return byMonth;
 };
 
 // ============================================
 // MAIN COMPONENT
 // ============================================
 const BOMComponent = ({ data, updateData, setTabLoading, setTabLoadingLabel }) => {
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('estimate');
   const [mounted, setMounted] = useState(false);
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState(null);
 
-  // ---------- Materials from backend ----------
+  // Materials
   const [materials, setMaterials] = useState(() => data.materials || []);
   const [materialsLoading, setMaterialsLoading] = useState(false);
   const materialsLoadedRef = React.useRef(false);
 
-  // ---------- Units from Units table ----------
   const { units: allUnits } = useUnits();
-
   const availableUnitNames = useMemo(() => {
     const active = (allUnits || []).filter(u => u.isActive);
     if (active.length > 0) return active.map(u => u.name);
     return FALLBACK_UNITS;
   }, [allUnits]);
 
-  // ---------- Normalize backend fields ----------
   const normalizeMaterial = useCallback((m) => ({
     ...m,
     category: m.category || m.categoryName || 'Construction',
@@ -103,7 +264,6 @@ const BOMComponent = ({ data, updateData, setTabLoading, setTabLoadingLabel }) =
     reorderLevel: Number(m.reorderLevel ?? m.reorder_level ?? 0) || 0,
   }), []);
 
-  // ---------- Fetch materials from API ----------
   const fetchMaterials = useCallback(async ({ showLoader = true } = {}) => {
     setMaterialsLoading(true);
     if (showLoader && setTabLoading && setTabLoadingLabel) {
@@ -134,1173 +294,330 @@ const BOMComponent = ({ data, updateData, setTabLoading, setTabLoadingLabel }) =
     }
   }, [fetchMaterials]);
 
-  // ---------- BOMs + sites ----------
+  // Data
   const boms = useMemo(() => data.bom || [], [data.bom]);
   const sites = useMemo(() => data.sites || [], [data.sites]);
+  const entries = useMemo(() => data.entries || [], [data.entries]);
 
-  // ---------- Form state ----------
-  const [materialForm, setMaterialForm] = useState({
-    name: '', category: 'Construction', unit: 'kg', unitPrice: '',
-    quantity: '', supplier: '', reorderLevel: ''
-  });
-  const [bomForm, setBomForm] = useState({
-    projectName: '', siteId: '', materials: [], estimatedHours: '',
-    labourCost: '', overheadPercentage: '10'
-  });
-  const [editingMaterial, setEditingMaterial] = useState(null);
-  const [predictionParams, setPredictionParams] = useState({
-    projectType: 'residential', area: '', floors: '1', materialType: 'all'
-  });
-  const [predictionResult, setPredictionResult] = useState(null);
-  const [predictionError, setPredictionError] = useState('');
-  const [showMaterialForm, setShowMaterialForm] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('all');
-  const [hoveredCard, setHoveredCard] = useState(null);
-  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+  // ⭐ Historical analysis
+  const historical = useMemo(() => buildHistoricalAnalysis(data), [data]);
+  const last6Months = useMemo(() => getLastNMonths(6), []);
+  const historyArray = useMemo(() =>
+    last6Months.map(m => historical[m] || {
+      month: m, revenue: 0, materialCost: 0, wages: 0, overhead: 0,
+      equipmentCost: 0, transportCost: 0, otherExpense: 0, oneTimeCost: 0,
+      totalHours: 0, presentDays: 0, siteCount: 0
+    }), [last6Months, historical]);
 
-  // ⭐ NEW — search for the "add materials" picker inside the BOM tab
-  const [bomMaterialSearch, setBomMaterialSearch] = useState('');
+  // ⭐ Averages from last 3 months (for material rate estimation)
+  const recentHistory = useMemo(() => {
+    const last3 = historyArray.slice(-3);
+    const totals = last3.reduce((acc, m) => ({
+      materialCost: acc.materialCost + m.materialCost,
+      wages: acc.wages + m.wages,
+      overhead: acc.overhead + m.overhead,
+      totalHours: acc.totalHours + m.totalHours,
+      presentDays: acc.presentDays + m.presentDays,
+      revenue: acc.revenue + m.revenue,
+      siteCount: acc.siteCount + (m.siteCount || 0),
+      months: acc.months + 1,
+    }), { materialCost: 0, wages: 0, overhead: 0, totalHours: 0, presentDays: 0, revenue: 0, siteCount: 0, months: 0 });
 
-  // Pagination
-  const [matPage, setMatPage] = useState(1);
-  const [matPer, setMatPer] = useState(10);
-  const [bomPage, setBomPage] = useState(1);
-  const [bomPer, setBomPer] = useState(9);
+    const n = Math.max(1, totals.months);
+    return {
+      avgMaterialPerMonth: totals.materialCost / n,
+      avgWagesPerMonth: totals.wages / n,
+      avgOverheadPerMonth: totals.overhead / n,
+      avgHoursPerMonth: totals.totalHours / n,
+      avgPresentDaysPerMonth: totals.presentDays / n,
+      avgRevenuePerMonth: totals.revenue / n,
+      avgSiteCount: totals.siteCount / n,
+      monthsAnalyzed: n,
+    };
+  }, [historyArray]);
 
-  // Categories merge
+  // Categories
   const categories = useMemo(() => {
     const custom = new Set(DEFAULT_CATEGORIES);
-    (materials || []).forEach(m => {
-      if (m.category) custom.add(m.category);
-    });
+    materials.forEach(m => { if (m.category) custom.add(m.category); });
     return Array.from(custom).sort();
   }, [materials]);
 
+  // UI state
+  const [toast2, setToast2] = useState(null);
   useEffect(() => {
     const id = requestAnimationFrame(() => setMounted(true));
     return () => cancelAnimationFrame(id);
   }, []);
-
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(null), 2600);
+    const t = setTimeout(() => setToast(null), 2800);
     return () => clearTimeout(t);
   }, [toast]);
-
   const showToast = (message, type = 'success') =>
     setToast({ message, type, id: Date.now() });
 
+  // ⭐ ESTIMATOR STATE
+  const [estimateForm, setEstimateForm] = useState({
+    projectType: 'residential',
+    area: '',
+    floors: '1',
+    siteId: '',
+    startDate: Utils.today(),
+    includeOverhead: true,
+    includeLabour: true,
+    includeMaterial: true,
+    overheadMode: 'historical', // 'historical' | 'manual'
+    manualOverheadPerM2: '10',
+    labourMode: 'historical',
+    manualLabourPerM2: '15',
+  });
+  const [estimateResult, setEstimateResult] = useState(null);
+
   // ============================================
-  // MATERIAL CRUD
+  // ⭐ CORE: GENERATE ESTIMATE
   // ============================================
-  const handleMaterialSubmit = async (e) => {
-    e.preventDefault();
-    if (!materialForm.name.trim()) {
-      showToast('Material name is required', 'error');
+  const generateEstimate = useCallback(() => {
+    const area = parseFloat(estimateForm.area) || 0;
+    const floors = Math.max(1, parseInt(estimateForm.floors) || 1);
+    if (area <= 0) {
+      showToast('Please enter a valid area (m²)', 'error');
       return;
     }
 
-    const name = materialForm.name.trim();
-    const duplicate = materials.find(
-      m => m.id !== editingMaterial &&
-      (m.name || '').toLowerCase() === name.toLowerCase()
-    );
-    if (duplicate) {
-      showToast(`Material "${name}" already exists`, 'error');
-      return;
-    }
+    const totalArea = area * floors;
+    const cfg = BENCHMARKS[estimateForm.projectType] || BENCHMARKS.residential;
+    const monthsAnalyzed = Math.max(1, recentHistory.monthsAnalyzed);
 
-    const payload = {
-      name,
-      category: materialForm.category || 'Construction',
-      unit: materialForm.unit || 'kg',
-      unitPrice: Math.max(0, parseFloat(materialForm.unitPrice) || 0),
-      quantity: Math.max(0, parseFloat(materialForm.quantity) || 0),
-      supplier: (materialForm.supplier || '').trim(),
-      reorderLevel: Math.max(0, parseFloat(materialForm.reorderLevel) || 0),
-      status: 'active',
+    // ── MATERIAL ──
+    const materialLines = [];
+    let totalMaterialCost = 0;
+    let estimatedCount = 0;
+    let historicalCount = 0;
+
+    // Try to find each benchmarked material in inventory
+    const materialKeys = ['cement', 'steel', 'sand', 'gravel', 'wood', 'bricks'];
+    const keyToRateKey = {
+      cement: 'cementPerM2',
+      steel: 'steelPerM2',
+      sand: 'sandPerM2',
+      gravel: 'gravelPerM2',
+      wood: 'woodPerM2',
+      bricks: 'bricksPerM2',
     };
 
-    try {
-      if (editingMaterial) {
-        const updated = await ApiService.updateMaterial(editingMaterial, payload);
-        const normalized = normalizeMaterial(updated);
-        const next = materials.map(m => m.id === editingMaterial ? normalized : m);
-        setMaterials(next);
-        if (updateData) updateData({ materials: next });
-        showToast('Material updated');
+    for (const key of materialKeys) {
+      // Try to match a real material
+      const match = materials.find(m => materialMatchesKeyword(m, key));
+      const rateKey = keyToRateKey[key];
+      const benchmarkRate = cfg[rateKey] || 0;
+
+      // ⭐ Try to derive a rate from historical data
+      // historicalMaterialCost / (assumed avg area per project) — we don't know area,
+      // so we use a pragmatic approximation: (historical material cost per site per month) / assumed 300m²
+      const histMaterialPerSite = recentHistory.avgMaterialPerMonth / Math.max(1, recentHistory.avgSiteCount || 1);
+      const assumedAreaPerSite = 300; // m² — baseline; improves as data accumulates
+      const historicalRate = histMaterialPerSite > 0 ? histMaterialPerSite / assumedAreaPerSite : 0;
+
+      // Pick the rate: benchmark × historical adjustment factor
+      // Use blend: 60% historical, 40% benchmark when we have enough data
+      let rate = benchmarkRate;
+      let rateSource = 'benchmark';
+      if (historicalRate > 0 && monthsAnalyzed >= 2) {
+        rate = (historicalRate * 0.6) + (benchmarkRate * 0.4);
+        rateSource = 'blended';
+        historicalCount++;
+      } else if (historicalRate > 0) {
+        rate = historicalRate;
+        rateSource = 'historical';
+        historicalCount++;
       } else {
-        const created = await ApiService.createMaterial(payload);
-        const normalized = normalizeMaterial(created);
-        const next = [normalized, ...materials];
-        setMaterials(next);
-        if (updateData) updateData({ materials: next });
-        showToast('Material saved');
+        estimatedCount++;
       }
 
-      setMaterialForm({
-        name: '', category: 'Construction', unit: 'kg', unitPrice: '',
-        quantity: '', supplier: '', reorderLevel: ''
+      // Quantity for this project
+      const quantity = rate * totalArea;
+
+      // Unit price from inventory
+      let unitPrice = match?.unitPrice || 0;
+      if (!unitPrice) {
+        // fallback pricing
+        const fallbackPrices = { cement: 45, steel: 350, sand: 25, gravel: 30, wood: 180, bricks: 0.25 };
+        unitPrice = fallbackPrices[key] || 50;
+      }
+
+      const cost = quantity * unitPrice;
+      totalMaterialCost += cost;
+
+      materialLines.push({
+        key,
+        name: key.charAt(0).toUpperCase() + key.slice(1),
+        unit: match?.unit || (key === 'bricks' ? 'pieces' : key === 'cement' || key === 'steel' ? 'ton' : 'm3'),
+        quantity: Math.round(quantity * 100) / 100,
+        unitPrice,
+        cost: Math.round(cost * 1000) / 1000,
+        rate,
+        rateSource,
+        matchedMaterial: match?.name || null,
+        inInventory: !!match,
       });
-      setEditingMaterial(null);
-      setShowMaterialForm(false);
-    } catch (err) {
-      console.error('[BOM] save material failed:', err);
-      showToast(err.message || 'Failed to save material', 'error');
-    }
-  };
-
-  const deleteMaterial = async (id) => {
-    const material = materials.find(m => m.id === id);
-    if (!material) return;
-
-    const usedInBoms = boms.filter(b =>
-      (b.materials || []).some(m => m.materialId === id)
-    );
-    const confirmMsg = usedInBoms.length > 0
-      ? `"${material.name}" is used in ${usedInBoms.length} saved BOM(s). Delete anyway?`
-      : `Delete "${material.name}"?`;
-    if (!window.confirm(confirmMsg)) return;
-
-    try {
-      await ApiService.deleteMaterial(id);
-      const next = materials.filter(m => m.id !== id);
-      setMaterials(next);
-      if (updateData) updateData({ materials: next });
-      showToast('Material deleted');
-    } catch (err) {
-      console.error('[BOM] delete material failed:', err);
-      showToast(err.message || 'Failed to delete material', 'error');
-    }
-  };
-
-  const startEditMaterial = (material) => {
-    setEditingMaterial(material.id);
-    setMaterialForm({
-      name: material.name || '',
-      category: material.category || 'Construction',
-      unit: material.unit || 'kg',
-      unitPrice: material.unitPrice?.toString() || '',
-      quantity: material.quantity?.toString() || '',
-      supplier: material.supplier || '',
-      reorderLevel: material.reorderLevel?.toString() || ''
-    });
-    setShowMaterialForm(true);
-  };
-
-  const resetMaterialForm = () => {
-    setMaterialForm({
-      name: '', category: 'Construction', unit: 'kg', unitPrice: '',
-      quantity: '', supplier: '', reorderLevel: ''
-    });
-    setEditingMaterial(null);
-  };
-
-  // ============================================
-  // BOM
-  // ============================================
-  const addMaterialToBOM = useCallback((material) => {
-    if (!material || !material.name) {
-      showToast('Invalid material', 'error');
-      return;
-    }
-    if (!material.unitPrice || material.unitPrice <= 0) {
-      showToast(`"${material.name}" has no unit price — set it first`, 'error');
-      return;
     }
 
-    setBomForm(prev => {
-      const existingIdx = prev.materials.findIndex(m => m.materialId === material.id);
-      if (existingIdx >= 0) {
-        const updated = [...prev.materials];
-        const newQty = updated[existingIdx].quantity + 1;
-        updated[existingIdx] = {
-          ...updated[existingIdx],
-          quantity: newQty,
-          totalCost: updated[existingIdx].unitPrice * newQty
-        };
-        showToast(`Increased quantity of "${material.name}"`);
-        return { ...prev, materials: updated };
+    // ── LABOUR ──
+    let labourCost = 0;
+    let labourSource = 'benchmark';
+    if (estimateForm.includeLabour) {
+      if (estimateForm.labourMode === 'historical' && recentHistory.avgWagesPerMonth > 0) {
+        // Use avg wage per m² per month
+        // Derive: avg monthly wages / assumed avg monthly area (approx 300m² per site × avg sites)
+        const assumedMonthlyArea = 300 * Math.max(1, recentHistory.avgSiteCount || 1);
+        const costPerM2 = recentHistory.avgWagesPerMonth / assumedMonthlyArea;
+        labourCost = costPerM2 * totalArea;
+        labourSource = 'historical';
+      } else if (estimateForm.labourMode === 'manual') {
+        labourCost = (parseFloat(estimateForm.manualLabourPerM2) || 0) * totalArea;
+        labourSource = 'manual';
+      } else {
+        // Benchmark: estimated hours × avg hourly rate
+        const estHours = cfg.labourHoursPerM2 * totalArea;
+        const avgHourly = materials.length > 0
+          ? materials.reduce((s, m) => s + m.unitPrice, 0) / materials.length / 100
+          : 2.5;
+        labourCost = estHours * Math.max(1, avgHourly);
+        labourSource = 'benchmark';
       }
-
-      showToast(`Added "${material.name}" to BOM`);
-      return {
-        ...prev,
-        materials: [
-          ...prev.materials,
-          {
-            materialId: material.id,
-            name: material.name,
-            unit: material.unit,
-            unitPrice: material.unitPrice,
-            quantity: 1,
-            totalCost: material.unitPrice
-          }
-        ]
-      };
-    });
-  }, []);
-
-  const removeFromBOM = (index) => {
-    setBomForm(prev => ({
-      ...prev,
-      materials: prev.materials.filter((_, i) => i !== index)
-    }));
-  };
-
-  const updateBOMQuantity = (index, quantityRaw) => {
-    const qty = Math.max(0, parseFloat(quantityRaw) || 0);
-    setBomForm(prev => {
-      const updated = [...prev.materials];
-      const line = updated[index];
-      if (!line) return prev;
-      updated[index] = {
-        ...line,
-        quantity: qty,
-        totalCost: Math.round(line.unitPrice * qty * 1000) / 1000
-      };
-      return { ...prev, materials: updated };
-    });
-  };
-
-  const saveBOM = (e) => {
-    if (e) e.preventDefault();
-
-    if (!bomForm.projectName.trim()) {
-      showToast('Project name is required', 'error');
-      return;
     }
-    if (bomForm.materials.length === 0) {
-      showToast('Add at least one material', 'error');
-      return;
-    }
-    if (saving) return;
 
+    // ── OVERHEAD ──
+    let overheadCost = 0;
+    let overheadSource = 'benchmark';
+    if (estimateForm.includeOverhead) {
+      if (estimateForm.overheadMode === 'historical' && recentHistory.avgOverheadPerMonth > 0) {
+        const assumedMonthlyArea = 300 * Math.max(1, recentHistory.avgSiteCount || 1);
+        const costPerM2 = recentHistory.avgOverheadPerMonth / assumedMonthlyArea;
+        overheadCost = costPerM2 * totalArea;
+        overheadSource = 'historical';
+      } else if (estimateForm.overheadMode === 'manual') {
+        overheadCost = (parseFloat(estimateForm.manualOverheadPerM2) || 0) * totalArea;
+        overheadSource = 'manual';
+      } else {
+        overheadCost = cfg.overheadPerM2 * totalArea;
+        overheadSource = 'benchmark';
+      }
+    }
+
+    // ── TIMELINE + HOURS ──
+    const estimatedHours = cfg.labourHoursPerM2 * totalArea;
+    const timeline = Math.max(1, Math.ceil(estimatedHours / 8 / 3)); // 3 workers baseline
+
+    const totalCost = totalMaterialCost + labourCost + overheadCost;
+
+    // ── COMPARISON with last month ──
+    const lastMonth = historyArray[historyArray.length - 2] || null;
+    const currentMonth = historyArray[historyArray.length - 1] || null;
+    const momDelta = (() => {
+      if (!lastMonth || !currentMonth) return null;
+      const lastTotal = (lastMonth.materialCost || 0) + (lastMonth.wages || 0) + (lastMonth.overhead || 0);
+      const currentTotal = (currentMonth.materialCost || 0) + (currentMonth.wages || 0) + (currentMonth.overhead || 0);
+      if (lastTotal === 0) return null;
+      return ((currentTotal - lastTotal) / Math.abs(lastTotal)) * 100;
+    })();
+
+    setEstimateResult({
+      projectType: estimateForm.projectType,
+      area,
+      floors,
+      totalArea,
+      siteId: estimateForm.siteId,
+      materialLines,
+      totalMaterialCost,
+      labourCost,
+      labourSource,
+      overheadCost,
+      overheadSource,
+      totalCost,
+      estimatedHours,
+      timeline,
+      historicalCount,
+      estimatedCount,
+      momDelta,
+      recentHistory,
+      generatedAt: new Date().toISOString(),
+    });
+
+    showToast('Estimate generated');
+  }, [estimateForm, materials, recentHistory, historyArray]);
+
+  // ============================================
+  // ⭐ SAVE ESTIMATE AS BOM
+  // ============================================
+  const saveEstimateAsBOM = useCallback(() => {
+    if (!estimateResult) return;
     setSaving(true);
     try {
-      const totalMaterialCost = bomForm.materials.reduce((sum, m) => sum + (m.totalCost || 0), 0);
-      const labourCost = Math.max(0, parseFloat(bomForm.labourCost) || 0);
-      const overheadPct = Math.max(0, parseFloat(bomForm.overheadPercentage) || 0);
-      const overhead = (totalMaterialCost + labourCost) * (overheadPct / 100);
-      const totalCost = totalMaterialCost + labourCost + overhead;
+      const totalMaterialCost = estimateResult.totalMaterialCost;
+      const labourCost = estimateResult.labourCost;
+      const overhead = estimateResult.overheadCost;
 
       const bom = {
         id: Date.now().toString(),
-        projectName: bomForm.projectName.trim(),
-        siteId: bomForm.siteId || '',
-        materials: bomForm.materials.map(m => ({ ...m })),
-        estimatedHours: parseFloat(bomForm.estimatedHours) || 0,
+        projectName: `${estimateResult.projectType.charAt(0).toUpperCase() + estimateResult.projectType.slice(1)} — ${estimateResult.totalArea.toFixed(0)}m²`,
+        siteId: estimateResult.siteId,
+        materials: estimateResult.materialLines.map(m => ({
+          materialId: m.key,
+          name: m.name,
+          unit: m.unit,
+          unitPrice: m.unitPrice,
+          quantity: m.quantity,
+          totalCost: m.cost,
+        })),
+        estimatedHours: estimateResult.estimatedHours,
         labourCost,
-        overheadPercentage: overheadPct,
+        overheadPercentage: 0,
         totalMaterialCost,
         overhead,
-        totalCost,
+        totalCost: estimateResult.totalCost,
         createdAt: new Date().toISOString(),
+        source: 'estimate',
       };
 
       if (updateData) updateData({ bom: [...boms, bom] });
-      showToast('BOM saved successfully');
-
-      setBomForm({
-        projectName: '', siteId: '', materials: [], estimatedHours: '',
-        labourCost: '', overheadPercentage: '10'
-      });
-      setBomMaterialSearch('');
+      showToast('Estimate saved as BOM');
     } catch (err) {
-      console.error('Failed to save BOM:', err);
       showToast('Failed to save BOM', 'error');
     } finally {
       setSaving(false);
     }
-  };
+  }, [estimateResult, boms, updateData]);
 
   // ============================================
-  // PREDICTION
+  // RENDER: ESTIMATE TAB
   // ============================================
-  const generatePrediction = () => {
-    setPredictionError('');
-
-    const areaNum = parseFloat(predictionParams.area) || 0;
-    const floorsNum = Math.max(1, parseInt(predictionParams.floors) || 1);
-
-    if (areaNum <= 0) {
-      setPredictionError('Please enter a valid area (m²)');
-      setPredictionResult(null);
-      return;
-    }
-
-    const rates = MATERIAL_RATES[predictionParams.projectType] || MATERIAL_RATES.residential;
-    const totalArea = areaNum * floorsNum;
-
-    const rawQuantities = {
-      cement: { quantity: rates.cement * totalArea, unit: 'tons' },
-      steel:  { quantity: rates.steel  * totalArea, unit: 'tons' },
-      sand:   { quantity: rates.sand   * totalArea, unit: 'm3' },
-      gravel: { quantity: rates.gravel * totalArea, unit: 'm3' },
-      wood:   { quantity: rates.wood   * totalArea, unit: 'm3' },
-      bricks: { quantity: Math.round(rates.bricks * totalArea), unit: 'pieces' },
-    };
-
-    let totalCost = 0;
-    let estimatedCount = 0;
-    const materialsWithCost = {};
-
-    Object.entries(rawQuantities).forEach(([key, value]) => {
-      const match = materials.find(m => {
-        const n = (m.name || '').toLowerCase();
-        const c = (m.category || '').toLowerCase();
-        return n.includes(key) || c === key || c.includes(key);
-      });
-
-      let unitPrice;
-      let isEstimated = false;
-      if (match && match.unitPrice > 0) {
-        unitPrice = match.unitPrice;
-      } else {
-        unitPrice = FALLBACK_PRICES[key] || 50;
-        isEstimated = true;
-        estimatedCount++;
-      }
-
-      const cost = value.quantity * unitPrice;
-      totalCost += cost;
-      materialsWithCost[key] = {
-        ...value,
-        unitPrice,
-        cost,
-        estimatedPrice: isEstimated,
-        matchedMaterial: match?.name || null,
-      };
-    });
-
-    let finalMaterials = materialsWithCost;
-    if (predictionParams.materialType !== 'all') {
-      const filterKey = predictionParams.materialType.toLowerCase();
-      finalMaterials = Object.fromEntries(
-        Object.entries(materialsWithCost).filter(([k]) => k === filterKey)
-      );
-    }
-
-    const timeline = Math.max(1, Math.ceil((totalArea / 100) * 3 + floorsNum));
-    const laborHours = Math.round(totalArea * 2.8);
-
-    setPredictionResult({
-      projectType: predictionParams.projectType,
-      totalArea,
-      floors: floorsNum,
-      materials: finalMaterials,
-      estimatedCost: Math.round(totalCost * 1000) / 1000,
-      laborHours,
-      timeline,
-      estimatedCount,
-      totalMaterialCount: Object.keys(finalMaterials).length,
-    });
-  };
-
-  const handleAddPredictionToInventory = async () => {
-    if (!predictionResult) return;
-
-    const toAdd = Object.entries(predictionResult.materials).filter(([key, value]) => {
-      if (value.quantity <= 0) return false;
-      return !materials.some(m => (m.name || '').toLowerCase().includes(key));
-    });
-
-    if (toAdd.length === 0) {
-      showToast('All materials already exist in inventory', 'info');
-      return;
-    }
-
-    setMaterialsLoading(true);
-    if (setTabLoading && setTabLoadingLabel) {
-      setTabLoading(true);
-      setTabLoadingLabel('Adding materials to inventory…');
-    }
-
-    let added = 0;
-    const addedItems = [];
-    for (const [key, value] of toAdd) {
-      try {
-        const created = await ApiService.createMaterial({
-          name: key.charAt(0).toUpperCase() + key.slice(1),
-          category: 'Construction',
-          unit: value.unit,
-          unitPrice: value.unitPrice || 50,
-          quantity: 0,
-          supplier: '',
-          reorderLevel: Math.round(value.quantity * 0.2),
-          status: 'active',
-        });
-        addedItems.push(normalizeMaterial(created));
-        added++;
-      } catch (err) {
-        console.error(`[BOM] failed to add ${key}:`, err);
-      }
-    }
-
-    setMaterialsLoading(false);
-    if (setTabLoading) setTabLoading(false);
-
-    if (added > 0) {
-      const next = [...addedItems, ...materials];
-      setMaterials(next);
-      if (updateData) updateData({ materials: next });
-      showToast(`Added ${added} material${added === 1 ? '' : 's'} to inventory`);
-    } else {
-      showToast('Failed to add materials', 'error');
-    }
-  };
-
-  const handleCreateBOMFromPrediction = () => {
-    if (!predictionResult) return;
-
-    const newMaterials = Object.entries(predictionResult.materials).map(([key, value], i) => ({
-      materialId: Date.now().toString() + i,
-      name: key.charAt(0).toUpperCase() + key.slice(1),
-      unit: value.unit,
-      unitPrice: value.unitPrice || 50,
-      quantity: value.quantity,
-      totalCost: value.cost || value.quantity * 50,
-    }));
-
-    const totalMaterialCost = newMaterials.reduce((s, m) => s + m.totalCost, 0);
-    const labourCost = Math.round(predictionResult.laborHours * 8 * 1000) / 1000;
-    const overheadPct = 10;
-    const overhead = (totalMaterialCost + labourCost) * (overheadPct / 100);
-    const totalCost = totalMaterialCost + labourCost + overhead;
-
-    const bom = {
-      id: Date.now().toString(),
-      projectName: `${predictionResult.projectType.charAt(0).toUpperCase() + predictionResult.projectType.slice(1)} Project — ${Utils.today()}`,
-      siteId: '',
-      materials: newMaterials,
-      estimatedHours: predictionResult.laborHours,
-      labourCost,
-      overheadPercentage: overheadPct,
-      totalMaterialCost,
-      overhead,
-      totalCost,
-      createdAt: new Date().toISOString(),
-    };
-
-    try {
-      if (updateData) updateData({ bom: [...boms, bom] });
-      showToast('BOM created from prediction');
-    } catch (err) {
-      showToast('Failed to create BOM', 'error');
-    }
-  };
-
-  // ============================================
-  // FILTERED + PAGINATION
-  // ============================================
-  const filteredMaterials = useMemo(() => {
-    let list = materials;
-    if (searchTerm.trim()) {
-      const s = searchTerm.toLowerCase();
-      list = list.filter(m =>
-        m.name?.toLowerCase().includes(s) ||
-        m.category?.toLowerCase().includes(s) ||
-        m.supplier?.toLowerCase().includes(s)
-      );
-    }
-    if (categoryFilter !== 'all') list = list.filter(m => m.category === categoryFilter);
-    return list;
-  }, [materials, searchTerm, categoryFilter]);
-
-  // ⭐ NEW — materials already in the BOM (to hide from the picker)
-  const materialIdsInBOM = useMemo(() => {
-    return new Set(bomForm.materials.map(m => m.materialId));
-  }, [bomForm.materials]);
-
-  // ⭐ NEW — filtered list for the in-BOM-tab picker
-  const bomPickerMaterials = useMemo(() => {
-    const q = bomMaterialSearch.trim().toLowerCase();
-    return materials
-      .filter(m => !materialIdsInBOM.has(m.id))
-      .filter(m => {
-        if (!q) return true;
-        return (
-          (m.name || '').toLowerCase().includes(q) ||
-          (m.category || '').toLowerCase().includes(q) ||
-          (m.supplier || '').toLowerCase().includes(q)
-        );
-      })
-      .slice(0, 50);
-  }, [materials, materialIdsInBOM, bomMaterialSearch]);
-
-  const paginate = (list, page, per) => {
-    const total = Math.max(1, Math.ceil(list.length / per));
-    const p = Math.max(1, Math.min(page, total));
-    const start = (p - 1) * per;
-    return { total, page: p, items: list.slice(start, start + per) };
-  };
-  const getPageNumbers = (current, total) => {
-    const pages = []; const max = 5;
-    let start = Math.max(1, current - 2);
-    let end = Math.min(total, start + max - 1);
-    if (end - start < max - 1) start = Math.max(1, end - max + 1);
-    for (let i = start; i <= end; i++) pages.push(i);
-    return pages;
-  };
-  const renderPagination = (current, total, per, setPer, setPage, count, label = 'items') => {
-    if (count === 0) return null;
-    const startItem = (current - 1) * per + 1;
-    const endItem = Math.min(current * per, count);
-    return (
-      <div className="bom-pagination">
-        <div className="bom-pagination-info">
-          Showing <strong>{startItem}</strong>–<strong>{endItem}</strong> of <strong>{count}</strong> {label}
-        </div>
-        <div className="bom-pagination-controls">
-          <div className="bom-pagination-items">
-            <span>Show:</span>
-            <select value={per} onChange={(e) => { setPer(Number(e.target.value)); setPage(1); }} className="bom-pagination-select">
-              {[6, 9, 10, 12, 18, 24, 48].map(n => <option key={n} value={n}>{n}</option>)}
-            </select>
-          </div>
-          <div className="bom-pagination-buttons">
-            <button className="bom-page-btn" onClick={() => setPage(1)} disabled={current === 1}><ChevronsLeft size={13} /></button>
-            <button className="bom-page-btn" onClick={() => setPage(current - 1)} disabled={current === 1}><ChevronLeft size={13} /></button>
-            {getPageNumbers(current, total).map(p => (
-              <button key={p} className={`bom-page-btn ${p === current ? 'active' : ''}`} onClick={() => setPage(p)}>{p}</button>
-            ))}
-            <button className="bom-page-btn" onClick={() => setPage(current + 1)} disabled={current === total}><ChevronRight size={13} /></button>
-            <button className="bom-page-btn" onClick={() => setPage(total)} disabled={current === total}><ChevronsRight size={13} /></button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  useEffect(() => { setMatPage(1); }, [searchTerm, categoryFilter, matPer, materials.length]);
-  useEffect(() => { setBomPage(1); }, [boms.length, bomPer]);
-
-  // ============================================
-  // STATS + CHART DATA
-  // ============================================
-  const stats = useMemo(() => {
-    const totalValue = materials.reduce((s, m) => s + (m.quantity || 0) * (m.unitPrice || 0), 0);
-    const lowStock = materials.filter(m => m.reorderLevel > 0 && m.quantity <= m.reorderLevel).length;
-    return {
-      totalMaterials: materials.length,
-      totalCategories: new Set(materials.map(m => m.category)).size,
-      totalValue,
-      lowStock,
-      totalBOMs: boms.length,
-      totalBOMValue: boms.reduce((s, b) => s + (b.totalCost || 0), 0)
-    };
-  }, [materials, boms]);
-
-  const categoryChartData = useMemo(() => {
-    const map = {};
-    materials.forEach(m => { map[m.category] = (map[m.category] || 0) + 1; });
-    const palette = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#f97316', '#ec4899'];
-    return Object.entries(map)
-      .map(([name, value], i) => ({ name, value, color: palette[i % palette.length] }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8);
-  }, [materials]);
-
-  const categoryValueData = useMemo(() => {
-    const map = {};
-    materials.forEach(m => {
-      const val = (m.quantity || 0) * (m.unitPrice || 0);
-      map[m.category] = (map[m.category] || 0) + val;
-    });
-    const palette = ['#10b981', '#3b82f6', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4'];
-    return Object.entries(map)
-      .map(([name, value], i) => ({
-        name: name.length > 12 ? name.slice(0, 12) + '…' : name,
-        value, color: palette[i % palette.length]
-      }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 8);
-  }, [materials]);
-
-  const kpiItems = [
-    { id: 'materials', icon: Package, label: 'Total Materials',
-      value: stats.totalMaterials,
-      meta: `${stats.totalCategories} categories`,
-      color: '#3b82f6', accent: 'linear-gradient(90deg,#3b82f6,#60a5fa)', trend: 'up' },
-    { id: 'value', icon: Banknote, label: 'Inventory Value',
-      value: Utils.formatCurrencyShort(stats.totalValue),
-      meta: `${materials.length} items`,
-      color: '#10b981', accent: 'linear-gradient(90deg,#10b981,#34d399)', trend: 'up' },
-    { id: 'boms', icon: ClipboardList, label: 'Saved BOMs',
-      value: stats.totalBOMs,
-      meta: `${Utils.formatCurrencyShort(stats.totalBOMValue)} total`,
-      color: '#8b5cf6', accent: 'linear-gradient(90deg,#8b5cf6,#a78bfa)', trend: 'up' },
-    { id: 'low', icon: AlertCircle, label: 'Low Stock',
-      value: stats.lowStock,
-      meta: 'Need reordering',
-      color: '#ef4444', accent: 'linear-gradient(90deg,#ef4444,#f87171)',
-      trend: stats.lowStock > 0 ? 'down' : 'flat' }
-  ];
-
-  const cardDetails = {
-    materials: { title: 'Total Materials', details: [
-      { label: 'Total', value: stats.totalMaterials },
-      { label: 'Categories', value: stats.totalCategories },
-      { label: 'Low Stock', value: stats.lowStock },
-      { label: 'Total Value', value: Utils.formatCurrency(stats.totalValue) }
-    ]},
-    value: { title: 'Inventory Value', details: [
-      { label: 'Total Value', value: Utils.formatCurrency(stats.totalValue) },
-      { label: 'Items', value: materials.length },
-      { label: 'Avg Value', value: materials.length ? Utils.formatCurrency(stats.totalValue / materials.length) : '0' },
-      { label: 'Highest', value: Utils.formatCurrency(Math.max(...materials.map(m => (m.quantity || 0) * (m.unitPrice || 0)), 0)) }
-    ]},
-    boms: { title: 'Saved BOMs', details: [
-      { label: 'Total BOMs', value: stats.totalBOMs },
-      { label: 'Total Value', value: Utils.formatCurrency(stats.totalBOMValue) },
-      { label: 'Avg BOM', value: stats.totalBOMs ? Utils.formatCurrency(stats.totalBOMValue / stats.totalBOMs) : '0' },
-      { label: 'Materials', value: materials.length }
-    ]},
-    low: { title: 'Low Stock', details: [
-      { label: 'Low Stock', value: stats.lowStock },
-      { label: 'Total', value: materials.length },
-      { label: 'Rate', value: `${materials.length ? ((stats.lowStock / materials.length) * 100).toFixed(1) : 0}%` },
-      { label: 'In Stock', value: materials.length - stats.lowStock }
-    ]}
-  };
-
-  const handleCardHover = (id, e) => { setHoveredCard(id); setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 }); };
-  const handleCardLeave = () => setHoveredCard(null);
-
-  // ============================================
-  // OVERVIEW TAB
-  // ============================================
-  const renderOverviewTab = () => (
+  const renderEstimateTab = () => (
     <div className="bom-view">
-      <div className="bom-kpi-grid">
-        {kpiItems.map(item => {
-          const Icon = item.icon;
-          return (
-            <div key={item.id} className="bom-kpi-card"
-              onMouseEnter={(e) => handleCardHover(item.id, e)}
-              onMouseLeave={handleCardLeave}
-              onMouseMove={(e) => setTooltipPosition({ x: e.clientX + 15, y: e.clientY - 10 })}>
-              <div className="bom-kpi-accent" style={{ background: item.accent }} />
-              <div className="bom-kpi-icon" style={{ background: `${item.color}1f`, color: item.color }}>
-                <Icon size={20} />
-              </div>
-              <div className="bom-kpi-content">
-                <span className="bom-kpi-label">{item.label}</span>
-                <span className="bom-kpi-value">{item.value}</span>
-                <span className="bom-kpi-meta">{item.meta}</span>
-              </div>
-              <div className={`bom-kpi-trend ${item.trend}`}>
-                {item.trend === 'up' && <TrendingUpIcon size={15} />}
-                {item.trend === 'down' && <TrendingDown size={15} />}
-                {item.trend === 'flat' && <Minus size={15} />}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {hoveredCard && cardDetails[hoveredCard] && (
-        <div className="bom-hover-tooltip"
-          style={{ position: 'fixed', left: tooltipPosition.x, top: tooltipPosition.y, zIndex: 9999 }}>
-          <div className="bom-tooltip-header"><strong>{cardDetails[hoveredCard].title}</strong></div>
-          <div className="bom-tooltip-body">
-            {cardDetails[hoveredCard].details.map((d, i) => (
-              <div key={i} className="bom-tooltip-row">
-                <span className="bom-tooltip-label">{d.label}</span>
-                <span className="bom-tooltip-value">{d.value}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <div className="bom-grid-1-1">
-        <div className="bom-card">
-          <div className="bom-card-header">
-            <div className="bom-card-title">
-              <span className="bom-card-icon" style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}>
-                <PieChartIcon size={16} />
-              </span>
-              <div>
-                <h4>Materials by Category</h4>
-                <span>{stats.totalCategories} categories</span>
-              </div>
-            </div>
-          </div>
-          {categoryChartData.length > 0 ? (
-            <div className="bom-donut-wrap">
-              <ResponsiveContainer width="100%" height={200}>
-                <PieChart>
-                  <Pie data={categoryChartData} dataKey="value" nameKey="name"
-                    cx="50%" cy="50%" innerRadius={52} outerRadius={85} paddingAngle={3} stroke="none">
-                    {categoryChartData.map((d, i) => <Cell key={i} fill={d.color} />)}
-                  </Pie>
-                  <ReTooltip content={<ChartTooltip />} />
-                </PieChart>
-              </ResponsiveContainer>
-              <div className="bom-donut-legend">
-                {categoryChartData.map((d, i) => (
-                  <div key={i} className="bom-donut-item">
-                    <span className="bom-donut-dot" style={{ background: d.color }} />
-                    <span className="bom-donut-name">{d.name}</span>
-                    <span className="bom-donut-val">{d.value}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : <div className="bom-empty-mini">No materials</div>}
-        </div>
-
-        <div className="bom-card">
-          <div className="bom-card-header">
-            <div className="bom-card-title">
-              <span className="bom-card-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
-                <BarChart3 size={16} />
-              </span>
-              <div>
-                <h4>Value by Category</h4>
-                <span>Quantity × Unit Price</span>
-              </div>
-            </div>
-          </div>
-          {categoryValueData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={categoryValueData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} vertical={false} />
-                <XAxis dataKey="name" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
-                  tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
-                <ReTooltip content={<ChartTooltip formatter={(v) => Utils.formatCurrency(v)} />}
-                  cursor={{ fill: 'rgba(148,163,184,0.08)' }} />
-                <Bar dataKey="value" radius={[8, 8, 0, 0]} barSize={36}>
-                  {categoryValueData.map((d, i) => <Cell key={i} fill={d.color} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          ) : <div className="bom-empty-mini">No data</div>}
-        </div>
-      </div>
-
-      {boms.length > 0 && (
-        <div className="bom-card">
-          <div className="bom-card-header">
-            <div className="bom-card-title">
-              <span className="bom-card-icon" style={{ background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>
-                <ClipboardList size={16} />
-              </span>
-              <div>
-                <h4>Recent BOMs</h4>
-                <span>{boms.length} saved bills</span>
-              </div>
-            </div>
-          </div>
-          <div className="bom-table-wrap">
-            <table className="bom-table">
-              <thead>
-                <tr>
-                  <th>Project</th>
-                  <th className="right">Materials</th>
-                  <th className="right">Labor</th>
-                  <th className="right">Overhead</th>
-                  <th className="right">Total Cost</th>
-                </tr>
-              </thead>
-              <tbody>
-                {boms.slice(-5).reverse().map((b, i) => (
-                  <tr key={b.id} style={{ animationDelay: `${Math.min(i * 30, 300)}ms` }}>
-                    <td><strong>{b.projectName}</strong></td>
-                    <td className="right">{b.materials?.length || 0}</td>
-                    <td className="right">{Utils.formatCurrencyShort(b.labourCost || 0)}</td>
-                    <td className="right">{Utils.formatCurrencyShort(b.overhead || 0)}</td>
-                    <td className="right bom-td-green"><strong>{Utils.formatCurrencyShort(b.totalCost || 0)}</strong></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-
-  // ============================================
-  // MATERIALS TAB
-  // ============================================
-  const renderMaterialsTab = () => {
-    const { total, page, items } = paginate(filteredMaterials, matPage, matPer);
-    if (page !== matPage) setMatPage(page);
-    return (
-      <div className="bom-view">
-        <div className="bom-filters">
-          <div className="bom-search">
-            <Search size={15} className="bom-search-icon" />
-            <input type="text" placeholder="Search materials..." value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)} />
-            {searchTerm && (
-              <button className="bom-search-clear" onClick={() => setSearchTerm('')}><X size={13} /></button>
-            )}
-          </div>
-          <div className="bom-filter-group">
-            <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)} className="bom-select">
-              <option value="all">All Categories</option>
-              {categories.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </div>
-          <span className="bom-result-count">
-            {filteredMaterials.length} of {materials.length}
-          </span>
-          <button className="bom-btn bom-btn-primary" onClick={() => { resetMaterialForm(); setShowMaterialForm(true); }}>
-            <Plus size={14} /> Add Material
-          </button>
-        </div>
-
-        {materialsLoading ? (
-          <div className="bom-loading">
-            <Loader2 size={20} className="bom-spin" /> Loading materials from server…
-          </div>
-        ) : filteredMaterials.length === 0 ? (
-          <div className="bom-empty">
-            <div className="bom-empty-icon"><Package size={40} /></div>
-            <h3>No Materials Found</h3>
-            <p>{materials.length === 0 ? 'Add your first material to start building BOMs.' : 'Try adjusting your filters.'}</p>
-            <button className="bom-btn bom-btn-primary" onClick={() => { resetMaterialForm(); setShowMaterialForm(true); }}>
-              <Plus size={14} /> Add Material
-            </button>
-          </div>
-        ) : (
-          <>
-            <div className="bom-materials-grid">
-              {items.map((m, i) => {
-                const low = m.reorderLevel > 0 && m.quantity <= m.reorderLevel;
-                const alreadyInBOM = materialIdsInBOM.has(m.id);
-                return (
-                  <div key={m.id} className="bom-material-card" style={{ animationDelay: `${Math.min(i * 40, 400)}ms` }}>
-                    <div className="bom-material-accent" style={{
-                      background: low ? 'linear-gradient(90deg,#ef4444,#f87171)' : 'linear-gradient(90deg,#10b981,#3b82f6)'
-                    }} />
-                    <div className="bom-material-header">
-                      <div className="bom-material-icon"><Package size={18} /></div>
-                      <div className="bom-material-title">
-                        <div className="bom-material-name">{m.name}</div>
-                        <div className="bom-material-category">{m.category}</div>
-                      </div>
-                      {low && (
-                        <span className="bom-low-stock-badge"><AlertCircle size={10} /> Low</span>
-                      )}
-                    </div>
-                    <div className="bom-material-body">
-                      <div className="bom-material-details">
-                        <div className="bom-detail-item">
-                          <span className="bom-detail-label">Qty</span>
-                          <span className={`bom-detail-value ${low ? 'bom-td-red' : ''}`}>
-                            {m.quantity} {m.unit}
-                          </span>
-                        </div>
-                        <div className="bom-detail-item">
-                          <span className="bom-detail-label">Price</span>
-                          <span className="bom-detail-value bom-td-green">
-                            {Utils.formatCurrency(m.unitPrice)}
-                          </span>
-                        </div>
-                        <div className="bom-detail-item">
-                          <span className="bom-detail-label">Value</span>
-                          <span className="bom-detail-value">
-                            {Utils.formatCurrencyShort((m.quantity || 0) * (m.unitPrice || 0))}
-                          </span>
-                        </div>
-                        <div className="bom-detail-item">
-                          <span className="bom-detail-label">Reorder</span>
-                          <span className="bom-detail-value">{m.reorderLevel || 0}</span>
-                        </div>
-                      </div>
-                      {m.supplier && (
-                        <div className="bom-material-meta">
-                          <Building2 size={11} /> {m.supplier}
-                        </div>
-                      )}
-                    </div>
-                    <div className="bom-material-footer">
-                      <div className="bom-material-actions">
-                        <button className="bom-icon-btn bom-icon-edit" title="Edit"
-                          onClick={() => startEditMaterial(m)}>
-                          <Edit size={13} />
-                        </button>
-                        <button
-                          className={`bom-icon-btn bom-icon-add ${alreadyInBOM ? 'is-in-bom' : ''}`}
-                          title={alreadyInBOM ? 'Already in BOM — click to add one more' : 'Add to BOM'}
-                          onClick={() => addMaterialToBOM(m)}>
-                          <PlusCircle size={13} />
-                        </button>
-                        <button className="bom-icon-btn bom-icon-danger" title="Delete"
-                          onClick={() => deleteMaterial(m.id)}>
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            {renderPagination(matPage, total, matPer, setMatPer, setMatPage, filteredMaterials.length, 'materials')}
-          </>
-        )}
-      </div>
-    );
-  };
-
-  // ============================================
-  // BOM TAB — with in-tab material picker
-  // ============================================
-  const renderBOMTab = () => {
-    const { total, page, items } = paginate([...boms].reverse(), bomPage, bomPer);
-    if (page !== bomPage) setBomPage(page);
-
-    const mc = bomForm.materials.reduce((s, m) => s + (m.totalCost || 0), 0);
-    const lc = parseFloat(bomForm.labourCost) || 0;
-    const ohPct = parseFloat(bomForm.overheadPercentage) || 0;
-    const oh = (mc + lc) * (ohPct / 100);
-
-    return (
-      <div className="bom-view">
-        <div className="bom-grid-2-1">
-          {/* -------- Create BOM form -------- */}
-          <div className="bom-card">
-            <div className="bom-card-header">
-              <div className="bom-card-title">
-                <span className="bom-card-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
-                  <ClipboardList size={16} />
-                </span>
-                <div>
-                  <h4>Create BOM</h4>
-                  <span>Bill of Materials builder</span>
-                </div>
-              </div>
-            </div>
-            <form onSubmit={saveBOM}>
-              <div className="bom-form-row">
-                <div className="bom-form-group">
-                  <label>Project Name <span className="bom-required">*</span></label>
-                  <input type="text" value={bomForm.projectName} required
-                    onChange={e => setBomForm({ ...bomForm, projectName: e.target.value })}
-                    placeholder="Project name" className="bom-form-input" />
-                </div>
-                <div className="bom-form-group">
-                  <label>Site</label>
-                  <select value={bomForm.siteId}
-                    onChange={e => setBomForm({ ...bomForm, siteId: e.target.value })}
-                    className="bom-form-select">
-                    <option value="">Select Site</option>
-                    {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              {/* ⭐ NEW — Material picker INSIDE the BOM tab */}
-              <div className="bom-picker-section">
-                <div className="bom-picker-label">
-                  <Package size={13} /> Add Materials to this BOM
-                </div>
-                <div className="bom-search" style={{ marginBottom: 8 }}>
-                  <Search size={15} className="bom-search-icon" />
-                  <input
-                    type="text"
-                    placeholder="Search materials by name, category or supplier..."
-                    value={bomMaterialSearch}
-                    onChange={(e) => setBomMaterialSearch(e.target.value)}
-                  />
-                  {bomMaterialSearch && (
-                    <button
-                      type="button"
-                      className="bom-search-clear"
-                      onClick={() => setBomMaterialSearch('')}
-                    >
-                      <X size={13} />
-                    </button>
-                  )}
-                </div>
-
-                {bomPickerMaterials.length === 0 ? (
-                  <div className="bom-picker-empty">
-                    <Info size={14} />
-                    <span>
-                      {materials.length === 0
-                        ? 'No materials in inventory yet. Add some in the Materials tab first.'
-                        : materialIdsInBOM.size === materials.length
-                          ? 'All materials are already in this BOM.'
-                          : 'No materials match your search.'}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="bom-picker-list">
-                    {bomPickerMaterials.map((m) => (
-                      <button
-                        key={m.id}
-                        type="button"
-                        className="bom-picker-item"
-                        onClick={() => addMaterialToBOM(m)}
-                      >
-                        <div className="bom-picker-info">
-                          <div className="bom-picker-name">{m.name}</div>
-                          <div className="bom-picker-meta">
-                            <span>{m.category}</span>
-                            <span>·</span>
-                            <span>{m.quantity} {m.unit} in stock</span>
-                          </div>
-                        </div>
-                        <div className="bom-picker-price">
-                          {Utils.formatCurrency(m.unitPrice)}
-                        </div>
-                        <PlusCircle size={14} className="bom-picker-add-icon" />
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Selected materials */}
-              <div className="bom-materials-list">
-                <div className="bom-materials-header">
-                  <h4>Selected Materials ({bomForm.materials.length})</h4>
-                </div>
-                {bomForm.materials.length === 0 ? (
-                  <div className="bom-empty-mini">
-                    No materials added yet. Use the picker above or the Materials tab.
-                  </div>
-                ) : (
-                  bomForm.materials.map((mat, index) => (
-                    <div key={`${mat.materialId}-${index}`} className="bom-material-row">
-                      <div className="bom-mat-info">
-                        <span className="bom-mat-name">{mat.name}</span>
-                        <span className="bom-mat-unit">{mat.unit} · {Utils.formatCurrency(mat.unitPrice)} each</span>
-                      </div>
-                      <div className="bom-mat-controls">
-                        <input type="number" step="0.01" min="0" value={mat.quantity}
-                          onChange={e => updateBOMQuantity(index, e.target.value)}
-                          className="bom-qty-input" />
-                        <span className="bom-mat-cost">{Utils.formatCurrency(mat.totalCost)}</span>
-                        <button type="button" className="bom-icon-btn bom-icon-danger"
-                          onClick={() => removeFromBOM(index)}
-                          title="Remove from BOM">
-                          <X size={12} />
-                        </button>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <div className="bom-form-row">
-                <div className="bom-form-group">
-                  <label>Estimated Hours</label>
-                  <input type="number" step="0.5" min="0" value={bomForm.estimatedHours}
-                    onChange={e => setBomForm({ ...bomForm, estimatedHours: e.target.value })}
-                    placeholder="0" className="bom-form-input" />
-                </div>
-                <div className="bom-form-group">
-                  <label>Labour Cost (BD)</label>
-                  <input type="number" step="0.001" min="0" value={bomForm.labourCost}
-                    onChange={e => setBomForm({ ...bomForm, labourCost: e.target.value })}
-                    placeholder="0.000" className="bom-form-input" />
-                </div>
-              </div>
-
-              <div className="bom-form-group">
-                <label>Overhead Percentage (%)</label>
-                <input type="number" step="0.1" min="0" value={bomForm.overheadPercentage}
-                  onChange={e => setBomForm({ ...bomForm, overheadPercentage: e.target.value })}
-                  placeholder="10" className="bom-form-input" />
-              </div>
-
-              {bomForm.materials.length > 0 && (
-                <div className="bom-summary">
-                  <div className="bom-summary-row"><span>Material Cost:</span><span>{Utils.formatCurrency(mc)}</span></div>
-                  <div className="bom-summary-row"><span>Labour Cost:</span><span>{Utils.formatCurrency(lc)}</span></div>
-                  <div className="bom-summary-row"><span>Overhead ({ohPct}%):</span><span>{Utils.formatCurrency(oh)}</span></div>
-                  <div className="bom-summary-row total"><span>Total Cost:</span><strong>{Utils.formatCurrency(mc + lc + oh)}</strong></div>
-                </div>
-              )}
-
-              <div className="bom-form-actions">
-                <button type="submit" className="bom-btn bom-btn-primary"
-                  disabled={bomForm.materials.length === 0 || saving}>
-                  {saving ? <Loader2 size={14} className="bom-spin" /> : <Save size={14} />}
-                  {saving ? 'Saving…' : 'Save BOM'}
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* -------- Saved BOMs -------- */}
-          <div className="bom-card">
-            <div className="bom-card-header">
-              <div className="bom-card-title">
-                <span className="bom-card-icon" style={{ background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>
-                  <Layers size={16} />
-                </span>
-                <div>
-                  <h4>Saved BOMs</h4>
-                  <span>{boms.length} bills</span>
-                </div>
-              </div>
-            </div>
-            {boms.length === 0 ? (
-              <div className="bom-empty-mini">No BOMs saved yet.</div>
-            ) : (
-              <>
-                <div className="bom-saved-list">
-                  {items.map(b => (
-                    <div key={b.id} className="bom-saved-item">
-                      <div className="bom-saved-header">
-                        <div className="bom-saved-name">{b.projectName}</div>
-                        <div className="bom-saved-date">
-                          <Calendar size={10} /> {Utils.formatDate(b.createdAt)}
-                        </div>
-                      </div>
-                      <div className="bom-saved-body">
-                        <div className="bom-saved-stat">
-                          <span className="bom-saved-label">Materials</span>
-                          <span className="bom-saved-value">{b.materials?.length || 0}</span>
-                        </div>
-                        <div className="bom-saved-stat">
-                          <span className="bom-saved-label">Total Cost</span>
-                          <span className="bom-saved-value bom-td-green">{Utils.formatCurrencyShort(b.totalCost)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {renderPagination(bomPage, total, bomPer, setBomPer, setBomPage, boms.length, 'BOMs')}
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // ============================================
-  // PREDICTION TAB
-  // ============================================
-  const renderPredictionTab = () => (
-    <div className="bom-view">
+      {/* ---- Form ---- */}
       <div className="bom-card">
         <div className="bom-card-header">
           <div className="bom-card-title">
-            <span className="bom-card-icon" style={{ background: 'rgba(245,158,11,0.12)', color: '#f59e0b' }}>
-              <Sparkles size={16} />
+            <span className="bom-card-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
+              <Calculator size={16} />
             </span>
             <div>
-              <h4>Material Prediction Engine</h4>
-              <span>Estimate materials based on project parameters</span>
+              <h4>Project Estimator</h4>
+              <span>Combines historical data with industry benchmarks</span>
             </div>
           </div>
+          <div className="bom-history-badge">
+            <Clock size={12} />
+            <span>{recentHistory.monthsAnalyzed} months analyzed</span>
+          </div>
         </div>
+
         <div className="bom-form-row">
           <div className="bom-form-group">
             <label>Project Type</label>
-            <select value={predictionParams.projectType}
-              onChange={e => setPredictionParams({ ...predictionParams, projectType: e.target.value })}
+            <select value={estimateForm.projectType}
+              onChange={e => setEstimateForm({ ...estimateForm, projectType: e.target.value })}
               className="bom-form-select">
               <option value="residential">Residential</option>
               <option value="commercial">Commercial</option>
@@ -1309,124 +626,276 @@ const BOMComponent = ({ data, updateData, setTabLoading, setTabLoadingLabel }) =
           </div>
           <div className="bom-form-group">
             <label>Area (m²) <span className="bom-required">*</span></label>
-            <input type="number" min="1" value={predictionParams.area}
-              onChange={e => setPredictionParams({ ...predictionParams, area: e.target.value })}
-              placeholder="Area in m²" className="bom-form-input" />
+            <input type="number" min="1" value={estimateForm.area}
+              onChange={e => setEstimateForm({ ...estimateForm, area: e.target.value })}
+              placeholder="e.g. 250" className="bom-form-input" />
           </div>
-        </div>
-        <div className="bom-form-row">
           <div className="bom-form-group">
             <label>Floors</label>
-            <input type="number" min="1" value={predictionParams.floors}
-              onChange={e => setPredictionParams({ ...predictionParams, floors: e.target.value })}
+            <input type="number" min="1" value={estimateForm.floors}
+              onChange={e => setEstimateForm({ ...estimateForm, floors: e.target.value })}
               className="bom-form-input" />
           </div>
+        </div>
+
+        <div className="bom-form-row">
           <div className="bom-form-group">
-            <label>Material Type</label>
-            <select value={predictionParams.materialType}
-              onChange={e => setPredictionParams({ ...predictionParams, materialType: e.target.value })}
+            <label>Site</label>
+            <select value={estimateForm.siteId}
+              onChange={e => setEstimateForm({ ...estimateForm, siteId: e.target.value })}
               className="bom-form-select">
-              <option value="all">All Materials</option>
-              <option value="cement">Cement</option>
-              <option value="steel">Steel</option>
-              <option value="sand">Sand</option>
-              <option value="gravel">Gravel</option>
-              <option value="wood">Wood</option>
-              <option value="bricks">Bricks</option>
+              <option value="">Company-wide</option>
+              {sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
             </select>
           </div>
+          <div className="bom-form-group">
+            <label>Start Date</label>
+            <input type="date" value={estimateForm.startDate}
+              onChange={e => setEstimateForm({ ...estimateForm, startDate: e.target.value })}
+              className="bom-form-input" />
+          </div>
         </div>
-        {predictionError && (
-          <div className="bom-form-error">
-            <AlertTriangle size={14} /> {predictionError}
+
+        {/* Toggle section */}
+        <div className="bom-toggles">
+          <label className="bom-toggle-row">
+            <input type="checkbox" checked={estimateForm.includeMaterial}
+              onChange={e => setEstimateForm({ ...estimateForm, includeMaterial: e.target.checked })} />
+            <Package size={13} />
+            <span>Include Materials</span>
+          </label>
+
+          <label className="bom-toggle-row">
+            <input type="checkbox" checked={estimateForm.includeLabour}
+              onChange={e => setEstimateForm({ ...estimateForm, includeLabour: e.target.checked })} />
+            <Users size={13} />
+            <span>Include Labour</span>
+          </label>
+
+          <label className="bom-toggle-row">
+            <input type="checkbox" checked={estimateForm.includeOverhead}
+              onChange={e => setEstimateForm({ ...estimateForm, includeOverhead: e.target.checked })} />
+            <Percent size={13} />
+            <span>Include Overhead</span>
+          </label>
+        </div>
+
+        {/* Overhead source */}
+        {estimateForm.includeOverhead && (
+          <div className="bom-source-row">
+            <div className="bom-source-label">
+              <Info size={12} />
+              <span>Overhead source</span>
+            </div>
+            <div className="bom-source-buttons">
+              <button
+                type="button"
+                className={`bom-source-btn ${estimateForm.overheadMode === 'historical' ? 'active' : ''}`}
+                onClick={() => setEstimateForm({ ...estimateForm, overheadMode: 'historical' })}
+                disabled={recentHistory.avgOverheadPerMonth === 0}>
+                Historical ({Utils.formatCurrencyShort(recentHistory.avgOverheadPerMonth)}/mo)
+              </button>
+              <button
+                type="button"
+                className={`bom-source-btn ${estimateForm.overheadMode === 'benchmark' ? 'active' : ''}`}
+                onClick={() => setEstimateForm({ ...estimateForm, overheadMode: 'benchmark' })}>
+                Benchmark
+              </button>
+              <button
+                type="button"
+                className={`bom-source-btn ${estimateForm.overheadMode === 'manual' ? 'active' : ''}`}
+                onClick={() => setEstimateForm({ ...estimateForm, overheadMode: 'manual' })}>
+                Manual
+              </button>
+            </div>
+            {estimateForm.overheadMode === 'manual' && (
+              <input type="number" min="0" step="0.01" value={estimateForm.manualOverheadPerM2}
+                onChange={e => setEstimateForm({ ...estimateForm, manualOverheadPerM2: e.target.value })}
+                placeholder="BD per m²" className="bom-form-input" style={{ maxWidth: 160 }} />
+            )}
           </div>
         )}
+
+        {/* Labour source */}
+        {estimateForm.includeLabour && (
+          <div className="bom-source-row">
+            <div className="bom-source-label">
+              <Info size={12} />
+              <span>Labour source</span>
+            </div>
+            <div className="bom-source-buttons">
+              <button
+                type="button"
+                className={`bom-source-btn ${estimateForm.labourMode === 'historical' ? 'active' : ''}`}
+                onClick={() => setEstimateForm({ ...estimateForm, labourMode: 'historical' })}
+                disabled={recentHistory.avgWagesPerMonth === 0}>
+                Historical ({Utils.formatCurrencyShort(recentHistory.avgWagesPerMonth)}/mo)
+              </button>
+              <button
+                type="button"
+                className={`bom-source-btn ${estimateForm.labourMode === 'benchmark' ? 'active' : ''}`}
+                onClick={() => setEstimateForm({ ...estimateForm, labourMode: 'benchmark' })}>
+                Benchmark
+              </button>
+              <button
+                type="button"
+                className={`bom-source-btn ${estimateForm.labourMode === 'manual' ? 'active' : ''}`}
+                onClick={() => setEstimateForm({ ...estimateForm, labourMode: 'manual' })}>
+                Manual
+              </button>
+            </div>
+            {estimateForm.labourMode === 'manual' && (
+              <input type="number" min="0" step="0.01" value={estimateForm.manualLabourPerM2}
+                onChange={e => setEstimateForm({ ...estimateForm, manualLabourPerM2: e.target.value })}
+                placeholder="BD per m²" className="bom-form-input" style={{ maxWidth: 160 }} />
+            )}
+          </div>
+        )}
+
         <div className="bom-form-actions">
-          <button className="bom-btn bom-btn-primary" onClick={generatePrediction}>
-            <TrendingUpIcon size={14} /> Generate Prediction
+          <button className="bom-btn bom-btn-primary" onClick={generateEstimate}>
+            <Sparkles size={14} /> Generate Estimate
           </button>
+          {estimateResult && (
+            <button className="bom-btn bom-btn-secondary" onClick={saveEstimateAsBOM} disabled={saving}>
+              <Save size={14} /> {saving ? 'Saving…' : 'Save as BOM'}
+            </button>
+          )}
         </div>
       </div>
 
-      {predictionResult && (
+      {/* ---- Result ---- */}
+      {estimateResult && (
         <>
-          <div className="bom-pred-summary">
-            <div className="bom-pred-item">
-              <span className="bom-pred-label">Project Type</span>
-              <span className="bom-pred-value" style={{ textTransform: 'capitalize' }}>{predictionResult.projectType}</span>
+          {/* Summary */}
+          <div className="bom-estimate-summary">
+            <div className="bom-estimate-item">
+              <span className="bom-estimate-label">Project</span>
+              <span className="bom-estimate-value" style={{ textTransform: 'capitalize' }}>{estimateResult.projectType}</span>
             </div>
-            <div className="bom-pred-item">
-              <span className="bom-pred-label">Total Area</span>
-              <span className="bom-pred-value">{predictionResult.totalArea.toFixed(1)} m²</span>
+            <div className="bom-estimate-item">
+              <span className="bom-estimate-label">Total Area</span>
+              <span className="bom-estimate-value">{estimateResult.totalArea.toFixed(0)} m²</span>
             </div>
-            <div className="bom-pred-item">
-              <span className="bom-pred-label">Floors</span>
-              <span className="bom-pred-value">{predictionResult.floors}</span>
+            <div className="bom-estimate-item">
+              <span className="bom-estimate-label">Floors</span>
+              <span className="bom-estimate-value">{estimateResult.floors}</span>
             </div>
-            <div className="bom-pred-item highlight">
-              <span className="bom-pred-label">Estimated Cost</span>
-              <span className="bom-pred-value bom-td-green">{Utils.formatCurrency(predictionResult.estimatedCost)}</span>
+            <div className="bom-estimate-item">
+              <span className="bom-estimate-label">Materials</span>
+              <span className="bom-estimate-value">{Utils.formatCurrencyShort(estimateResult.totalMaterialCost)} BD</span>
             </div>
-            <div className="bom-pred-item">
-              <span className="bom-pred-label">Labor Hours</span>
-              <span className="bom-pred-value">{predictionResult.laborHours} hrs</span>
+            <div className="bom-estimate-item">
+              <span className="bom-estimate-label">Labour</span>
+              <span className="bom-estimate-value">{Utils.formatCurrencyShort(estimateResult.labourCost)} BD</span>
+              <span className="bom-estimate-meta">
+                {estimateResult.labourSource === 'historical' ? '📊 historical' :
+                 estimateResult.labourSource === 'manual' ? '✍️ manual' : '📐 benchmark'}
+              </span>
             </div>
-            <div className="bom-pred-item">
-              <span className="bom-pred-label">Timeline</span>
-              <span className="bom-pred-value">{predictionResult.timeline} days</span>
+            <div className="bom-estimate-item">
+              <span className="bom-estimate-label">Overhead</span>
+              <span className="bom-estimate-value">{Utils.formatCurrencyShort(estimateResult.overheadCost)} BD</span>
+              <span className="bom-estimate-meta">
+                {estimateResult.overheadSource === 'historical' ? '📊 historical' :
+                 estimateResult.overheadSource === 'manual' ? '✍️ manual' : '📐 benchmark'}
+              </span>
+            </div>
+            <div className="bom-estimate-item highlight">
+              <span className="bom-estimate-label">TOTAL ESTIMATE</span>
+              <span className="bom-estimate-value bom-td-green">
+                {Utils.formatCurrency(estimateResult.totalCost)}
+              </span>
+              {estimateResult.momDelta !== null && (
+                <span className={`bom-estimate-delta ${estimateResult.momDelta >= 0 ? 'up' : 'down'}`}>
+                  {estimateResult.momDelta >= 0 ? <ArrowUpRight size={11} /> : <ArrowDownRight size={11} />}
+                  {Math.abs(estimateResult.momDelta).toFixed(1)}% vs last month
+                </span>
+              )}
             </div>
           </div>
 
-          {predictionResult.estimatedCount > 0 && (
-            <div className="bom-pred-warning">
-              <Info size={13} />
-              <span>
-                {predictionResult.estimatedCount} of {predictionResult.totalMaterialCount} materials
-                used fallback prices (marked with <strong>*</strong>) — add them to inventory for accurate costs.
-              </span>
-            </div>
-          )}
-
+          {/* Material breakdown */}
           <div className="bom-card">
             <div className="bom-card-header">
               <div className="bom-card-title">
-                <span className="bom-card-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
+                <span className="bom-card-icon" style={{ background: 'rgba(59,130,246,0.12)', color: '#3b82f6' }}>
                   <Package size={16} />
                 </span>
                 <div>
-                  <h4>Required Materials</h4>
-                  <span>{Object.keys(predictionResult.materials).length} material types</span>
+                  <h4>Materials Required</h4>
+                  <span>{estimateResult.materialLines.length} material types</span>
                 </div>
               </div>
             </div>
-            <div className="bom-pred-materials-grid">
-              {Object.entries(predictionResult.materials).map(([key, value]) => (
-                <div key={key} className="bom-pred-material">
-                  <div className="bom-pred-mat-name">
-                    {key.charAt(0).toUpperCase() + key.slice(1)}
-                    {value.estimatedPrice && <span className="bom-est-badge" title="Using fallback price">*</span>}
-                  </div>
-                  <div className="bom-pred-mat-qty">{value.quantity.toFixed(2)} {value.unit}</div>
-                  {value.cost !== undefined && (
-                    <div className="bom-pred-mat-cost">
-                      {Utils.formatCurrency(value.cost)}
-                      {value.matchedMaterial && (
-                        <span className="bom-pred-mat-source" title={`Matched: ${value.matchedMaterial}`}>
-                          ✓
+            <div className="bom-table-wrap">
+              <table className="bom-table">
+                <thead>
+                  <tr>
+                    <th>Material</th>
+                    <th className="right">Quantity</th>
+                    <th>Unit</th>
+                    <th className="right">Rate (BD)</th>
+                    <th className="right">Unit Price (BD)</th>
+                    <th className="right">Cost (BD)</th>
+                    <th className="center">Source</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {estimateResult.materialLines.map((line, i) => (
+                    <tr key={i}>
+                      <td>
+                        <strong>{line.name}</strong>
+                        {line.matchedMaterial && <span className="bom-match-badge" title={`Matched to inventory: ${line.matchedMaterial}`}>✓</span>}
+                      </td>
+                      <td className="right">{line.quantity.toFixed(2)}</td>
+                      <td>{line.unit}</td>
+                      <td className="right">{line.rate.toFixed(4)}</td>
+                      <td className="right">{Utils.formatCurrency(line.unitPrice)}</td>
+                      <td className="right bom-td-green"><strong>{Utils.formatCurrencyShort(line.cost)}</strong></td>
+                      <td className="center">
+                        <span className={`bom-source-tag ${line.rateSource}`}>
+                          {line.rateSource === 'historical' && '📊 hist'}
+                          {line.rateSource === 'blended' && '🔀 blend'}
+                          {line.rateSource === 'benchmark' && '📐 bench'}
                         </span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="bom-total-row">
+                    <td colSpan={5}><strong>Material Subtotal</strong></td>
+                    <td className="right bom-td-green"><strong>{Utils.formatCurrencyShort(estimateResult.totalMaterialCost)}</strong></td>
+                    <td />
+                  </tr>
+                </tbody>
+              </table>
             </div>
-            <div className="bom-pred-actions">
-              <button className="bom-btn bom-btn-secondary" onClick={handleAddPredictionToInventory}>
-                <PlusCircle size={14} /> Add to Inventory
-              </button>
-              <button className="bom-btn bom-btn-primary" onClick={handleCreateBOMFromPrediction}>
-                <ClipboardList size={14} /> Create BOM
-              </button>
+          </div>
+
+          {/* Timeline */}
+          <div className="bom-estimate-footer">
+            <div className="bom-estimate-footer-item">
+              <Clock size={14} />
+              <div>
+                <span className="bom-estimate-footer-label">Estimated Hours</span>
+                <span className="bom-estimate-footer-value">{estimateResult.estimatedHours.toFixed(0)} hrs</span>
+              </div>
+            </div>
+            <div className="bom-estimate-footer-item">
+              <Calendar size={14} />
+              <div>
+                <span className="bom-estimate-footer-label">Timeline</span>
+                <span className="bom-estimate-footer-value">{estimateResult.timeline} days</span>
+              </div>
+            </div>
+            <div className="bom-estimate-footer-item">
+              <Target size={14} />
+              <div>
+                <span className="bom-estimate-footer-label">Data Quality</span>
+                <span className="bom-estimate-footer-value">
+                  {estimateResult.historicalCount} historical · {estimateResult.estimatedCount} benchmark
+                </span>
+              </div>
             </div>
           </div>
         </>
@@ -1435,94 +904,145 @@ const BOMComponent = ({ data, updateData, setTabLoading, setTabLoadingLabel }) =
   );
 
   // ============================================
-  // MATERIAL FORM MODAL
+  // RENDER: HISTORY TAB
   // ============================================
-  const renderMaterialFormModal = () => (
-    <ModalPortal>
-      <div className="bom-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) { setShowMaterialForm(false); resetMaterialForm(); } }}>
-        <div className="bom-modal" onClick={e => e.stopPropagation()}>
-          <div className="bom-modal-header" style={{ background: 'linear-gradient(135deg, #10b981, #059669)' }}>
-            <div className="bom-modal-header-left">
-              <div className="bom-modal-icon">
-                {editingMaterial ? <Edit size={18} /> : <Package size={18} />}
-              </div>
+  const renderHistoryTab = () => {
+    const chartData = historyArray.map(m => ({
+      month: m.month.slice(5),
+      material: m.materialCost || 0,
+      labour: m.wages || 0,
+      overhead: m.overhead || 0,
+      revenue: m.revenue || 0,
+      totalCost: (m.materialCost || 0) + (m.wages || 0) + (m.overhead || 0),
+    }));
+
+    return (
+      <div className="bom-view">
+        <div className="bom-card">
+          <div className="bom-card-header">
+            <div className="bom-card-title">
+              <span className="bom-card-icon" style={{ background: 'rgba(139,92,246,0.12)', color: '#8b5cf6' }}>
+                <BarChart3 size={16} />
+              </span>
               <div>
-                <h3>{editingMaterial ? 'Edit Material' : 'New Material'}</h3>
-                <p className="bom-modal-sub">{editingMaterial ? 'Update material details' : 'Add a new material'}</p>
+                <h4>Cost Trend (Last 6 Months)</h4>
+                <span>Materials · Labour · Overhead</span>
               </div>
             </div>
-            <button className="bom-modal-close" onClick={() => { setShowMaterialForm(false); resetMaterialForm(); }}>
-              <X size={18} />
-            </button>
           </div>
-          <div className="bom-modal-body">
-            <form onSubmit={handleMaterialSubmit}>
-              <div className="bom-form-row">
-                <div className="bom-form-group">
-                  <label>Name <span className="bom-required">*</span></label>
-                  <input type="text" value={materialForm.name} required autoFocus
-                    onChange={e => setMaterialForm({ ...materialForm, name: e.target.value })}
-                    placeholder="Material name" className="bom-form-input" />
-                </div>
-                <div className="bom-form-group">
-                  <label>Category</label>
-                  <select value={materialForm.category}
-                    onChange={e => setMaterialForm({ ...materialForm, category: e.target.value })}
-                    className="bom-form-select">
-                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
+          <ResponsiveContainer width="100%" height={300}>
+            <ComposedChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" strokeOpacity={0.5} vertical={false} />
+              <XAxis dataKey="month" stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false} />
+              <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} axisLine={false}
+                tickFormatter={(v) => Utils.formatCurrencyShort(v)} />
+              <ReTooltip content={<ChartTooltip />} />
+              <Legend />
+              <Bar dataKey="material" name="Material" stackId="a" fill="#3b82f6" radius={[0, 0, 0, 0]} />
+              <Bar dataKey="labour" name="Labour" stackId="a" fill="#10b981" radius={[0, 0, 0, 0]} />
+              <Bar dataKey="overhead" name="Overhead" stackId="a" fill="#f59e0b" radius={[8, 8, 0, 0]} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        </div>
+
+        <div className="bom-card">
+          <div className="bom-card-header">
+            <div className="bom-card-title">
+              <span className="bom-card-icon" style={{ background: 'rgba(16,185,129,0.12)', color: '#10b981' }}>
+                <FileText size={16} />
+              </span>
+              <div>
+                <h4>Monthly Breakdown</h4>
+                <span>Historical cost & wage data</span>
               </div>
-              <div className="bom-form-row">
-                <div className="bom-form-group">
-                  <label>Unit</label>
-                  <select value={materialForm.unit}
-                    onChange={e => setMaterialForm({ ...materialForm, unit: e.target.value })}
-                    className="bom-form-select">
-                    {availableUnitNames.map(u => <option key={u} value={u}>{u}</option>)}
-                  </select>
-                </div>
-                <div className="bom-form-group">
-                  <label>Unit Price (BD)</label>
-                  <input type="number" step="0.001" min="0" value={materialForm.unitPrice}
-                    onChange={e => setMaterialForm({ ...materialForm, unitPrice: e.target.value })}
-                    placeholder="0.000" className="bom-form-input" />
-                </div>
-              </div>
-              <div className="bom-form-row">
-                <div className="bom-form-group">
-                  <label>Current Quantity</label>
-                  <input type="number" step="0.01" min="0" value={materialForm.quantity}
-                    onChange={e => setMaterialForm({ ...materialForm, quantity: e.target.value })}
-                    placeholder="0" className="bom-form-input" />
-                </div>
-                <div className="bom-form-group">
-                  <label>Reorder Level</label>
-                  <input type="number" step="0.01" min="0" value={materialForm.reorderLevel}
-                    onChange={e => setMaterialForm({ ...materialForm, reorderLevel: e.target.value })}
-                    placeholder="0" className="bom-form-input" />
-                </div>
-              </div>
-              <div className="bom-form-group">
-                <label>Supplier</label>
-                <input type="text" value={materialForm.supplier}
-                  onChange={e => setMaterialForm({ ...materialForm, supplier: e.target.value })}
-                  placeholder="Supplier name" className="bom-form-input" />
-              </div>
-              <div className="bom-form-actions">
-                <button type="submit" className="bom-btn bom-btn-primary">
-                  <Save size={14} /> {editingMaterial ? 'Update' : 'Add Material'}
-                </button>
-                <button type="button" className="bom-btn bom-btn-secondary"
-                  onClick={() => { setShowMaterialForm(false); resetMaterialForm(); }}>
-                  Cancel
-                </button>
-              </div>
-            </form>
+            </div>
+          </div>
+          <div className="bom-table-wrap">
+            <table className="bom-table">
+              <thead>
+                <tr>
+                  <th>Month</th>
+                  <th className="right">Material</th>
+                  <th className="right">Labour</th>
+                  <th className="right">Overhead</th>
+                  <th className="right">Total</th>
+                  <th className="right">Revenue</th>
+                  <th className="right">Hours</th>
+                  <th className="right">Sites</th>
+                </tr>
+              </thead>
+              <tbody>
+                {historyArray.map((m, i) => {
+                  const total = (m.materialCost || 0) + (m.wages || 0) + (m.overhead || 0);
+                  return (
+                    <tr key={i}>
+                      <td><strong>{m.month}</strong></td>
+                      <td className="right">{Utils.formatCurrencyShort(m.materialCost || 0)}</td>
+                      <td className="right">{Utils.formatCurrencyShort(m.wages || 0)}</td>
+                      <td className="right">{Utils.formatCurrencyShort(m.overhead || 0)}</td>
+                      <td className="right bom-td-green"><strong>{Utils.formatCurrencyShort(total)}</strong></td>
+                      <td className="right">{Utils.formatCurrencyShort(m.revenue || 0)}</td>
+                      <td className="right">{(m.totalHours || 0).toFixed(1)}h</td>
+                      <td className="right">{m.siteCount || 0}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
-    </ModalPortal>
+    );
+  };
+
+  // ============================================
+  // RENDER: SAVED BOMS TAB
+  // ============================================
+  const renderSavedBOMsTab = () => (
+    <div className="bom-view">
+      {boms.length === 0 ? (
+        <div className="bom-empty">
+          <div className="bom-empty-icon"><ClipboardList size={40} /></div>
+          <h3>No Saved BOMs</h3>
+          <p>Generate an estimate and click "Save as BOM" to store it here.</p>
+        </div>
+      ) : (
+        <div className="bom-saved-grid">
+          {boms.slice().reverse().map(b => (
+            <div key={b.id} className="bom-saved-card">
+              <div className="bom-saved-card-header">
+                <div className="bom-saved-card-title">
+                  <ClipboardList size={15} />
+                  <span>{b.projectName}</span>
+                </div>
+                <div className="bom-saved-card-date">
+                  <Calendar size={11} />
+                  {Utils.formatDate(b.createdAt)}
+                </div>
+              </div>
+              <div className="bom-saved-card-body">
+                <div className="bom-saved-card-stat">
+                  <span>Materials</span>
+                  <strong>{Utils.formatCurrencyShort(b.totalMaterialCost || 0)}</strong>
+                </div>
+                <div className="bom-saved-card-stat">
+                  <span>Labour</span>
+                  <strong>{Utils.formatCurrencyShort(b.labourCost || 0)}</strong>
+                </div>
+                <div className="bom-saved-card-stat">
+                  <span>Overhead</span>
+                  <strong>{Utils.formatCurrencyShort(b.overhead || 0)}</strong>
+                </div>
+                <div className="bom-saved-card-stat highlight">
+                  <span>Total</span>
+                  <strong className="bom-td-green">{Utils.formatCurrencyShort(b.totalCost || 0)}</strong>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 
   // ============================================
@@ -1546,33 +1066,29 @@ const BOMComponent = ({ data, updateData, setTabLoading, setTabLoadingLabel }) =
       <div className="bom-header">
         <div className="bom-header-left">
           <div className="bom-header-icon">
-            <ClipboardList size={22} />
-            <span className="bom-header-badge"><Sparkles size={10} /> BOM</span>
+            <Calculator size={22} />
+            <span className="bom-header-badge"><Sparkles size={10} /> ESTIMATOR</span>
           </div>
           <div>
-            <h2>Bill of Materials &amp; Prediction</h2>
+            <h2>Project Cost Estimator</h2>
             <p className="bom-header-subtitle">
-              {stats.totalMaterials} materials · {stats.totalBOMs} BOMs · {Utils.formatCurrencyShort(stats.totalValue)} value
+              Historical data from last {recentHistory.monthsAnalyzed} months · {materials.length} materials · {boms.length} saved BOMs
             </p>
           </div>
         </div>
         <div className="bom-header-right">
           <button className="bom-btn bom-btn-ghost" onClick={() => fetchMaterials({ showLoader: true })} disabled={materialsLoading}>
             {materialsLoading ? <Loader2 size={14} className="bom-spin" /> : <RefreshCw size={14} />}
-            {materialsLoading ? 'Refreshing…' : 'Refresh'}
-          </button>
-          <button className="bom-btn bom-btn-primary" onClick={() => { resetMaterialForm(); setShowMaterialForm(true); }}>
-            <Plus size={14} /> New Material
+            Refresh
           </button>
         </div>
       </div>
 
       <div className="bom-tabs">
         {[
-          { id: 'overview', label: 'Overview', icon: LayoutDashboard },
-          { id: 'materials', label: 'Materials', icon: Package, badge: materials.length },
-          { id: 'bom', label: 'BOM', icon: ClipboardList, badge: boms.length },
-          { id: 'prediction', label: 'Prediction', icon: TrendingUpIcon }
+          { id: 'estimate', label: 'Estimate', icon: Calculator },
+          { id: 'history', label: 'History', icon: BarChart3 },
+          { id: 'saved', label: 'Saved BOMs', icon: ClipboardList, badge: boms.length },
         ].map(t => {
           const Icon = t.icon;
           return (
@@ -1586,12 +1102,9 @@ const BOMComponent = ({ data, updateData, setTabLoading, setTabLoadingLabel }) =
         })}
       </div>
 
-      {activeTab === 'overview' && renderOverviewTab()}
-      {activeTab === 'materials' && renderMaterialsTab()}
-      {activeTab === 'bom' && renderBOMTab()}
-      {activeTab === 'prediction' && renderPredictionTab()}
-
-      {showMaterialForm && renderMaterialFormModal()}
+      {activeTab === 'estimate' && renderEstimateTab()}
+      {activeTab === 'history' && renderHistoryTab()}
+      {activeTab === 'saved' && renderSavedBOMsTab()}
     </div>
   );
 };
