@@ -84,6 +84,15 @@ const ChartTooltip = ({ active, payload, label, formatter }) => {
 };
 
 // ============================================
+// SAFE NUMBER HELPER  (construction site = no fixed salary)
+// ============================================
+const toNumber = (v, fallback = 0) => {
+  if (v === '' || v === null || v === undefined) return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+// ============================================
 // MAIN COMPONENT
 // ============================================
 const LoanManagement = ({ data, refreshData }) => {
@@ -309,12 +318,6 @@ const LoanManagement = ({ data, refreshData }) => {
     }
   }, [loans]);
 
-  const getEmployeeSalary = (employeeId) => {
-    const worker = data.workers?.find(w => w.id === employeeId);
-    if (!worker) return 0;
-    return worker.monthly_salary || worker.salary || (worker.daily_rate * 26) || 0;
-  };
-
   // ============================================
   // CRUD OPERATIONS
   // ============================================
@@ -323,13 +326,20 @@ const LoanManagement = ({ data, refreshData }) => {
     setError('');
     setSuccess('');
     try {
+      // Sanitize numeric fields so empty strings never reach the backend
+      const payload = {
+        ...formData,
+        amount: toNumber(formData.amount, 0),
+        tenureMonths: toNumber(formData.tenureMonths, 6),
+        interestRate: toNumber(formData.interestRate, 0)
+      };
       const response = await fetch(`${API_BASE_URL}/loans`, {
         method: 'POST',
         headers: {
           'Accept': 'application/json',
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       });
       if (!response.ok) {
         const errorData = await response.json();
@@ -1099,8 +1109,6 @@ const LoanManagement = ({ data, refreshData }) => {
               {items.map((loan, index) => {
                 const isExpanded = expandedItems[loan.id];
                 const progress = loan.progress || 0;
-                const employeeSalary = getEmployeeSalary(loan.employeeId);
-                const netSalary = employeeSalary - (loan.monthlyInstallment || 0);
                 return (
                   <div key={loan.id} className="loan-card-item"
                     style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}>
@@ -1154,9 +1162,9 @@ const LoanManagement = ({ data, refreshData }) => {
                           </span>
                         </div>
                         <div className="loan-detail">
-                          <span className="loan-detail-label">Net Salary</span>
-                          <span className={`loan-detail-value ${netSalary < 0 ? 'loan-td-red' : 'loan-td-green'}`}>
-                            {Utils.formatCurrencyShort(netSalary)}
+                          <span className="loan-detail-label">Repayment</span>
+                          <span className="loan-detail-value">
+                            {progress.toFixed(0)}%
                           </span>
                         </div>
                       </div>
@@ -1220,13 +1228,13 @@ const LoanManagement = ({ data, refreshData }) => {
                           <div><strong>Employee:</strong> {loan.employeeName}</div>
                           <div><strong>Loan Type:</strong> {loan.loanTypeName}</div>
                           <div><strong>Amount:</strong> {Utils.formatCurrency(loan.amount)}</div>
-                          <div><strong>Monthly Salary:</strong> {Utils.formatCurrency(employeeSalary)}</div>
                           <div><strong>Interest Rate:</strong> {loan.interestRate || 0}%</div>
                           <div><strong>Tenure:</strong> {loan.tenureMonths} months</div>
                           <div><strong>Monthly Installment:</strong> {Utils.formatCurrency(loan.monthlyInstallment)}</div>
                           <div><strong>Approved By:</strong> {loan.approvedBy || 'N/A'}</div>
                           <div><strong>Approved Date:</strong> {loan.approvedDate ? Utils.formatDate(loan.approvedDate) : 'N/A'}</div>
                           <div><strong>Created:</strong> {loan.createdAt ? Utils.formatDate(loan.createdAt) : '—'}</div>
+                          <div><strong>Status:</strong> {loan.status}</div>
                         </div>
                         {loan.notes && (
                           <div className="loan-expanded-notes">
@@ -1397,13 +1405,10 @@ const LoanManagement = ({ data, refreshData }) => {
   // ============================================
   const renderFormModal = () => {
     const selectedEmployee = data.workers?.find(w => w.id === formData.employeeId);
-    const employeeSalary = selectedEmployee ? getEmployeeSalary(selectedEmployee.id) : 0;
-    const amount = parseFloat(formData.amount) || 0;
-    const tenure = parseInt(formData.tenureMonths) || 6;
-    const interest = parseFloat(formData.interestRate) || 0;
+    const amount = toNumber(formData.amount, 0);
+    const tenure = toNumber(formData.tenureMonths, 6);
+    const interest = toNumber(formData.interestRate, 0);
     const monthlyInstallment = tenure > 0 ? (amount + (amount * interest / 100)) / tenure : 0;
-    const netSalary = employeeSalary - monthlyInstallment;
-    const isExceedingSalary = monthlyInstallment > employeeSalary;
 
     return (
       <ModalPortal>
@@ -1414,7 +1419,7 @@ const LoanManagement = ({ data, refreshData }) => {
                 <div className="loan-modal-icon"><Landmark size={18} /></div>
                 <div>
                   <h3>New Loan</h3>
-                  <p className="loan-modal-sub">Issue a loan with salary deduction</p>
+                  <p className="loan-modal-sub">Issue a loan with installment deduction</p>
                 </div>
               </div>
               <button className="loan-modal-close" onClick={() => { setShowForm(false); resetForm(); }}>
@@ -1431,9 +1436,7 @@ const LoanManagement = ({ data, refreshData }) => {
                       className="loan-form-select">
                       <option value="">Select Employee</option>
                       {data.workers?.map(w => (
-                        <option key={w.id} value={w.id}>
-                          {w.name} — {Utils.formatCurrency(getEmployeeSalary(w.id))}
-                        </option>
+                        <option key={w.id} value={w.id}>{w.name}</option>
                       ))}
                     </select>
                   </div>
@@ -1459,9 +1462,9 @@ const LoanManagement = ({ data, refreshData }) => {
                 <div className="loan-form-row">
                   <div className="loan-form-group">
                     <label><Banknote size={12} /> Loan Amount (BD) <span className="loan-required">*</span></label>
-                    <input type="number" step="0.001" value={formData.amount} required
+                    <input type="number" step="0.001" min="0" value={formData.amount} required
                       onChange={e => setFormData({ ...formData, amount: e.target.value })}
-                      placeholder="0.000" max={employeeSalary * 2}
+                      placeholder="0.000"
                       className="loan-form-input" />
                   </div>
                   <div className="loan-form-group">
@@ -1475,41 +1478,41 @@ const LoanManagement = ({ data, refreshData }) => {
                 <div className="loan-form-row">
                   <div className="loan-form-group">
                     <label><Timer size={12} /> Tenure (months) <span className="loan-required">*</span></label>
-                    <input type="number" value={formData.tenureMonths} required
+                    <input type="number" min="1" value={formData.tenureMonths} required
                       onChange={e => setFormData({ ...formData, tenureMonths: e.target.value })}
                       placeholder="6" className="loan-form-input" />
                   </div>
                   <div className="loan-form-group">
                     <label><Percent size={12} /> Interest Rate (%)</label>
-                    <input type="number" step="0.01" value={formData.interestRate}
+                    <input type="number" step="0.01" min="0" value={formData.interestRate}
                       onChange={e => setFormData({ ...formData, interestRate: e.target.value })}
                       placeholder="0" className="loan-form-input" />
                   </div>
                 </div>
 
+                {/* Informational panel — no salary cap, no net-salary math */}
                 {formData.employeeId && amount > 0 && (
                   <div className="loan-salary-info">
                     <div className="loan-salary-row">
-                      <span>Monthly Salary</span>
-                      <strong>{Utils.formatCurrency(employeeSalary)}</strong>
+                      <span>Employee</span>
+                      <strong>{selectedEmployee?.name || '—'}</strong>
+                    </div>
+                    <div className="loan-salary-row">
+                      <span>Loan Amount</span>
+                      <strong style={{ color: '#b45309' }}>
+                        {Utils.formatCurrency(amount)}
+                      </strong>
                     </div>
                     <div className="loan-salary-row">
                       <span>Monthly Installment</span>
-                      <strong style={{ color: isExceedingSalary ? '#ef4444' : '#b45309' }}>
+                      <strong style={{ color: '#009846' }}>
                         {Utils.formatCurrency(monthlyInstallment)}
                       </strong>
                     </div>
                     <div className="loan-salary-row">
-                      <span>Net Salary After Deduction</span>
-                      <strong style={{ color: netSalary < 0 ? '#ef4444' : '#047857' }}>
-                        {Utils.formatCurrency(netSalary)}
-                      </strong>
+                      <span>Payment Basis</span>
+                      <strong>Hourly / Daily work (no fixed salary cap)</strong>
                     </div>
-                    {isExceedingSalary && (
-                      <div className="loan-warning-msg">
-                        <AlertCircle size={14} /> Installment exceeds monthly salary! Please reduce the amount.
-                      </div>
-                    )}
                   </div>
                 )}
 
@@ -1535,8 +1538,7 @@ const LoanManagement = ({ data, refreshData }) => {
                 </div>
 
                 <div className="loan-form-actions">
-                  <button type="submit" className="loan-btn loan-btn-primary"
-                    disabled={loading || (monthlyInstallment > employeeSalary && employeeSalary > 0)}>
+                  <button type="submit" className="loan-btn loan-btn-primary" disabled={loading}>
                     <Save size={14} /> {loading ? 'Saving...' : 'Issue Loan'}
                   </button>
                   <button type="button" className="loan-btn loan-btn-secondary"
@@ -1783,9 +1785,7 @@ const LoanManagement = ({ data, refreshData }) => {
 
   const renderDetailModal = () => {
     if (!selectedLoan) return null;
-    const employeeSalary = getEmployeeSalary(selectedLoan.employeeId);
     const monthlyInstallment = selectedLoan.monthlyInstallment || 0;
-    const netSalary = employeeSalary - monthlyInstallment;
 
     return (
       <ModalPortal>
@@ -1826,10 +1826,22 @@ const LoanManagement = ({ data, refreshData }) => {
                 </div>
 
                 <div className="loan-detail-section full-width">
-                  <h4>Salary & Deduction</h4>
-                  <div className="loan-detail-row"><span>Monthly Salary</span><strong>{Utils.formatCurrency(employeeSalary)}</strong></div>
-                  <div className="loan-detail-row"><span>Installment</span><strong style={{ color: '#b45309' }}>{Utils.formatCurrency(monthlyInstallment)}</strong></div>
-                  <div className="loan-detail-row"><span>Net Salary</span><strong style={{ color: netSalary >= 0 ? '#047857' : '#b91c1c' }}>{Utils.formatCurrency(netSalary)}</strong></div>
+                  <h4>Repayment Progress</h4>
+                  <div className="loan-detail-row">
+                    <span>Progress</span>
+                    <strong>{(selectedLoan.progress || 0).toFixed(1)}%</strong>
+                  </div>
+                  <div className="loan-progress-bar" style={{ marginTop: 6 }}>
+                    <div className="loan-progress-fill"
+                      style={{
+                        width: `${Math.min(selectedLoan.progress || 0, 100)}%`,
+                        background: (selectedLoan.progress || 0) >= 75
+                          ? 'linear-gradient(90deg,#009846,#34d399)'
+                          : (selectedLoan.progress || 0) >= 50
+                          ? 'linear-gradient(90deg,#f59e0b,#fbbf24)'
+                          : 'linear-gradient(90deg,#ef4444,#f87171)'
+                      }} />
+                  </div>
                 </div>
 
                 <div className="loan-detail-section full-width">

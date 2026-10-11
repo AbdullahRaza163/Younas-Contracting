@@ -82,6 +82,15 @@ const ChartTooltip = ({ active, payload, label, formatter }) => {
 };
 
 // ============================================
+// SAFE NUMBER HELPER  (construction site = no fixed salary)
+// ============================================
+const toNumber = (v, fallback = 0) => {
+  if (v === '' || v === null || v === undefined) return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+// ============================================
 // MAIN COMPONENT
 // ============================================
 const AdvanceManagement = ({ data, refreshData }) => {
@@ -272,19 +281,13 @@ const AdvanceManagement = ({ data, refreshData }) => {
     finally { setIsRepaymentsLoading(false); }
   }, [advances]);
 
-  const getEmployeeSalary = (employeeId) => {
-    const worker = data.workers?.find(w => w.id === employeeId);
-    if (!worker) return 0;
-    return worker.monthly_salary || worker.salary || (worker.daily_rate * 26) || 0;
-  };
-
   // ============================================
   // CRUD
   // ============================================
   const createAdvance = async (formData) => {
     setLoading(true); setError(''); setSuccess('');
     try {
-      const amount = parseFloat(formData.amount) || 0;
+      const amount = toNumber(formData.amount, 0);
       const deductionMonth = formData.deductionMonth || Utils.getCurrentMonthString();
       const dateParts = deductionMonth.split('-');
       let year = parseInt(dateParts[0]);
@@ -559,7 +562,6 @@ const AdvanceManagement = ({ data, refreshData }) => {
       }));
   }, [advances]);
 
-  // Percentage-based cards for the ring gauges
   const paymentMethodData = useMemo(() => {
     const map = { cash: 0, bank_transfer: 0, cheque: 0, salary_deduction: 0 };
     repayments.forEach(r => {
@@ -644,7 +646,7 @@ const AdvanceManagement = ({ data, refreshData }) => {
         </div>
       )}
 
-      {/* Row 1 — Ring percentage gauges (like the reference image) */}
+      {/* Row 1 — Ring percentage gauges */}
       <div className="adv-card">
         <div className="adv-card-header">
           <div className="adv-card-title">
@@ -887,8 +889,6 @@ const AdvanceManagement = ({ data, refreshData }) => {
               {items.map((advance, index) => {
                 const isExpanded = expandedItems[advance.id];
                 const progress = advance.progress || 0;
-                const employeeSalary = getEmployeeSalary(advance.employeeId);
-                const netSalary = employeeSalary - (advance.monthlyDeduction || 0);
                 return (
                   <div key={advance.id} className="adv-card-item"
                     style={{ animationDelay: `${Math.min(index * 40, 400)}ms` }}>
@@ -940,9 +940,9 @@ const AdvanceManagement = ({ data, refreshData }) => {
                           </span>
                         </div>
                         <div className="adv-detail">
-                          <span className="adv-detail-label">Net Salary</span>
-                          <span className={`adv-detail-value ${netSalary < 0 ? 'adv-td-red' : 'adv-td-green'}`}>
-                            {Utils.formatCurrencyShort(netSalary)}
+                          <span className="adv-detail-label">Repayment</span>
+                          <span className="adv-detail-value">
+                            {progress.toFixed(0)}%
                           </span>
                         </div>
                       </div>
@@ -1006,11 +1006,11 @@ const AdvanceManagement = ({ data, refreshData }) => {
                           <div><strong>Employee:</strong> {advance.employeeName}</div>
                           <div><strong>Advance Type:</strong> {advance.advanceTypeName}</div>
                           <div><strong>Amount:</strong> {Utils.formatCurrency(advance.amount)}</div>
-                          <div><strong>Monthly Salary:</strong> {Utils.formatCurrency(employeeSalary)}</div>
                           <div><strong>Deduction:</strong> {Utils.formatCurrency(advance.monthlyDeduction)}</div>
                           <div><strong>Deduction Month:</strong> {advance.deductionStartMonth || '—'}</div>
                           <div><strong>Approved By:</strong> {advance.approvedBy || 'N/A'}</div>
                           <div><strong>Created:</strong> {advance.createdAt ? Utils.formatDate(advance.createdAt) : '—'}</div>
+                          <div><strong>Status:</strong> {advance.status}</div>
                         </div>
                         {advance.notes && (
                           <div className="adv-expanded-notes">
@@ -1175,10 +1175,7 @@ const AdvanceManagement = ({ data, refreshData }) => {
   // ============================================
   const renderFormModal = () => {
     const selectedEmployee = data.workers?.find(w => w.id === formData.employeeId);
-    const employeeSalary = selectedEmployee ? getEmployeeSalary(selectedEmployee.id) : 0;
-    const deductionAmount = parseFloat(formData.amount) || 0;
-    const netSalary = employeeSalary - deductionAmount;
-    const isExceedingSalary = deductionAmount > employeeSalary;
+    const amountNum = toNumber(formData.amount, 0);
 
     return (
       <ModalPortal>
@@ -1206,9 +1203,7 @@ const AdvanceManagement = ({ data, refreshData }) => {
                       className="adv-form-select">
                       <option value="">Select Employee</option>
                       {data.workers?.map(w => (
-                        <option key={w.id} value={w.id}>
-                          {w.name} — {Utils.formatCurrency(getEmployeeSalary(w.id))}
-                        </option>
+                        <option key={w.id} value={w.id}>{w.name}</option>
                       ))}
                     </select>
                   </div>
@@ -1226,15 +1221,10 @@ const AdvanceManagement = ({ data, refreshData }) => {
                 <div className="adv-form-row">
                   <div className="adv-form-group">
                     <label>Amount (BD) <span className="adv-required">*</span></label>
-                    <input type="number" step="0.001" value={formData.amount} required
+                    <input type="number" step="0.001" min="0" value={formData.amount} required
                       onChange={e => setFormData({ ...formData, amount: e.target.value })}
-                      placeholder="0.000" max={employeeSalary}
+                      placeholder="0.000"
                       className="adv-form-input" />
-                    {isExceedingSalary && formData.amount && (
-                      <small className="adv-error-hint">
-                        <AlertCircle size={11} /> Exceeds monthly salary!
-                      </small>
-                    )}
                   </div>
                   <div className="adv-form-group">
                     <label>Advance Date <span className="adv-required">*</span></label>
@@ -1244,29 +1234,23 @@ const AdvanceManagement = ({ data, refreshData }) => {
                   </div>
                 </div>
 
+                {/* Informational panel — no salary cap, no net-salary math */}
                 {formData.employeeId && (
                   <div className="adv-salary-info">
                     <div className="adv-salary-row">
-                      <span>Monthly Salary</span>
-                      <strong>{Utils.formatCurrency(employeeSalary)}</strong>
+                      <span>Employee</span>
+                      <strong>{selectedEmployee?.name || '—'}</strong>
                     </div>
                     <div className="adv-salary-row">
                       <span>Advance Amount</span>
-                      <strong style={{ color: isExceedingSalary ? '#ef4444' : '#b45309' }}>
-                        {Utils.formatCurrency(deductionAmount)}
+                      <strong style={{ color: '#b45309' }}>
+                        {Utils.formatCurrency(amountNum)}
                       </strong>
                     </div>
                     <div className="adv-salary-row">
-                      <span>Net Salary After Deduction</span>
-                      <strong style={{ color: netSalary < 0 ? '#ef4444' : '#047857' }}>
-                        {Utils.formatCurrency(netSalary)}
-                      </strong>
+                      <span>Payment Basis</span>
+                      <strong>Hourly / Daily work (no fixed salary cap)</strong>
                     </div>
-                    {netSalary < 0 && (
-                      <div className="adv-warning-msg">
-                        <AlertCircle size={14} /> Advance exceeds salary! Please reduce the amount.
-                      </div>
-                    )}
                   </div>
                 )}
 
@@ -1300,8 +1284,7 @@ const AdvanceManagement = ({ data, refreshData }) => {
                 </div>
 
                 <div className="adv-form-actions">
-                  <button type="submit" className="adv-btn adv-btn-primary"
-                    disabled={loading || (deductionAmount > employeeSalary && employeeSalary > 0)}>
+                  <button type="submit" className="adv-btn adv-btn-primary" disabled={loading}>
                     <Save size={14} /> {loading ? 'Saving...' : 'Issue Advance'}
                   </button>
                   <button type="button" className="adv-btn adv-btn-secondary"
@@ -1534,8 +1517,6 @@ const AdvanceManagement = ({ data, refreshData }) => {
 
   const renderDetailModal = () => {
     if (!selectedAdvance) return null;
-    const employeeSalary = getEmployeeSalary(selectedAdvance.employeeId);
-    const netSalary = employeeSalary - (selectedAdvance.monthlyDeduction || 0);
     return (
       <ModalPortal>
         <div className="adv-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowDetailModal(false); }}>
@@ -1565,13 +1546,12 @@ const AdvanceManagement = ({ data, refreshData }) => {
                 </div>
 
                 <div className="adv-detail-section">
-                  <h4>Salary & Deduction</h4>
-                  <div className="adv-detail-row"><span>Monthly Salary</span><strong>{Utils.formatCurrency(employeeSalary)}</strong></div>
+                  <h4>Deduction & Balance</h4>
                   <div className="adv-detail-row"><span>Deduction</span><strong style={{ color: '#b45309' }}>{Utils.formatCurrency(selectedAdvance.monthlyDeduction)}</strong></div>
-                  <div className="adv-detail-row"><span>Net Salary</span><strong style={{ color: netSalary >= 0 ? '#047857' : '#b91c1c' }}>{Utils.formatCurrency(netSalary)}</strong></div>
                   <div className="adv-detail-row"><span>Deduction Month</span><strong>{selectedAdvance.deductionStartMonth || '—'}</strong></div>
                   <div className="adv-detail-row"><span>Balance</span><strong>{Utils.formatCurrency(selectedAdvance.remainingBalance)}</strong></div>
                   <div className="adv-detail-row"><span>Paid</span><strong>{Utils.formatCurrency(selectedAdvance.paidAmount)}</strong></div>
+                  <div className="adv-detail-row"><span>Repayment</span><strong>{(selectedAdvance.progress || 0).toFixed(1)}%</strong></div>
                 </div>
 
                 <div className="adv-detail-section full-width">
